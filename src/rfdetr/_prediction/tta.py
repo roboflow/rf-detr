@@ -3,32 +3,41 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Sub-patch shift test-time augmentation for ``RFDETR.predict(..., shift_tta=N)``.
+"""Test-time augmentation views: sub-patch shifts, mirroring and zoom, fused into one prediction.
 
 The backbone cuts its input into a grid of ``patch_size`` squares, and an object's class score depends a little on where
 the object sits inside its square. Moving an image by a fraction of a patch can therefore swing a score across the
 threshold while the box stays put (
 https://github.com/roboflow/rf-detr/issues/1599).
-Shift TTA runs the batch
-``N`` times, each time with the image placed at a different fraction of a patch inside a slightly larger canvas,
-maps each pass back to the image, and averages the matching detections of all passes.
+TTA runs the batch once per
+*view*: the image is mirrored, scaled and placed at a sub-patch offset on a canvas that is at least as large as the
+image, so no view cuts content off. Each view is mapped back to the image, and the matching detections of all views are
+averaged. ``RFDETR.predict(..., shift_tta=N)`` uses ``N`` shifted views, and
+``RFDETRInference.predict(..., tta=TTAConfig(...))`` adds mirrored and zoomed views.
 """
 
 from __future__ import annotations
 
 import copy
+import math
 from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
 import torch.nn.functional as F  # noqa: N812
+from torchvision.transforms.functional import resize
 
 if TYPE_CHECKING:
     from supervision import Detections
 
 # Two detections of different passes are the same object when they share a class and overlap by more than this.
 _SAME_OBJECT_IOU = 0.6
+
+# Provisional range of ``TTAConfig.zoom``, to be confirmed or narrowed by the Stage 2 zoom sweep of the plan.
+ZOOM_MIN = 0.75
+ZOOM_MAX = 1.5
 
 
 def validate_shift_tta(shift_tta: object, patch_size: int) -> int:
@@ -74,69 +83,268 @@ def shift_offsets(patch_size: int, passes: int) -> list[int]:
     return [round(i * patch_size / passes) for i in range(passes)]
 
 
-def place_on_canvas(batch: torch.Tensor, offset: int, margin: int) -> torch.Tensor:
-    """Put a normalized ``(B, C, H, W)`` batch at ``(offset, offset)`` on a canvas ``margin`` pixels larger.
+@dataclass(frozen=True)
+class TTAConfig:
+    """The test-time augmentation views of one ``RFDETRInference.predict`` call.
 
-    The canvas is zero, the normalization mean colour, so the backbone sees the whole image and a plain border,
-    never cropped content. ``margin`` should keep the canvas a valid model shape (a multiple of
-    ``patch_size * num_windows``) and be larger than every offset.
+    The default is one view, the plain prediction. Every view costs one forward pass over a canvas at least as large
+    as the image, so the cost grows with the number of views (see :func:`view_count`) and, for zoom, with the canvas
+    area. Mirroring assumes an object keeps its class when the image is flipped: a class that does not (arrows, turn
+    signs) splits into two groups and loses score.
+
+    Attributes:
+        shift: Number of sub-patch shifted views, from 1 to the backbone patch size; 1 adds no shift.
+        flip: Also run every view mirrored left to right.
+        zoom: Extra views at these scales, each a resized copy of the image on a larger canvas. Every value is a finite
+            number inside ``[ZOOM_MIN, ZOOM_MAX]`` and not 1.
+
+    Raises:
+        TypeError: If a field has the wrong type, or ``zoom`` is a string, a mapping or a set.
+        ValueError: If ``shift`` is below 1, or a ``zoom`` is not finite, equals 1, is out of range or repeats.
+
+    Examples:
+        >>> TTAConfig(shift=2, flip=True, zoom=[1.25])
+        TTAConfig(shift=2, flip=True, zoom=(1.25,))
+        >>> view_count(TTAConfig(shift=2, flip=True, zoom=(1.25,)))
+        6
+    """
+
+    shift: int = 1
+    flip: bool = False
+    zoom: tuple[float, ...] = ()
+
+    def __post_init__(self) -> None:
+        """Check every field and store ``zoom`` as a tuple of floats."""
+        if isinstance(self.shift, bool) or not isinstance(self.shift, int):
+            raise TypeError(f"TTAConfig.shift must be an int, got {type(self.shift).__name__}.")
+        if self.shift < 1:
+            raise ValueError(f"TTAConfig.shift must be at least 1, got {self.shift!r}.")
+        if not isinstance(self.flip, bool):
+            raise TypeError(f"TTAConfig.flip must be a bool, got {type(self.flip).__name__}.")
+        if not isinstance(self.zoom, (list, tuple)):
+            raise TypeError(f"TTAConfig.zoom must be a list or tuple of numbers, got {type(self.zoom).__name__}.")
+        zoom: list[float] = []
+        for value in self.zoom:
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise TypeError(f"TTAConfig.zoom holds numbers only, got {type(value).__name__}.")
+            if not math.isfinite(value) or value == 1.0 or not ZOOM_MIN <= value <= ZOOM_MAX:
+                raise ValueError(
+                    f"TTAConfig.zoom values must be finite, not 1 and in [{ZOOM_MIN}, {ZOOM_MAX}], got {value!r}."
+                )
+            zoom.append(float(value))
+        if len(set(zoom)) != len(zoom):
+            raise ValueError(f"TTAConfig.zoom must not repeat a value, got {self.zoom!r}.")
+        object.__setattr__(self, "zoom", tuple(zoom))
+
+
+def view_count(config: TTAConfig) -> int:
+    """Return how many views ``config`` runs: shifts plus zooms, doubled by ``flip``.
+
+    Args:
+        config: The requested views.
+
+    Returns:
+        The number of views; 1 is the plain path.
+
+    Examples:
+        >>> view_count(TTAConfig())
+        1
+        >>> view_count(TTAConfig(shift=4, flip=True))
+        8
+    """
+    return (config.shift + len(config.zoom)) * (2 if config.flip else 1)
+
+
+@dataclass(frozen=True)
+class _View:
+    """One pass: the image is mirrored, scaled by ``scale`` and placed at ``(offset, offset)`` on a canvas.
+
+    Attributes:
+        scale: 1 is native size, above 1 zooms in, below 1 zooms out. A view never crops.
+        offset: Placement down and right, in model input pixels. Shift views use ``0`` to ``patch_size - 1``.
+        flip: Mirror about the vertical axis before scaling.
+    """
+
+    scale: float = 1.0
+    offset: int = 0
+    flip: bool = False
+
+
+def placed_size(view: _View, size: tuple[int, int]) -> tuple[int, int]:
+    """Return the ``(height, width)`` the image takes on the canvas, rounded as the resize rounds each axis.
+
+    Args:
+        view: The view.
+        size: The image's ``(H, W)`` in model input pixels.
+
+    Returns:
+        The placed content size, never below 1.
+
+    Examples:
+        >>> placed_size(_View(scale=1.25), (384, 384))
+        (480, 480)
+    """
+    return max(1, round(view.scale * size[0])), max(1, round(view.scale * size[1]))
+
+
+def build_views(config: TTAConfig, patch_size: int, size: tuple[int, int]) -> list[_View]:
+    """Return the views of ``config`` for one model input size.
+
+    Shift views come first (scale 1, the offsets of :func:`shift_offsets`), then one view per zoom (offset 0). With
+    ``flip`` every view is repeated mirrored after the unmirrored ones. The views are additive, not a product, so
+    4 shifts and 3 zooms are 7 views, not 12.
+
+    Args:
+        config: The requested views.
+        patch_size: Backbone patch size in model input pixels.
+        size: The model input ``(H, W)``; every image is resized to it before the views are placed.
+
+    Returns:
+        The views, in the order the fused result counts them.
+
+    Raises:
+        ValueError: If ``config.shift`` is above ``patch_size``, or a zoom places the image at the size of another view
+            (it would repeat that view and double its weight).
+
+    Examples:
+        >>> [(v.scale, v.offset, v.flip) for v in build_views(TTAConfig(shift=2, flip=True), 16, (64, 64))]
+        [(1.0, 0, False), (1.0, 8, False), (1.0, 0, True), (1.0, 8, True)]
+    """
+    validate_shift_tta(config.shift, patch_size)
+    views = [_View(offset=offset) for offset in shift_offsets(patch_size, config.shift)]
+    sizes = {placed_size(views[0], size)}
+    for zoom in config.zoom:
+        view = _View(scale=zoom)
+        placed = placed_size(view, size)
+        if placed in sizes:
+            raise ValueError(f"TTAConfig.zoom {zoom!r} places the image at {placed}, the size of another view.")
+        sizes.add(placed)
+        views.append(view)
+    if config.flip:
+        views += [replace(view, flip=True) for view in views]
+    return views
+
+
+def canvas_shape(view: _View, size: tuple[int, int], block: int) -> tuple[int, int]:
+    """Return the canvas ``(height, width)`` of a view.
+
+    The canvas is one ``block`` larger than the image while the placed content and its offset fit, which is the room a
+    shift needs and the canvas every shift view shares. A larger zoom gets the block multiple its content needs.
+
+    Args:
+        view: The view.
+        size: The image's ``(H, W)`` in model input pixels, multiples of ``block``.
+        block: ``patch_size * num_windows``, the unit every model input side is a multiple of.
+
+    Returns:
+        The canvas size, a multiple of ``block`` on each axis.
+
+    Examples:
+        >>> canvas_shape(_View(), (64, 64), 32)
+        (96, 96)
+        >>> canvas_shape(_View(scale=1.5), (64, 64), 32)
+        (96, 96)
+        >>> canvas_shape(_View(scale=1.75), (64, 64), 32)
+        (128, 128)
+    """
+    sides = []
+    for side, content in zip(size, placed_size(view, size)):
+        end = content + view.offset
+        sides.append(side + block if end <= side + block else math.ceil(end / block) * block)
+    return sides[0], sides[1]
+
+
+def place_view(
+    batch: torch.Tensor,
+    view: _View,
+    canvas: tuple[int, int],
+    *,
+    antialias: bool = False,
+    resize_on_cpu: bool = False,
+) -> torch.Tensor:
+    """Mirror, scale and place a normalized ``(B, C, H, W)`` batch on a zero canvas.
+
+    The canvas is zero, the normalization mean colour, so the backbone sees the whole image and a plain border, never
+    cropped content. A scaled view is resampled with the same call preprocessing uses.
 
     Args:
         batch: Normalized model input.
-        offset: Shift down and right, in pixels.
-        margin: How much larger the canvas is in each dimension.
+        view: The view to place.
+        canvas: The canvas ``(height, width)`` from :func:`canvas_shape`.
+        antialias: Antialias the resize of a scaled view; pass the flag the batch itself was resized with.
+        resize_on_cpu: Resize on the CPU and move the result back, for a device with no antialiased resize kernel.
 
     Returns:
-        A ``(B, C, H + margin, W + margin)`` tensor.
+        A ``(B, C, Hc, Wc)`` tensor.
 
     Examples:
-        >>> place_on_canvas(torch.ones(1, 1, 2, 2), offset=1, margin=2)[0, 0].int().tolist()
+        >>> place_view(torch.ones(1, 1, 2, 2), _View(offset=1), (4, 4))[0, 0].int().tolist()
         [[0, 0, 0, 0], [0, 1, 1, 0], [0, 1, 1, 0], [0, 0, 0, 0]]
+        >>> place_view(torch.tensor([[[[1.0, 2.0]]]]), _View(flip=True), (1, 2))[0, 0].tolist()
+        [[2.0, 1.0]]
     """
     b, c, h, w = batch.shape
-    canvas = batch.new_zeros((b, c, h + margin, w + margin))
-    canvas[:, :, offset : offset + h, offset : offset + w] = batch
-    return canvas
+    content = batch.flip(-1) if view.flip else batch
+    ch, cw = placed_size(view, (h, w))
+    if (ch, cw) != (h, w):
+        resized = resize(content.cpu() if resize_on_cpu else content, [ch, cw], antialias=antialias)
+        content = resized.to(batch.device)
+    placed = batch.new_zeros((b, c, *canvas))
+    placed[:, :, view.offset : view.offset + ch, view.offset : view.offset + cw] = content
+    return placed
 
 
 def map_to_image(
-    outputs: dict[str, torch.Tensor], offset: int, size: tuple[int, int], margin: int
+    outputs: dict[str, torch.Tensor],
+    view: _View,
+    size: tuple[int, int],
+    canvas: tuple[int, int],
+    mask_size: tuple[int, int] | None,
 ) -> dict[str, torch.Tensor]:
-    """Map raw model outputs for a canvas from :func:`place_on_canvas` back to the image it holds.
+    """Map raw model outputs for a canvas from :func:`place_view` back to the image it holds.
 
-    Boxes are normalized ``cxcywh`` and become relative to the image instead of the canvas. Mask logits are resampled
-    from the image's region of the canvas, keeping their resolution relative to the image. The result reads as if
-    the model had seen the image directly, so the usual post-processing applies unchanged.
+    Boxes are normalized ``cxcywh`` and become relative to the image instead of the canvas, mirrored back when the view
+    was. Mask logits are resampled from the image's region of the canvas to ``mask_size``, mirrored back as well. The
+    result reads as if the model had seen the image directly, so the usual post-processing applies unchanged.
 
     Args:
         outputs: Model outputs with ``pred_logits``, ``pred_boxes`` and optionally ``pred_masks``.
-        offset: The offset the image was placed at.
+        view: The view the batch was placed with.
         size: The image's ``(H, W)`` in model input pixels.
-        margin: How much larger the canvas was.
+        canvas: The canvas ``(height, width)`` the batch was placed on.
+        mask_size: The ``(height, width)`` of the returned mask logits, shared by every view of a request so the masks
+            of different views stack; ignored without ``pred_masks``.
 
     Returns:
         A copy of ``outputs`` with ``pred_boxes`` and ``pred_masks`` in the image's frame.
 
     Examples:
         >>> out = {"pred_boxes": torch.tensor([[[0.5, 0.5, 0.25, 0.25]]])}
-        >>> map_to_image(out, offset=2, size=(6, 6), margin=2)["pred_boxes"].tolist()
-        [[[0.3333333432674408, 0.3333333432674408, 0.3333333432674408, 0.3333333432674408]]]
+        >>> mapped = map_to_image(out, _View(offset=2), (6, 6), (8, 8), None)
+        >>> [round(v, 4) for v in mapped["pred_boxes"][0, 0].tolist()]
+        [0.3333, 0.3333, 0.3333, 0.3333]
     """
-    h, w = size
-    canvas_h, canvas_w = h + margin, w + margin
+    canvas_h, canvas_w = canvas
+    ch, cw = placed_size(view, size)
     mapped = dict(outputs)
-    boxes = outputs["pred_boxes"]
-    scale = boxes.new_tensor([canvas_w / w, canvas_h / h, canvas_w / w, canvas_h / h])
-    shift = boxes.new_tensor([offset / w, offset / h, 0.0, 0.0])
-    mapped["pred_boxes"] = boxes * scale - shift
+    cx, cy, w, h = outputs["pred_boxes"].unbind(-1)
+    cx = (cx * canvas_w - view.offset) / cw
+    cy = (cy * canvas_h - view.offset) / ch
+    if view.flip:
+        cx = 1 - cx
+    mapped["pred_boxes"] = torch.stack((cx, cy, w * canvas_w / cw, h * canvas_h / ch), dim=-1)
 
     masks = outputs.get("pred_masks")
-    if masks is not None:
-        mask_h, mask_w = masks.shape[-2:]
-        out_h, out_w = max(1, round(mask_h * h / canvas_h)), max(1, round(mask_w * w / canvas_w))
-        # Centres of the output mask pixels, in the canvas's [-1, 1] grid_sample coordinates (align_corners=False).
-        ys = (offset + (torch.arange(out_h, device=masks.device) + 0.5) * h / out_h) * 2 / canvas_h - 1
-        xs = (offset + (torch.arange(out_w, device=masks.device) + 0.5) * w / out_w) * 2 / canvas_w - 1
+    if masks is not None and mask_size is not None:
+        out_h, out_w = mask_size
+        # Centres of the output mask pixels as fractions of the image, mirrored in the image frame, not the canvas.
+        frac_y = (torch.arange(out_h, device=masks.device) + 0.5) / out_h
+        frac_x = (torch.arange(out_w, device=masks.device) + 0.5) / out_w
+        if view.flip:
+            frac_x = 1 - frac_x
+        # The same centres in the canvas's [-1, 1] grid_sample coordinates (align_corners=False).
+        ys = (view.offset + frac_y * ch) * 2 / canvas_h - 1
+        xs = (view.offset + frac_x * cw) * 2 / canvas_w - 1
         grid_y, grid_x = torch.meshgrid(ys, xs, indexing="ij")
         grid = torch.stack((grid_x, grid_y), dim=-1).to(masks.dtype).expand(masks.shape[0], -1, -1, -1)
         mapped["pred_masks"] = F.grid_sample(masks, grid, mode="bilinear", padding_mode="border", align_corners=False)

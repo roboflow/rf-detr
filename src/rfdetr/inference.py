@@ -24,6 +24,7 @@ from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.weights import adapt_input_channels, apply_lora, load_pretrain_weights
 
 if TYPE_CHECKING:
+    from rfdetr._prediction.tta import TTAConfig
     from rfdetr._prediction.types import _PredictionOutput, _PredictionResult
     from rfdetr.config import ModelConfig
     from rfdetr.detr import RFDETR
@@ -223,6 +224,7 @@ class RFDETRInference:
         batch: int | None = None,
         vid_stride: int = 1,
         stream_buffer: bool = False,
+        tta: TTAConfig | None = None,
     ) -> _PredictionOutput | Generator[_PredictionResult, None, None]:
         """Predict images, video, and live sources through the shared prediction pipeline.
 
@@ -257,6 +259,14 @@ class RFDETRInference:
                 runtimes for individual live sources.
             vid_stride: Read every Nth video frame.
             stream_buffer: Queue live frames instead of keeping the latest frame.
+            tta: Test-time augmentation views to fuse, a :class:`~rfdetr._prediction.tta.TTAConfig` with sub-patch
+                ``shift`` views, mirrored (``flip``) views and ``zoom`` views. ``None`` runs the plain prediction. Each
+                view is one more forward pass, on a canvas at least as large as the image, so the cost grows with the
+                number of views and, for zoom, with the canvas area; the views are batched on CUDA and run one at a
+                time elsewhere. Only a predictor built from a live model or a checkpoint path accepts it: a snapshot
+                from ``inference()`` and an exported runtime fix their resolution or batch size and refuse it before
+                any image is read. A model with classes that change under mirroring (arrows, turn signs) should not
+                use ``flip``. Keypoint models are refused.
 
         Returns:
             A generator with stream enabled, otherwise a scalar image result or a list.
@@ -290,6 +300,7 @@ class RFDETRInference:
             vid_stride=vid_stride,
             stream_buffer=stream_buffer,
             prepare_ahead=self._owns_source,
+            tta=tta,
         )
 
 

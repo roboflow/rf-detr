@@ -3163,6 +3163,8 @@ class RFDETR:
             runtime_info={"backend": "pytorch", "device": str(self.model.device)},
             # A compiled snapshot runs only the batch size it was compiled for; eager models take any.
             batch_size=self._optimized_batch_size if self._optimized_has_been_compiled else None,
+            # An optimized snapshot enforces its square resolution on every batch, compiled or not.
+            fixed_resolution=self._optimized_resolution if self._is_optimized_for_inference else None,
         )
 
     def _run_inference_batch(self, batch_tensor: torch.Tensor) -> dict[str, torch.Tensor]:

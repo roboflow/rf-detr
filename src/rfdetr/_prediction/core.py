@@ -34,17 +34,21 @@ try:
 except ImportError:
     _IS_TORCHVISION_IMAGE_DECODE_AVAILABLE = False
 
-from rfdetr._prediction.shift_tta import (
+from rfdetr._prediction.sources import has_only_finite_images, is_expanded_source
+from rfdetr._prediction.thresholds import _class_thresholds
+from rfdetr._prediction.tta import (
+    TTAConfig,
+    _View,
+    build_views,
+    canvas_shape,
     fuse_passes,
     group_passes,
     map_to_image,
-    place_on_canvas,
-    shift_offsets,
+    place_view,
     validate_shift_tta,
+    view_count,
     vote_masks,
 )
-from rfdetr._prediction.sources import has_only_finite_images, is_expanded_source
-from rfdetr._prediction.thresholds import _class_thresholds
 from rfdetr._prediction.types import _ImageInput, _PredictionInput, _ThresholdInput
 from rfdetr.models.postprocess import PostProcess
 from rfdetr.utilities.exif import exif_orientation, upright_image
@@ -99,6 +103,8 @@ class PredictionContext:
     batch_size: int | None = None
     max_batch_size: int | None = None
     antialias: bool = False
+    # The side a snapshot enforces on every batch (an optimized native snapshot), or ``None`` when any shape runs.
+    fixed_resolution: int | None = None
 
 
 def _tensor_to_source_array(image: torch.Tensor) -> np.ndarray[Any, Any]:
@@ -742,6 +748,7 @@ def predict(
     vid_stride: int = 1,
     stream_buffer: bool = False,
     prepare_ahead: bool = False,
+    tta: TTAConfig | None = None,
 ) -> _PredictionOutput | Generator[_PredictionResult, None, None]:
     """Route both public prediction APIs through the same source and runtime pipeline.
 
@@ -773,10 +780,16 @@ def predict(
         prepare_ahead: Let a CUDA context build the next batch's input while the current batch runs. That reads the
             next batch's context before the current batch's results are yielded, so pass it only when nothing changes
             the model between batches, as for a predictor that owns its model or runtime.
+        tta: The test-time augmentation views to fuse (see :class:`~rfdetr._prediction.tta.TTAConfig`). ``None`` and
+            ``TTAConfig()`` run the plain prediction. A request with several views is refused for a fixed-shape or
+            fixed-batch runtime before any source is opened, and it skips ``prepare_ahead``.
 
     Returns:
         A lazy generator, a scalar image result, or a list of results.
     """
+    if tta is not None:
+        # Refused here, before a stream opens its source: nothing below needs an image to know the request cannot run.
+        _plan_views(context_factory(), 1, tta, shape, patch_size)
     for name, value in (("batch", 1 if batch is None else batch), ("vid_stride", vid_stride)):
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ValueError(f"{name} must be a positive integer.")
@@ -809,9 +822,12 @@ def predict(
             stream_buffer=stream_buffer,
             warn_on_live=not stream,
             prepare_ahead=prepare_ahead,
+            tta=tta,
         )
         return results if stream else list(results)
-    return _predict_batch(context_factory, images, threshold, shape, patch_size, include_source_image, antialias)
+    return _predict_batch(
+        context_factory, images, threshold, shape, patch_size, include_source_image, antialias, tta=tta
+    )
 
 
 #: Images per batch when ``batch=None`` predicts an eager directory or glob on a model without a fixed batch size.
@@ -912,6 +928,8 @@ def _predict_batch(
     include_source_image: bool,
     antialias: bool | None,
     shift_tta: int = 1,
+    *,
+    tta: TTAConfig | None = None,
 ) -> _PredictionOutput:
     """Prepare images, execute one batch, and decode results using a shared contract.
 
@@ -930,61 +948,162 @@ def _predict_batch(
         antialias: Use antialiasing during image resize. Match the checkpoint training resize.
         shift_tta: Number of sub-patch shifted passes to average; 1 runs a single plain pass. See
             :func:`_predict_shifted`.
+        tta: The views to fuse instead of ``shift_tta``; ``None`` leaves ``shift_tta`` in charge. Passing both a
+            ``shift_tta`` above 1 and a ``tta`` raises ``ValueError``.
 
     Returns:
         One Supervision result or a list matching the input container.
 
     Raises:
-        TypeError: If ``threshold`` is neither a number nor a ``ClassThresholds``, such as a list or a ``dict``.
+        TypeError: If ``threshold`` is neither a number nor a ``ClassThresholds``, such as a list or a ``dict``, or
+            ``tta`` is not a ``TTAConfig``.
         ValueError: If a list or tuple is empty, the batch violates an export's fixed or maximum batch size, the shape
             or patch size is invalid or conflicts with an export's fixed shape, an input fails range or channel
             validation, ``threshold`` is NaN, ``shift_tta`` is not an integer from 1 to the patch size (``True`` and
-            ``1.0`` included) or is above 1 for a keypoint model, or a ``ClassThresholds`` does not fit the model: it
+            ``1.0`` included) or is above 1 for a keypoint model, the views need a larger canvas or more rows than a
+            fixed-shape, fixed-batch or resolution-enforcing runtime accepts, or a ``ClassThresholds`` does not fit the
+            model: it
             names a class that ``class_names`` does not hold, has a different number of entries than ``class_names``,
             or is given to a model without classes. A ``ClassThresholds`` also raises when the export's
             ``class_id_to_name`` does not match ``class_names`` (more ids than names, names in another order, or an id
             outside ``0..num_classes``).
     """
     prepared = _prepare_batch(
-        context_factory, images, threshold, shape, patch_size, include_source_image, antialias, shift_tta=shift_tta
+        context_factory,
+        images,
+        threshold,
+        shape,
+        patch_size,
+        include_source_image,
+        antialias,
+        shift_tta=shift_tta,
+        tta=tta,
     )
-    # `_prepare_batch` has checked `shift_tta` is an int, not a bool, so `!= 1` cannot let `True` or `1.0` through.
-    if shift_tta != 1:
-        return _predict_shifted(prepared, shift_tta, patch_size)
+    # `_prepare_batch` has checked `shift_tta` is an int, not a bool, so `True` and `1.0` cannot pass as one view.
+    if len(prepared.views) > 1:
+        return _predict_shifted(prepared, patch_size)
     return _decode_batch(prepared, prepared.context.run(prepared.batch_tensor))
 
 
-@torch.inference_mode()
-def _predict_shifted(prepared: _PreparedBatch, shift_tta: int, patch_size: int | None) -> _PredictionOutput:
-    """Run a prepared batch at ``shift_tta`` sub-patch offsets and average the matching detections.
+#: Output keys fusion reads; every other output of the model is left whole.
+_FUSED_OUTPUT_KEYS = ("pred_logits", "pred_boxes", "pred_masks")
 
-    Each pass places the batch at an offset of ``i * patch_size / shift_tta`` pixels (down and right) on a canvas
-    one ``patch_size * num_windows`` block larger, then maps the outputs back to the image. Each pass keeps every
-    top-k detection scoring above 0, with no threshold of its own, so the fused score of
-    :func:`~rfdetr._prediction.shift_tta.fuse_passes` is the plain mean over the passes; ``threshold`` applies to that
-    fused score only. Masks are built only for the detections kept.
+#: Rows times canvas pixels one forward may hold on CUDA. Provisional: set by guess in the prototype, to be replaced by
+#: the value measured on the worst-case model and canvas.
+_MAX_PIXELS_PER_FORWARD = 8_388_608
+
+
+def _views_per_forward(context: PredictionContext, rows: int, canvas: tuple[int, int], views: int) -> int:
+    """Return how many views of one canvas shape run in one forward pass.
+
+    Only CUDA batches views, up to a budget of rows times canvas pixels. MPS and CPU run one view per forward, the
+    footprint of the per-view loop, until a measurement supports a larger one.
 
     Args:
-        prepared: The batch :func:`_prepare_batch` built.
-        shift_tta: Number of passes, from 2 to the patch size.
+        context: The prediction rules for this batch.
+        rows: Images per view.
+        canvas: The canvas ``(height, width)`` every view of the group shares.
+        views: How many views share this canvas.
+
+    Returns:
+        A count from 1 to ``views``.
+
+    Examples:
+        >>> import torch
+        >>> context = type("Context", (), {"device": torch.device("cuda")})()
+        >>> _views_per_forward(context, rows=2, canvas=(1024, 1024), views=8)
+        4
+        >>> _views_per_forward(type("Context", (), {"device": torch.device("cpu")})(), 2, (64, 64), 8)
+        1
+    """
+    if context.device.type != "cuda":
+        return 1
+    return max(1, min(views, _MAX_PIXELS_PER_FORWARD // (rows * canvas[0] * canvas[1])))
+
+
+def _mask_size(
+    masks: torch.Tensor, size: tuple[int, int], canvas: tuple[int, int], ratio: int, groups: int
+) -> tuple[int, int]:
+    """Return the ``(height, width)`` every view's mask logits are resampled to.
+
+    One canvas group keeps the size derived from its own mask head, as the first shift TTA did. Several groups share the
+    size the mask head gives the image itself, ``round(H / ratio)``, because their own heads round differently and the
+    masks of different views must stack.
+
+    Args:
+        masks: One view's ``(B, Q, Hm, Wm)`` mask logits on its canvas.
+        size: The image's ``(H, W)`` in model input pixels.
+        canvas: The canvas ``(height, width)``.
+        ratio: The model's mask downsample ratio.
+        groups: How many canvas shapes the request has.
+
+    Returns:
+        The mask size.
+
+    Examples:
+        >>> _mask_size(torch.zeros(1, 1, 24, 24), (64, 64), (96, 96), 4, groups=1)
+        (16, 16)
+        >>> _mask_size(torch.zeros(1, 1, 24, 24), (64, 64), (96, 96), 4, groups=2)
+        (16, 16)
+    """
+    height, width = size
+    if groups == 1:
+        mask_h, mask_w = masks.shape[-2:]
+        return max(1, round(mask_h * height / canvas[0])), max(1, round(mask_w * width / canvas[1]))
+    return max(1, round(height / ratio)), max(1, round(width / ratio))
+
+
+@torch.inference_mode()
+def _predict_shifted(prepared: _PreparedBatch, patch_size: int | None) -> _PredictionOutput:
+    """Run a prepared batch once per view and average the matching detections.
+
+    Each view mirrors, scales and places the batch on a canvas at least one ``patch_size * num_windows`` block larger
+    than needed for its shift, then maps the outputs back to the image. Views that share a canvas shape run together as
+    one forward pass over ``B * V`` rows on CUDA (see :func:`_views_per_forward`), view-major, and the original view
+    order is restored before fusion. Each view keeps every top-k detection scoring above 0, with no threshold of its
+    own, so the fused score of :func:`~rfdetr._prediction.tta.fuse_passes` is the plain mean over the views;
+    ``threshold`` applies to that fused score only. Masks are built only for the detections kept.
+
+    Args:
+        prepared: The batch :func:`_prepare_batch` built, with at least two views.
         patch_size: Backbone patch size, or ``None`` for the model's own.
 
     Returns:
         One Supervision result or a list matching the input container.
     """
     context = prepared.context
-    # `_prepare_batch` has already checked `shift_tta` against this patch size and refused keypoint models.
+    # `_prepare_batch` has already checked the views against this patch size and refused keypoint models.
     patch_size = _resolve_patch_size(patch_size, context.config, "predict")
-    margin = patch_size * getattr(context.config, "num_windows", 1)
-    size = (prepared.batch_tensor.shape[2], prepared.batch_tensor.shape[3])
-    candidates: list[list[_ShiftCandidates]] = []
+    block = patch_size * getattr(context.config, "num_windows", 1)
+    batch = prepared.batch_tensor
+    size = (batch.shape[2], batch.shape[3])
+    views = prepared.views
+    groups: dict[tuple[int, int], list[int]] = {}
+    for index, view in enumerate(views):
+        groups.setdefault(canvas_shape(view, size, block), []).append(index)
+    ratio = getattr(context.config, "mask_downsample_ratio", 4)
+    # Filled by view index, so fusion sees the views in their original order whichever canvas group ran first.
+    candidates: list[list[_ShiftCandidates]] = [[] for _ in views]
     # Mask logits stay at mask-head resolution until fusion has decided which detections are kept.
-    mask_logits: list[torch.Tensor | None] = []
-    for offset in shift_offsets(patch_size, shift_tta):
-        outputs = context.run(place_on_canvas(prepared.batch_tensor, offset, margin))
-        outputs = map_to_image(outputs, offset, size, margin)
-        candidates.append(_shift_candidates(context.postprocess, outputs, prepared.target_sizes))
-        mask_logits.append(outputs.get("pred_masks"))
+    mask_logits: list[torch.Tensor | None] = [None] * len(views)
+    for canvas, indices in groups.items():
+        step = _views_per_forward(context, batch.shape[0], canvas, len(indices))
+        for start in range(0, len(indices), step):
+            chunk = indices[start : start + step]
+            placed = [
+                place_view(batch, views[i], canvas, antialias=prepared.antialias, resize_on_cpu=prepared.resize_on_cpu)
+                for i in chunk
+            ]
+            outputs = context.run(placed[0] if len(placed) == 1 else torch.cat(placed))
+            del placed
+            split = {key: torch.chunk(outputs[key], len(chunk)) for key in _FUSED_OUTPUT_KEYS if key in outputs}
+            for position, index in enumerate(chunk):
+                view_outputs = {key: parts[position] for key, parts in split.items()}
+                masks = view_outputs.get("pred_masks")
+                mask_size = None if masks is None else _mask_size(masks, size, canvas, ratio, len(groups))
+                view_outputs = map_to_image(view_outputs, views[index], size, canvas, mask_size)
+                candidates[index] = _shift_candidates(context.postprocess, view_outputs, prepared.target_sizes)
+                mask_logits[index] = view_outputs.get("pred_masks")
 
     thresholds = (
         None if prepared.threshold_by_class_id is None else prepared.threshold_by_class_id.float().cpu().numpy()
@@ -1145,6 +1264,9 @@ class _PreparedBatch:
         single_input: The caller passed one image, so decoding returns one result instead of a list.
         score_floor: The single threshold, or the lowest per-class one.
         threshold_by_class_id: The per-class threshold table, or ``None`` for a single threshold.
+        views: The test-time augmentation views to run; empty or a single view means the plain pass.
+        antialias: Whether the batch was resized with antialiasing; a scaled view resizes the same way.
+        resize_on_cpu: Whether that resize runs on the CPU because the device has no antialiased resize kernel.
     """
 
     context: PredictionContext
@@ -1156,6 +1278,100 @@ class _PreparedBatch:
     single_input: bool
     score_floor: float
     threshold_by_class_id: torch.Tensor | None
+    views: tuple[_View, ...] = ()
+    antialias: bool = False
+    resize_on_cpu: bool = False
+
+
+def _refuse_unsupported_views(context: PredictionContext, views: Sequence[_View]) -> None:
+    """Refuse a request with several views on a runtime that cannot take a larger canvas or more rows.
+
+    Args:
+        context: The prediction rules for this batch.
+        views: The requested views.
+
+    Raises:
+        ValueError: If there is more than one view and the runtime fixes the input shape, the batch size or the
+            resolution it enforces.
+
+    Examples:
+        >>> _refuse_unsupported_views(type("Context", (), {"fixed_shape": False, "batch_size": None,
+        ...                                                "max_batch_size": None, "fixed_resolution": None})(), [1, 2])
+    """
+    if len(views) <= 1:
+        return
+    reasons = [
+        reason
+        for reason, fixed in (
+            ("a fixed input shape", context.fixed_shape),
+            ("a fixed batch size", context.batch_size is not None),
+            ("a maximum batch size", context.max_batch_size is not None),
+            ("an enforced resolution", context.fixed_resolution is not None),
+        )
+        if fixed
+    ]
+    if reasons:
+        raise ValueError(
+            f"Test-time augmentation runs {len(views)} views as a larger batch on a larger canvas, which this "
+            f"predictor cannot run: it has {' and '.join(reasons)}. "
+            "Use a predictor built from a live model or a checkpoint path."
+        )
+
+
+def _plan_views(
+    context: PredictionContext,
+    shift_tta: int,
+    tta: TTAConfig | None,
+    shape: tuple[int, int] | None,
+    patch_size: int | None,
+) -> tuple[int, tuple[int, int] | None, list[_View]]:
+    """Check every argument that needs no image and return the patch size, input shape and views.
+
+    Args:
+        context: The prediction rules for this batch.
+        shift_tta: Number of shifted passes; 1 runs none beyond the plain pass.
+        tta: The views to run instead of ``shift_tta``, or ``None``.
+        shape: Input height and width, or ``None`` for the model's default.
+        patch_size: Backbone patch size, or ``None`` for the model's own.
+
+    Returns:
+        The resolved patch size, the validated ``shape`` (``None`` keeps the model's default) and the views; one view
+        means the plain path.
+
+    Raises:
+        TypeError: If ``tta`` is neither ``None`` nor a ``TTAConfig``.
+        ValueError: If an argument is invalid, a keypoint model is given several views, or the runtime cannot take them.
+    """
+    patch_size = _resolve_patch_size(patch_size, context.config, "predict")
+    if tta is not None and not isinstance(tta, TTAConfig):
+        raise TypeError(f"tta must be a TTAConfig or None, got {type(tta).__name__}.")
+    # Every value, 1 included, is checked before any image is read, so `True` and `1.0` cannot pass as 1.
+    validate_shift_tta(shift_tta, patch_size)
+    if tta is not None and shift_tta != 1:
+        raise ValueError("Pass either shift_tta or tta, not both.")
+    config = TTAConfig(shift=shift_tta) if tta is None else tta
+    if view_count(config) > 1 and any(context.num_keypoints_per_class):
+        raise ValueError(f"{'shift_tta' if tta is None else 'tta'} does not support keypoint models.")
+    num_windows = getattr(context.config, "num_windows", 1)
+    if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
+        raise ValueError(f"model_config.num_windows must be a positive integer, got {num_windows!r}")
+    block_size = patch_size * num_windows
+
+    if shape is None:
+        default_res = context.default_shape[0]
+        if default_res % block_size != 0:
+            raise ValueError(
+                f"Model's default resolution ({default_res}) is not divisible by "
+                f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "
+                f"Provide an explicit shape divisible by {block_size}.",
+            )
+    else:
+        shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
+        if context.fixed_shape and shape != context.default_shape:
+            raise ValueError(f"Export requires shape {context.default_shape}, but got {shape}.")
+    views = build_views(config, patch_size, shape if shape is not None else context.default_shape)
+    _refuse_unsupported_views(context, views)
+    return patch_size, shape, views
 
 
 @torch.inference_mode()
@@ -1168,6 +1384,8 @@ def _prepare_batch(
     include_source_image: bool,
     antialias: bool | None,
     shift_tta: int = 1,
+    *,
+    tta: TTAConfig | None = None,
 ) -> _PreparedBatch:
     """Read the batch's context, check its arguments and images, and build the model input on the context device.
 
@@ -1183,6 +1401,7 @@ def _prepare_batch(
         include_source_image: Store the source image in result metadata.
         antialias: Use antialiasing during image resize.
         shift_tta: Number of shifted passes the caller will run; checked here, before any image is read.
+        tta: The views to run instead of ``shift_tta``; checked here too.
 
     Returns:
         The model input and the data :func:`_decode_batch` needs.
@@ -1203,27 +1422,7 @@ def _prepare_batch(
         if context.max_batch_size is not None and batch_size > context.max_batch_size:
             raise ValueError(f"Batch size {batch_size} exceeds export maximum {context.max_batch_size}.")
 
-    patch_size = _resolve_patch_size(patch_size, context.config, "predict")
-    # Every value, 1 included, is checked before any image is read, so `True` and `1.0` cannot pass as 1.
-    if validate_shift_tta(shift_tta, patch_size) != 1 and any(context.num_keypoints_per_class):
-        raise ValueError("shift_tta does not support keypoint models.")
-    num_windows = getattr(context.config, "num_windows", 1)
-    if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
-        raise ValueError(f"model_config.num_windows must be a positive integer, got {num_windows!r}")
-    block_size = patch_size * num_windows
-
-    if shape is None:
-        default_res = context.default_shape[0]
-        if default_res % block_size != 0:
-            raise ValueError(
-                f"Model's default resolution ({default_res}) is not divisible by "
-                f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "
-                f"Provide an explicit shape divisible by {block_size}.",
-            )
-    else:
-        shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
-        if context.fixed_shape and shape != context.default_shape:
-            raise ValueError(f"Export requires shape {context.default_shape}, but got {shape}.")
+    patch_size, shape, views = _plan_views(context, shift_tta, tta, shape, patch_size)
 
     # Built before the forward pass, where a class-id map that does not match `class_names` can still be refused.
     score_floor, threshold_by_class_id = _class_thresholds(threshold, context)
@@ -1461,6 +1660,9 @@ def _prepare_batch(
         single_input=single_input,
         score_floor=score_floor,
         threshold_by_class_id=threshold_by_class_id,
+        views=tuple(views),
+        antialias=antialias,
+        resize_on_cpu=resize_on_cpu,
     )
 
 
