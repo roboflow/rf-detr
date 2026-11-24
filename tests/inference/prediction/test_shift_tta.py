@@ -1,0 +1,580 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+"""Tests for sub-patch shift test-time augmentation, ``predict(..., shift_tta=N)`` (issue #1599)."""
+
+import math
+from dataclasses import replace
+from functools import partial
+from types import SimpleNamespace
+from typing import Any
+
+import numpy as np
+import PIL.Image
+import pytest
+import supervision as sv
+import torch
+from pytest_mock import MockerFixture
+
+from rfdetr import ClassThresholds, RFDETRSegNano
+from rfdetr._prediction import core
+from rfdetr._prediction.shift_tta import (
+    fuse_passes,
+    group_passes,
+    map_to_image,
+    place_on_canvas,
+    shift_offsets,
+    validate_shift_tta,
+    vote_masks,
+)
+from rfdetr.models.postprocess import PostProcess
+from tests.inference.helpers import _DummyModel, _DummyRFDETR
+
+_PATCH = 16
+_SIDE = 64
+_SQUARE = 16
+
+
+def _detections(xyxy: list[list[float]], confidence: list[float], class_id: list[int]) -> sv.Detections:
+    """Build box-only detections.
+
+    Examples:
+        >>> _detections([[0, 0, 4, 4]], [0.5], [1]).class_id.tolist()
+        [1]
+    """
+    return sv.Detections(
+        xyxy=np.array(xyxy, dtype=np.float32),
+        confidence=np.array(confidence, dtype=np.float32),
+        class_id=np.array(class_id),
+    )
+
+
+def _square_image(corner: int) -> torch.Tensor:
+    """A grey ``_SIDE`` image with one white ``_SQUARE`` square whose top-left corner is at ``(corner, corner)``.
+
+    Examples:
+        >>> image = _square_image(16)
+        >>> image[0, 16, 16].item(), image[0, 15, 16].item()
+        (1.0, 0.5)
+    """
+    image = torch.full((3, _SIDE, _SIDE), 0.5)
+    image[:, corner : corner + _SQUARE, corner : corner + _SQUARE] = 1.0
+    return image
+
+
+def _grid_sensitive_run(batch: torch.Tensor) -> dict[str, torch.Tensor]:
+    """A one-query model that finds the white square exactly but scores it by its position within the patch grid.
+
+    The logit is ``3 * cos(2 * pi * x0 / patch)``, where ``x0`` is the square's left edge in input pixels, the same kind
+    of grid-phase dependence issue #1599 reports. Mask logits are at a quarter of the input resolution.
+
+    Examples:
+        >>> outputs = _grid_sensitive_run(_square_image(16).unsqueeze(0))
+        >>> tuple(outputs["pred_boxes"].shape), tuple(outputs["pred_masks"].shape)
+        ((1, 1, 4), (1, 1, 16, 16))
+        >>> outputs["pred_logits"].flatten().tolist()
+        [3.0]
+    """
+    _, _, height, width = batch.shape
+    boxes, logits, masks = [], [], []
+    for image in batch:
+        rows = (image[0] > 0.75).any(dim=1).nonzero().flatten()
+        cols = (image[0] > 0.75).any(dim=0).nonzero().flatten()
+        y0, y1, x0, x1 = rows[0].item(), rows[-1].item() + 1, cols[0].item(), cols[-1].item() + 1
+        boxes.append([(x0 + x1) / 2 / width, (y0 + y1) / 2 / height, (x1 - x0) / width, (y1 - y0) / height])
+        logits.append([3 * math.cos(2 * math.pi * x0 / _PATCH)])
+        mask = torch.full((height // 4, width // 4), -10.0)
+        mask[y0 // 4 : y1 // 4, x0 // 4 : x1 // 4] = 10.0
+        masks.append(mask)
+    return {
+        "pred_logits": torch.tensor(logits).unsqueeze(1),
+        "pred_boxes": torch.tensor(boxes).unsqueeze(1),
+        "pred_masks": torch.stack(masks).unsqueeze(1),
+    }
+
+
+def _half_patch_run(batch: torch.Tensor) -> dict[str, torch.Tensor]:
+    """Like :func:`_grid_sensitive_run`, but score the square 0.9 in the first half of a patch and 0.2 in the second.
+
+    With two passes half a patch apart, one pass scores 0.9 and the other 0.2, so the fused score is 0.55.
+
+    Examples:
+        >>> batch = torch.stack([_square_image(16), _square_image(24)])
+        >>> [round(p, 4) for p in torch.sigmoid(_half_patch_run(batch)["pred_logits"]).flatten().tolist()]
+        [0.9, 0.2]
+    """
+    outputs = _grid_sensitive_run(batch)
+    columns = (batch[:, 0] > 0.75).any(dim=1).float().argmax(dim=1)
+    probability = torch.where(columns % _PATCH < _PATCH // 2, 0.9, 0.2)
+    outputs["pred_logits"] = torch.logit(probability).view(-1, 1, 1)
+    return outputs
+
+
+def _no_score_run(batch: torch.Tensor) -> dict[str, torch.Tensor]:
+    """Like :func:`_grid_sensitive_run`, but every score underflows to 0, so no pass keeps a detection.
+
+    Examples:
+        >>> torch.sigmoid(_no_score_run(_square_image(16).unsqueeze(0))["pred_logits"]).tolist()
+        [[[0.0]]]
+    """
+    outputs = _grid_sensitive_run(batch)
+    outputs["pred_logits"] = torch.full_like(outputs["pred_logits"], -200.0)
+    return outputs
+
+
+def _two_class_run(batch: torch.Tensor) -> dict[str, torch.Tensor]:
+    """A two-query, two-class model: class ``a`` is :func:`_half_patch_run`'s 0.9 or 0.2, class ``b`` is always 0.4.
+
+    Both queries box the same white square. With two passes half a patch apart, class ``a`` fuses to 0.55 and class
+    ``b`` to 0.4, and the lower pass of ``a`` (0.2) is below the lowest of most per-class thresholds.
+
+    Examples:
+        >>> outputs = _two_class_run(torch.stack([_square_image(16), _square_image(24)]))
+        >>> [[round(p, 4) for p in row] for row in torch.sigmoid(outputs["pred_logits"]).flatten(1).tolist()]
+        [[0.9, 0.0, 0.0, 0.4], [0.2, 0.0, 0.0, 0.4]]
+    """
+    outputs = _half_patch_run(batch)
+    a_logit, no_class = outputs["pred_logits"], torch.full_like(outputs["pred_logits"], -200.0)
+    b_logit = torch.full_like(a_logit, math.log(0.4 / 0.6))
+    query_a, query_b = torch.cat([a_logit, no_class], dim=2), torch.cat([no_class, b_logit], dim=2)
+    outputs["pred_logits"] = torch.cat([query_a, query_b], dim=1)
+    outputs["pred_boxes"] = outputs["pred_boxes"].repeat(1, 2, 1)
+    outputs["pred_masks"] = outputs["pred_masks"].repeat(1, 2, 1, 1)
+    return outputs
+
+
+# Four far-apart objects as image ``xyxy`` and their score logits: score order (1, 3, 0, 2) differs from query order.
+_OBJECTS = [[2, 2, 18, 18], [40, 2, 56, 18], [2, 40, 18, 56], [40, 40, 56, 56]]
+_OBJECT_LOGITS = [0.5, 3.0, 1.0, 2.0]
+# The query that scores 0 in the pass at this offset, so its group has one member fewer than there are passes.
+_MISSING_QUERY, _MISSING_OFFSET = 2, 5
+
+
+def _multi_query_run(batch: torch.Tensor) -> dict[str, torch.Tensor]:
+    """A four-query segmentation model with fixed objects and seeded noise mask logits that differ per pass.
+
+    The image's offset on the canvas is the first row with a non-zero pixel. Query ``q`` finds object ``q`` at the same
+    image position in every pass, except that query ``_MISSING_QUERY`` scores 0 in the pass at ``_MISSING_OFFSET``.
+    The mask logits are standard normal noise seeded by the offset, at a quarter of the canvas resolution, so the
+    members of a group disagree on many pixels.
+
+    Examples:
+        >>> canvas = place_on_canvas(torch.full((1, 3, _SIDE, _SIDE), 0.5), offset=_MISSING_OFFSET, margin=_PATCH)
+        >>> outputs = _multi_query_run(canvas)
+        >>> tuple(outputs["pred_masks"].shape), torch.sigmoid(outputs["pred_logits"]).flatten().gt(0).tolist()
+        ((1, 4, 20, 20), [True, True, False, True])
+    """
+    _, _, height, width = batch.shape
+    canvas_size = torch.tensor([width, height, width, height])
+    boxes, logits, masks = [], [], []
+    for image in batch:
+        offset = int((image[0] != 0).any(dim=1).float().argmax())
+        cxcywh = [[(x0 + x1) / 2 + offset, (y0 + y1) / 2 + offset, x1 - x0, y1 - y0] for x0, y0, x1, y1 in _OBJECTS]
+        boxes.append(torch.tensor(cxcywh) / canvas_size)
+        missing = offset == _MISSING_OFFSET
+        logits.append([[-200.0 if missing and q == _MISSING_QUERY else v] for q, v in enumerate(_OBJECT_LOGITS)])
+        generator = torch.Generator().manual_seed(offset)
+        masks.append(torch.randn(len(_OBJECTS), height // 4, width // 4, generator=generator))
+    return {"pred_logits": torch.tensor(logits), "pred_boxes": torch.stack(boxes), "pred_masks": torch.stack(masks)}
+
+
+def _grid_sensitive_context(run: Any = _grid_sensitive_run) -> core.PredictionContext:
+    """A prediction context around a fake ``run``: identity normalization, no resize.
+
+    Examples:
+        >>> _grid_sensitive_context().class_names
+        ['square']
+    """
+    return core.PredictionContext(
+        config=SimpleNamespace(patch_size=_PATCH, num_windows=1, num_channels=3),
+        device=torch.device("cpu"),
+        default_shape=(_SIDE, _SIDE),
+        means=[0.0, 0.0, 0.0],
+        stds=[1.0, 1.0, 1.0],
+        class_names=["square"],
+        class_id_to_name={0: "square"},
+        num_classes=1,
+        num_keypoints_per_class=[],
+        postprocess=PostProcess(),
+        run=run,
+        runtime_info={},
+    )
+
+
+def _two_class_context() -> core.PredictionContext:
+    """A prediction context around :func:`_two_class_run` with classes ``a`` and ``b``.
+
+    Examples:
+        >>> _two_class_context().class_names
+        ['a', 'b']
+    """
+    return replace(
+        _grid_sensitive_context(_two_class_run),
+        class_names=["a", "b"],
+        class_id_to_name={0: "a", 1: "b"},
+        num_classes=2,
+    )
+
+
+def _predict(images: Any, threshold: Any = 0.0, shift_tta: int = 1) -> Any:
+    """Predict with the grid-sensitive model.
+
+    Examples:
+        >>> len(_predict(_square_image(16)))
+        1
+    """
+    return core._predict_batch(_grid_sensitive_context, images, threshold, None, None, True, False, shift_tta)
+
+
+class TestShiftTTAHelpers:
+    """The pure helpers: argument check, offsets, canvas placement and mapping back."""
+
+    @pytest.mark.parametrize("value", [1, 2, 4, 16])
+    def test_validate_accepts_one_to_patch_size(self, value: int) -> None:
+        assert validate_shift_tta(value, patch_size=16) == value
+
+    @pytest.mark.parametrize("value", [0, -1, 17, 2.0, True, "4", None])
+    def test_validate_rejects_other_values(self, value: object) -> None:
+        with pytest.raises(ValueError, match="shift_tta must be an integer from 1 to the patch size"):
+            validate_shift_tta(value, patch_size=16)
+
+    @pytest.mark.parametrize(
+        ("patch_size", "passes", "expected"),
+        [(16, 1, [0]), (16, 2, [0, 8]), (16, 4, [0, 4, 8, 12]), (12, 4, [0, 3, 6, 9]), (14, 4, [0, 4, 7, 10])],
+    )
+    def test_offsets_are_even_fractions_of_a_patch(self, patch_size: int, passes: int, expected: list[int]) -> None:
+        assert shift_offsets(patch_size, passes) == expected
+
+    def test_canvas_holds_the_whole_batch_at_the_offset(self) -> None:
+        batch = torch.rand(2, 3, 8, 6)
+        canvas = place_on_canvas(batch, offset=3, margin=4)
+        assert canvas.shape == (2, 3, 12, 10)
+        torch.testing.assert_close(canvas[:, :, 3:11, 3:9], batch)
+        assert canvas.sum() == pytest.approx(batch.sum().item())
+
+    @pytest.mark.parametrize("offset", [0, 3, 7])
+    def test_boxes_map_back_to_the_image(self, offset: int) -> None:
+        """A box at a known place in the image, expressed on the canvas, maps back to that place."""
+        h, w, margin = 48, 64, 16
+        x0, y0, x1, y1 = 10.0, 5.0, 30.0, 25.0
+        canvas_box = [(x0 + x1) / 2 + offset, (y0 + y1) / 2 + offset, x1 - x0, y1 - y0]
+        scale = torch.tensor([w + margin, h + margin, w + margin, h + margin])
+        outputs = {"pred_boxes": (torch.tensor(canvas_box) / scale).view(1, 1, 4)}
+        mapped = map_to_image(outputs, offset, (h, w), margin)["pred_boxes"].view(4)
+        expected = torch.tensor([(x0 + x1) / 2 / w, (y0 + y1) / 2 / h, (x1 - x0) / w, (y1 - y0) / h])
+        torch.testing.assert_close(mapped, expected)
+
+    def test_masks_map_back_to_the_image_region(self) -> None:
+        """Mask logits are resampled from the image's part of the canvas, at the same resolution per pixel."""
+        canvas_logits = torch.zeros(1, 1, 20, 20)
+        canvas_logits[..., 2:18, 2:18] = 1.0  # the image's region, for offset 8 and image side 64 at 1/4 resolution
+        mapped = map_to_image({"pred_boxes": torch.zeros(1, 1, 4), "pred_masks": canvas_logits}, 8, (64, 64), 16)
+        assert mapped["pred_masks"].shape == (1, 1, 16, 16)
+        torch.testing.assert_close(mapped["pred_masks"], torch.ones(1, 1, 16, 16))
+
+
+class TestFusePasses:
+    """Averaging the detections of the passes."""
+
+    def test_matching_detections_average_box_and_score(self) -> None:
+        fused = fuse_passes([_detections([[0, 0, 10, 10]], [0.9], [0]), _detections([[1, 1, 11, 11]], [0.5], [0])])
+        np.testing.assert_allclose(fused.xyxy, [[0.5, 0.5, 10.5, 10.5]])
+        np.testing.assert_allclose(fused.confidence, [0.7], rtol=1e-6)
+
+    def test_a_missed_pass_counts_as_zero(self) -> None:
+        fused = fuse_passes([_detections([[0, 0, 10, 10]], [0.8], [0]), sv.Detections.empty()])
+        np.testing.assert_allclose(fused.confidence, [0.4], rtol=1e-6)
+
+    def test_other_class_or_low_overlap_is_another_object(self) -> None:
+        first = _detections([[0, 0, 10, 10]], [0.8], [0])
+        fused = fuse_passes([first, _detections([[0, 0, 10, 10], [5, 5, 15, 15]], [0.6, 0.4], [1, 0])])
+        np.testing.assert_allclose(sorted(fused.confidence), [0.2, 0.3, 0.4], rtol=1e-6)
+
+    def test_prefers_the_highest_scoring_match_over_the_closest_box(self) -> None:
+        """DETR often has a low-score query on a near-copy of a box; it must not take the object's real match."""
+        first = _detections([[0, 0, 10, 10]], [0.9], [0])
+        second = _detections([[0, 0, 10, 10], [0.5, 0.5, 10.5, 10.5]], [0.01, 0.9], [0, 0])
+        fused = fuse_passes([first, second])
+        assert fused.confidence[0] == pytest.approx(0.9)
+
+    def test_each_pass_joins_a_group_once(self) -> None:
+        """Two detections of one pass on the same object stay in different groups."""
+        first = _detections([[0, 0, 10, 10]], [0.9], [0])
+        second = _detections([[0, 0, 10, 10], [0, 0, 10, 10]], [0.7, 0.3], [0, 0])
+        np.testing.assert_allclose(fuse_passes([first, second]).confidence, [0.8, 0.15], rtol=1e-6)
+
+    def test_keeps_data_of_the_best_detection_and_sorts_by_score(self) -> None:
+        first = _detections([[0, 0, 10, 10], [50, 50, 60, 60]], [0.3, 0.9], [0, 0])
+        second = _detections([[0, 0, 10, 10], [50, 50, 60, 60]], [0.3, 0.9], [0, 0])
+        for detections in (first, second):
+            detections.data["class_name"] = np.array(["low", "high"])
+        fused = fuse_passes([first, second])
+        assert fused.data["class_name"].tolist() == ["high", "low"]
+
+    def test_no_detections_keep_the_passes_schema(self) -> None:
+        """With every pass empty, the result keeps the data keys and dtypes the passes carry, in a new object."""
+        empty = sv.Detections(
+            xyxy=np.zeros((0, 4), np.float32),
+            confidence=np.zeros(0, np.float32),
+            class_id=np.zeros(0, np.int64),
+            data={"class_name": np.array([], dtype=str)},
+        )
+        fused = fuse_passes([empty, empty])
+        assert len(fused) == 0
+        assert fused is not empty
+        assert fused.data.keys() == {"class_name"}
+        assert fused.data["class_name"].dtype == empty.data["class_name"].dtype
+        assert fused.xyxy.shape == (0, 4)
+
+    def test_seeding_above_threshold_keeps_the_same_kept_groups(self) -> None:
+        """Letting only rows above the threshold seed changes no group whose fused score is above it."""
+        rng = np.random.default_rng(0)
+        objects = rng.uniform(0, 80, size=(8, 2))
+        passes = []
+        for _ in range(4):
+            corners = np.repeat(objects, 3, axis=0) + rng.normal(0, 1.5, size=(24, 2))
+            boxes = np.hstack([corners, corners + 20]).tolist()
+            passes.append(_detections(boxes, rng.uniform(0, 1, 24).tolist(), rng.integers(0, 2, 24).tolist()))
+        threshold = np.float32(0.3)
+        everything = fuse_passes(passes)
+        expected = everything[everything.confidence > threshold]
+        seeds = np.concatenate([p.confidence for p in passes]) > threshold
+        restricted = fuse_passes(passes, group_passes(passes, can_seed=seeds))
+        kept = restricted[restricted.confidence > threshold]
+        assert len(expected) > 0 and len(expected) < len(everything)
+        np.testing.assert_array_equal(kept.xyxy, expected.xyxy)
+        np.testing.assert_array_equal(kept.confidence, expected.confidence)
+
+    def test_only_allowed_rows_seed_groups(self) -> None:
+        """A row that may not seed still joins a group as a member, and starts none of its own."""
+        first = _detections([[0, 0, 10, 10], [50, 50, 60, 60]], [0.9, 0.3], [0, 0])
+        second = _detections([[1, 1, 11, 11]], [0.2], [0])
+        assert group_passes([first, second], can_seed=np.array([True, False, False])) == [[0, 2]]
+
+
+class TestVoteMasks:
+    """Fusing the masks of each group from mask logits."""
+
+    def test_masks_keep_pixels_covered_by_at_least_half(self) -> None:
+        masks = torch.zeros(3, 4, 4, dtype=torch.bool)
+        masks[0, :2] = True
+        masks[1, :3] = True
+        masks[2, :1] = True
+        logits = [torch.where(mask, 1.0, -1.0).unsqueeze(0) for mask in masks]
+        fused = vote_masks(logits, [[(0, 0), (1, 0), (2, 0)]], size=(4, 4))
+        torch.testing.assert_close(fused, masks[:1])
+
+
+class TestShiftTTAMaskFusion:
+    """Masks of a four-query segmentation model through ``predict(..., shift_tta=3)``, end to end."""
+
+    def test_fused_masks_match_the_per_member_majority_vote(self, mocker: MockerFixture) -> None:
+        """Each kept detection's mask is the old majority vote over its own members' full-size masks.
+
+        The expected masks are built here from the mapped mask logits with plain torch, one member plane at a time,
+        as the per-pass post-processing built them before fusion: bilinear resize to the image, ``> 0``, then
+        ``mean >= 0.5`` over the members that found the object.
+        """
+        decode = mocker.spy(core, "_shift_candidates")
+        context, image = partial(_grid_sensitive_context, _multi_query_run), torch.full((3, _SIDE, _SIDE), 0.5)
+        detections = core._predict_batch(context, image, 0.0, None, None, False, False, 3)
+        # Each pass's outputs after `map_to_image`, read from call args: `spy_return_list` needs pytest-mock 3.13.
+        passes = [call.args[1] for call in decode.call_args_list]
+        expected, strict = [], []
+        for query in range(len(_OBJECTS)):
+            members = [
+                outputs["pred_masks"][0, query]
+                for outputs in passes
+                if torch.sigmoid(outputs["pred_logits"][0, query, 0]) > 0
+            ]
+            planes = [
+                torch.nn.functional.interpolate(
+                    member[None, None], size=(_SIDE, _SIDE), mode="bilinear", align_corners=False
+                )[0, 0]
+                > 0.0
+                for member in members
+            ]
+            share = torch.stack(planes).float().mean(dim=0)
+            expected.append(share >= 0.5)
+            strict.append(share > 0.5)
+        queries = [int(np.abs(np.array(_OBJECTS) - box).sum(axis=1).argmin()) for box in detections.xyxy]
+        # Rows come back by fused score, not query order, and the two-member group has tie pixels that `>=` keeps.
+        assert queries == [1, 3, 0, 2]
+        assert not torch.equal(expected[_MISSING_QUERY], strict[_MISSING_QUERY])
+        np.testing.assert_array_equal(detections.mask, torch.stack([expected[q] for q in queries]).numpy())
+
+    def test_resizes_one_group_of_mask_planes_at_a_time(self, mocker: MockerFixture) -> None:
+        """Each resize call takes one kept group's member planes at mask-head size, never more than the passes."""
+        resize = mocker.spy(torch.nn.functional, "interpolate")
+        context, image = partial(_grid_sensitive_context, _multi_query_run), torch.full((3, _SIDE, _SIDE), 0.5)
+        core._predict_batch(context, image, 0.0, None, None, False, False, 3)
+        mask_inputs = [tuple(call.args[0].shape) for call in resize.call_args_list if call.args[0].shape[1] == 1]
+        # Kept groups by fused score: three of 3 members, then the one a pass missed, of 2; 11 planes in all.
+        assert mask_inputs == [(3, 1, 16, 16), (3, 1, 16, 16), (3, 1, 16, 16), (2, 1, 16, 16)]
+
+    @pytest.mark.parametrize(("shift_tta", "called"), [(1, True), (3, False)])
+    def test_per_pass_mask_postprocessing_runs_only_on_the_plain_path(
+        self, shift_tta: int, called: bool, mocker: MockerFixture
+    ) -> None:
+        """The shifted path never builds per-pass source-size masks through ``PostProcess._postprocess_masks``."""
+        postprocess_masks = mocker.spy(PostProcess, "_postprocess_masks")
+        context, image = partial(_grid_sensitive_context, _multi_query_run), torch.full((3, _SIDE, _SIDE), 0.5)
+        core._predict_batch(context, image, 0.0, None, None, False, False, shift_tta)
+        assert postprocess_masks.called is called
+
+
+class TestShiftTTAPredict:
+    """End to end through the prediction pipeline, with a model whose score depends on the patch-grid phase."""
+
+    def test_single_pass_score_swings_with_the_grid_phase(self) -> None:
+        scores = [_predict(_square_image(corner)).confidence[0] for corner in range(16, 32)]
+        assert max(scores) - min(scores) > 0.8
+
+    @pytest.mark.parametrize("corner", range(16, 32))
+    def test_four_passes_remove_the_swing_and_keep_the_box(self, corner: int) -> None:
+        """Four passes a quarter patch apart average the periodic score to a constant; the box stays exact."""
+        detections = _predict(_square_image(corner), shift_tta=4)
+        assert len(detections) == 1
+        assert detections.confidence[0] == pytest.approx(0.5, abs=1e-5)
+        np.testing.assert_allclose(detections.xyxy[0], [corner, corner, corner + _SQUARE, corner + _SQUARE])
+
+    def test_masks_come_back_in_place(self) -> None:
+        detections = _predict(_square_image(20), shift_tta=2)
+        expected = np.zeros((_SIDE, _SIDE), dtype=bool)
+        expected[20 : 20 + _SQUARE, 20 : 20 + _SQUARE] = True
+        assert detections.mask.shape == (1, _SIDE, _SIDE)
+        assert (detections.mask[0] & expected).sum() / (detections.mask[0] | expected).sum() > 0.85
+
+    @pytest.mark.parametrize(("threshold", "shift_tta", "kept"), [(0.6, 1, 1), (0.6, 4, 0), (0.4, 4, 1)])
+    def test_threshold_applies_to_the_fused_score(self, threshold: float, shift_tta: int, kept: int) -> None:
+        """The single-pass score is ~0.95 and the four-pass fused score 0.5."""
+        assert len(_predict(_square_image(16), threshold=threshold, shift_tta=shift_tta)) == kept
+
+    @pytest.mark.parametrize(("threshold", "kept"), [(0.5, True), (0.54, True), (0.56, False), (0.95, False)])
+    def test_fused_score_is_the_plain_mean_thresholded_once(self, threshold: float, kept: bool) -> None:
+        """Pass scores 0.9 and 0.2 fuse to 0.55; the bar applies to that mean, not to each pass.
+
+        A bar at 0.5 passes although 0.2 is below 0.5 / 2, and one at 0.56 drops the object although a pass scored 0.9.
+        """
+        context = partial(_grid_sensitive_context, _half_patch_run)
+        detections = core._predict_batch(context, _square_image(16), threshold, None, None, False, False, 2)
+        np.testing.assert_allclose(detections.confidence, [0.55] if kept else [], rtol=1e-6)
+
+    @pytest.mark.parametrize(("threshold", "kept"), [(0.4, 1), (0.6, 0)])
+    def test_class_thresholds_apply_to_the_fused_score(self, threshold: float, kept: int) -> None:
+        detections = _predict(_square_image(16), threshold=ClassThresholds({"square": threshold}), shift_tta=4)
+        assert len(detections) == kept
+
+    def test_batch_returns_a_list_with_source_metadata(self) -> None:
+        results = _predict([_square_image(16), _square_image(24)], shift_tta=2)
+        assert isinstance(results, list) and len(results) == 2
+        for result, corner in zip(results, (16, 24)):
+            np.testing.assert_allclose(result.xyxy[0], [corner, corner, corner + _SQUARE, corner + _SQUARE])
+            assert result.metadata["source_image"].shape == (_SIDE, _SIDE, 3)
+            assert result.data["class_name"].tolist() == ["square"]
+            assert result.data["source_shape"].tolist() == [[_SIDE, _SIDE]]
+
+    @pytest.mark.parametrize(
+        ("run", "threshold"),
+        [
+            pytest.param(_no_score_run, 0.0, id="every-pass-empty"),
+            pytest.param(_grid_sensitive_run, 0.99, id="no-group-above-threshold"),
+        ],
+    )
+    def test_no_detection_keeps_the_plain_schema(self, run: Any, threshold: float) -> None:
+        """An image with no kept detection still carries ``class_name``, ``source_shape`` and a ``(0, H, W)`` mask."""
+        context, image = partial(_grid_sensitive_context, run), _square_image(16)
+        detections = core._predict_batch(context, image, threshold, None, None, False, False, 2)
+        plain = core._predict_batch(context, image, threshold, None, None, False, False)
+        assert len(detections) == 0
+        assert detections.data.keys() == plain.data.keys() == {"class_name", "source_shape"}
+        assert detections.data["source_shape"].shape == (0, 2)
+        assert detections.mask is not None and detections.mask.shape == plain.mask.shape == (0, _SIDE, _SIDE)
+
+    @pytest.mark.parametrize(("shift_tta", "passes"), [(1, 1), (2, 2), (4, 4)])
+    def test_the_model_runs_once_per_pass_and_shift_tta_one_stays_plain(
+        self, shift_tta: int, passes: int, mocker: MockerFixture
+    ) -> None:
+        """``shift_tta=1`` never takes the shifted path and runs the model once; ``N`` runs it ``N`` times."""
+        shifted = mocker.spy(core, "_predict_shifted")
+        run = mocker.Mock(wraps=_grid_sensitive_run)
+        context = partial(_grid_sensitive_context, run)
+        core._predict_batch(context, _square_image(20), 0.0, None, None, False, False, shift_tta)
+        assert run.call_count == passes
+        assert shifted.called is (shift_tta != 1)
+
+
+class TestShiftTTAClassThresholds:
+    """Per-class thresholds on a two-class model: class ``a`` fuses to 0.55, class ``b`` to 0.4."""
+
+    @pytest.mark.parametrize(
+        ("thresholds", "kept"),
+        [
+            pytest.param(ClassThresholds({"a": 0.5, "b": 0.3}), ["a", "b"], id="both-above-their-own-bar"),
+            pytest.param(ClassThresholds({"a": 0.6, "b": 0.3}), ["b"], id="a-below-its-bar-above-the-lowest"),
+            pytest.param(ClassThresholds({"a": 0.5, "b": 0.45}), ["a"], id="b-below-its-bar"),
+            pytest.param(ClassThresholds({"b": 0.3}, default=0.6), ["b"], id="default-drops-a"),
+            pytest.param(ClassThresholds({"a": 0.5}, default=0.45), ["a"], id="default-drops-b"),
+            pytest.param(ClassThresholds([0.5, 0.3]), ["a", "b"], id="one-per-class-sequence"),
+            pytest.param(ClassThresholds({"a": float("inf")}, default=0.3), ["b"], id="inf-drops-a"),
+        ],
+    )
+    def test_each_class_is_held_to_its_own_bar(self, thresholds: ClassThresholds, kept: list[str]) -> None:
+        """Rows come back by fused score, ``a`` (0.55) before ``b`` (0.4); a class under its own bar is dropped."""
+        detections = core._predict_batch(_two_class_context, _square_image(16), thresholds, None, None, False, False, 2)
+        assert detections.data["class_name"].tolist() == kept
+
+    def test_fused_scores_are_means_over_the_passes_below_the_lowest_bar(self) -> None:
+        """A pass of ``a`` scoring 0.2 is under the lowest bar, 0.3, and still counts toward the 0.55 mean."""
+        thresholds = ClassThresholds({"a": 0.5, "b": 0.3})
+        detections = core._predict_batch(_two_class_context, _square_image(16), thresholds, None, None, False, False, 2)
+        np.testing.assert_allclose(detections.confidence, [0.55, 0.4], rtol=1e-6)
+        assert detections.class_id.tolist() == [0, 1]
+
+
+class TestShiftTTAValidation:
+    """``shift_tta`` is refused before any image is read, whatever the value compares equal to."""
+
+    @pytest.mark.parametrize("value", [True, 1.0, 0, _PATCH + 1])
+    def test_rejects_before_any_image_is_read(self, value: object, mocker: MockerFixture) -> None:
+        decode = mocker.spy(core, "_decode_prefetched_jpegs")
+        with pytest.raises(ValueError, match="shift_tta must be an integer from 1 to the patch size"):
+            core._predict_batch(_grid_sensitive_context, _square_image(16), 0.5, None, None, False, False, value)
+        decode.assert_not_called()
+
+    def test_refuses_keypoint_models_before_any_image_is_read(self, mocker: MockerFixture) -> None:
+        context = partial(replace, _grid_sensitive_context(), num_keypoints_per_class=[17])
+        decode = mocker.spy(core, "_decode_prefetched_jpegs")
+        with pytest.raises(ValueError, match="does not support keypoint models"):
+            core._predict_batch(context, _square_image(16), 0.5, None, None, False, False, 2)
+        decode.assert_not_called()
+
+
+class TestShiftTTAPublicAPI:
+    """``RFDETR.predict(..., shift_tta=N)``."""
+
+    def test_rejects_out_of_range_values(self) -> None:
+        model = _DummyRFDETR()
+        with pytest.raises(ValueError, match="shift_tta must be an integer"):
+            model.predict(PIL.Image.new("RGB", (28, 28)), shift_tta=0)
+
+    def test_rejects_keypoint_models(self) -> None:
+        model = _DummyRFDETR()
+        model.model = _DummyModel(labels=[0], include_keypoints=True)
+        model.model.args = SimpleNamespace(num_keypoints_per_class=[17])
+        with pytest.raises(ValueError, match="does not support keypoint models"):
+            model.predict(PIL.Image.new("RGB", (28, 28)), shift_tta=2)
+
+    def test_segmentation_model_returns_image_sized_masks(self) -> None:
+        torch.manual_seed(0)
+        model = RFDETRSegNano(pretrain_weights=None)
+        detections = model.predict(PIL.Image.new("RGB", (100, 80), (128, 128, 128)), threshold=0.0, shift_tta=2)
+        assert isinstance(detections, sv.Detections)
+        assert detections.mask is not None and detections.mask.shape[1:] == (80, 100)
+        assert detections.xyxy[:, [0, 2]].max() <= 100 and detections.xyxy[:, [1, 3]].max() <= 80
+        assert len(detections) > 0
+        assert detections.mask.dtype == np.bool_
+        assert len(detections.mask) == len(detections) == len(detections.data["class_name"])
+        assert detections.mask.any(axis=(1, 2)).any()

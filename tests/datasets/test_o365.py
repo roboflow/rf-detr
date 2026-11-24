@@ -5,16 +5,22 @@
 # ------------------------------------------------------------------------
 """Tests for the Object365 dataset module."""
 
-import PIL.Image
+import subprocess
+import sys
 
 
-def test_o365_import_keeps_finite_decompression_bomb_guard() -> None:
-    """Importing ``o365`` must not disable PIL's decompression-bomb guard process-wide."""
-    from rfdetr.datasets import o365  # noqa: F401
+def test_importing_rfdetr_keeps_process_pixel_limit() -> None:
+    """Importing ``rfdetr`` must not change ``PIL.Image.MAX_IMAGE_PIXELS`` (#1716).
 
-    assert PIL.Image.MAX_IMAGE_PIXELS is not None, (
-        "o365 must set a finite MAX_IMAGE_PIXELS cap, not None (which disables the guard globally)"
+    Runs in a fresh interpreter: the package is already imported here, so an import-time side effect is not observable.
+    """
+    code = (
+        "import PIL.Image; "
+        "PIL.Image.MAX_IMAGE_PIXELS = 10_000; "
+        "import rfdetr; "
+        "assert PIL.Image.MAX_IMAGE_PIXELS == 10_000, PIL.Image.MAX_IMAGE_PIXELS"
     )
-    assert PIL.Image.MAX_IMAGE_PIXELS >= 178_956_970, (
-        "the cap must stay above PIL's default so legitimate large O365 images still load"
-    )
+
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stderr

@@ -29,6 +29,7 @@ from rfdetr.export._tflite.inference import (
     _preprocess_image,
     _run_inference,
 )
+from tests._oriented_photo import upright_reference, write_oriented_photo
 
 # ---------------------------------------------------------------------------
 # Shared helpers / factories
@@ -439,6 +440,28 @@ class TestRunInference(_RgbImageFixture):
         with pytest.raises(ValueError) as exc_info:
             _run_inference(interp, rgb_image)
         assert "float32" in str(exc_info.value)
+
+
+class TestRunInferenceExifOrientation:
+    """``_run_inference`` reads a tagged photo upright, as ``predict()`` reads a file."""
+
+    def test_returned_image_is_upright(self, tmp_path: Path) -> None:
+        """A photo stored 64 x 32 with EXIF orientation 6 comes back as ``ImageOps.exif_transpose`` shows it."""
+        photo = tmp_path / "photo.png"
+        write_oriented_photo(photo, 6, width=64, height=32)
+
+        _, image = _run_inference(_make_interp(), photo)
+
+        np.testing.assert_array_equal(np.asarray(image), upright_reference(photo))
+
+    def test_boxes_are_in_the_upright_frame(self, tmp_path: Path) -> None:
+        """A centred box spans the upright 32 x 64 photo, not the stored 64 x 32 one."""
+        photo = tmp_path / "photo.png"
+        write_oriented_photo(photo, 6, width=64, height=32)
+
+        dets, _ = _run_inference(_make_interp(), photo, threshold=0.3)
+
+        np.testing.assert_allclose(dets.xyxy[0], [14.4, 28.8, 17.6, 35.2], rtol=1e-5)
 
 
 # ---------------------------------------------------------------------------

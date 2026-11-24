@@ -13,7 +13,7 @@ description: Overview of exporting RF-DETR models to ONNX, TensorRT, TFLite, Lit
     - TensorRT conversion delivers the lowest latency on NVIDIA GPUs — 2.3 ms for Nano on a T4, TensorRT FP16, model only, batch 1 (the architecture headline on the [Benchmarks page](../learn/benchmarks.md); the end-to-end numbers below are a different measurement, see "Which latency number is this?")
     - INT8 quantization: dynamic-range for TFLite (no calibration data), static for ONNX, OpenVINO and TensorRT (calibration data required; see [TensorRT INT8](tensorrt.md#int8))
     - Custom input resolutions supported (must be divisible by `patch_size × num_windows`, which varies by model variant)
-    - Export to ExecuTorch for on-device PyTorch inference (XNNPACK, CoreML, QNN)
+    - Export to ExecuTorch for on-device PyTorch inference (XNNPACK, CoreML, QNN, TensorRT)
     - Export directly to native CoreML (`.mlpackage`) for Xcode / Apple-platform deployment
     - Adding a format is an in-tree contribution — see [Exporter Blueprint](blueprint.md)
     - Per-format details are in the format guides below
@@ -33,7 +33,7 @@ For detailed installation, examples, and inference code per format, see the form
 - [TFLite](tflite.md) — ONNX → TensorFlow → TFLite conversion for mobile and edge devices.
 - [LiteRT](litert.md) — PyTorch → `.tflite` via `litert-torch`, no ONNX or TensorFlow step.
 - [OpenVINO](openvino.md) — OpenVINO IR for Intel CPUs, GPUs, and NPUs.
-- [ExecuTorch](executorch.md) — `.pte` binaries for XNNPACK, CoreML, and QNN backends.
+- [ExecuTorch](executorch.md) — `.pte` binaries for XNNPACK, CoreML, QNN, and TensorRT backends.
 - [Native CoreML](coreml.md) — `.mlpackage` export for Xcode / Apple platforms.
 - [Core AI](coreai.md) — `.aimodel` export for iOS / iPadOS / macOS 27+.
 

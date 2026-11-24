@@ -104,6 +104,7 @@ from rfdetr.export._resize import _bilinear_resize_half_pixel
 from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.export.base import ExportConfig, Exporter
 from rfdetr.export.prepare import ExportGraph
+from rfdetr.utilities.exif import exif_orientation, upright_image
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.package import is_installed
 
@@ -863,8 +864,8 @@ def _load_calibration_images(
 ) -> NDArray[np.float32]:
     """Load images from a directory and prepare them for calibration.
 
-    Images are loaded, resized to ``(height, width)``, converted to ``float32`` in ``[0, 1]``, and stacked into an NHWC
-    array.
+    Images are loaded upright for their EXIF orientation, resized to ``(height, width)``, converted to ``float32`` in
+    ``[0, 1]``, and stacked into an NHWC array.
 
     Args:
         image_dir: Directory containing image files (JPEG, PNG, etc.).
@@ -899,7 +900,7 @@ def _load_calibration_images(
     for img_path in image_paths:
         try:
             with Image.open(img_path) as _img:
-                img = _img.convert("RGB")
+                img = upright_image(_img, exif_orientation(_img)).convert("RGB")
             # Retain predict()'s resize convention (bilinear, half-pixel, no antialias) for pixel-distribution
             # fidelity if the conditional validation hook consumes these images; model building does not use them.
             # PIL's default resize (BICUBIC + adaptive antialias) diverges from that distribution.

@@ -54,6 +54,7 @@ from rfdetr.export._tflite.exporter import (
 )
 from rfdetr.export.imports import _IS_ONNX_GRAPHSURGEON_INSTALLED, _IS_ONNX_INSTALLED, _IS_ONNXRUNTIME_INSTALLED
 from tests._markers import _requires_onnx
+from tests._oriented_photo import upright_reference, write_oriented_photo
 
 _requires_onnx2tf = pytest.mark.skipif(not _IS_ONNX2TF_AVAILABLE, reason="onnx2tf not installed")
 
@@ -1139,6 +1140,21 @@ class TestLoadCalibrationImages:
         assert float(np.abs(pil_default - ref).max()) > 0.05, (
             "PIL's default resize unexpectedly matches the reference; this test no longer discriminates."
         )
+
+    def test_tagged_photo_loads_as_its_upright_copy(self, tmp_path: Path) -> None:
+        """A photo with EXIF orientation 6 loads as its upright copy does, as training and ``predict()`` see it."""
+        from PIL import Image
+
+        tagged_dir, upright_dir = tmp_path / "tagged", tmp_path / "upright"
+        tagged_dir.mkdir()
+        upright_dir.mkdir()
+        write_oriented_photo(tagged_dir / "photo.png", 6, width=64, height=32)
+        Image.fromarray(upright_reference(tagged_dir / "photo.png")).save(upright_dir / "photo.png")
+        expected = _load_calibration_images(upright_dir, height=48, width=24)
+
+        result = _load_calibration_images(tagged_dir, height=48, width=24)
+
+        np.testing.assert_array_equal(result, expected)
 
     def test_respects_max_images(self, tmp_path: Path) -> None:
         """At most ``max_images`` images are loaded from the directory."""

@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Tests for static INT8 quantization of ONNX exports (:mod:`rfdetr.export._onnx.quantize`)."""
 
+from math import sqrt
 from pathlib import Path
 
 import numpy as np
@@ -27,6 +28,7 @@ __doctest_requires__ = {
         "_matmul_chain",
         "_relu_tail",
         "_attention_graph",
+        "_mlp_graph",
     ): ["onnx"],
 }
 
@@ -244,9 +246,88 @@ def _attention_graph() -> object:
     return helper.make_graph(nodes, "attention", inputs, outputs)
 
 
+def _mlp_graph(activation: str) -> object:
+    """Build a two-layer MLP block with a residual connection and a following block's first projection.
+
+    ``fc1`` reads the graph input, ``fc2`` reads the activation of ``fc1``, and ``next_fc1`` reads the residual sum that
+    ``fc2``'s output joins. The graph ends in a run of ``Relu`` nodes longer than the head walk, so no multiply is held
+    back as a head and what ``nodes_to_exclude`` returns is decided by the activation alone.
+
+    Args:
+        activation: ``"gelu"`` for decomposed GELU, ``"native-gelu"`` for the opset-20 operator, or ``"relu"`` for ReLU.
+
+    Returns:
+        An ``onnx.GraphProto``.
+
+    Examples:
+        >>> sorted(n.name for n in _mlp_graph("relu").node if n.op_type == "MatMul")
+        ['fc1', 'fc2', 'next_fc1']
+    """
+    from onnx import TensorProto, helper
+
+    nodes = [helper.make_node("MatMul", ["x", "w_fc1"], ["h"], name="fc1")]
+    if activation == "gelu":
+        nodes += [
+            helper.make_node("Div", ["h", "sqrt2"], ["scaled"], name="gelu_div"),
+            helper.make_node("Erf", ["scaled"], ["erf"], name="gelu_erf"),
+            helper.make_node("Add", ["erf", "one"], ["erf_plus_one"], name="gelu_add"),
+            helper.make_node("Mul", ["h", "erf_plus_one"], ["gated"], name="gelu_gate"),
+            helper.make_node("Mul", ["gated", "half"], ["act"], name="gelu_half"),
+        ]
+    elif activation == "native-gelu":
+        nodes.append(helper.make_node("Gelu", ["h"], ["act"], name="act"))
+    else:
+        nodes.append(helper.make_node("Relu", ["h"], ["act"], name="act"))
+    nodes += [
+        helper.make_node("MatMul", ["act", "w_fc2"], ["y"], name="fc2"),
+        helper.make_node("Add", ["y", "x"], ["residual"], name="residual"),
+        helper.make_node("MatMul", ["residual", "w_next"], ["z"], name="next_fc1"),
+    ]
+    tail, tail_end = _relu_tail("z", 11, "tail")
+    # Use distinct weights so ORT cannot share one quantized initializer across the projections.
+    constants = [
+        helper.make_tensor(name, TensorProto.FLOAT, [1, 1], [value])
+        for name, value in {
+            "w_fc1": 0.25,
+            "w_fc2": 0.75,
+            "w_next": 1.5,
+            "sqrt2": sqrt(2),
+            "one": 1.0,
+            "half": 0.5,
+        }.items()
+    ]
+    return helper.make_graph(
+        nodes + tail,
+        "mlp",
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, [1, 1, 1, 1])],
+        [helper.make_tensor_value_info(tail_end, TensorProto.FLOAT, [1, 1, 1, 1])],
+        initializer=constants,
+    )
+
+
 @_requires_onnx
 class TestNodeSelection:
     """Which nodes are held back from quantization."""
+
+    def test_excludes_projection_reading_a_gelu_when_asked(self) -> None:
+        """The second MLP projection, which reads the GELU output, is excluded when ``keep_mlp_float`` is set."""
+        # The GELU output has a heavy tail (a few outlier channels), so one 8-bit step set by them rounds the rest.
+        assert "fc2" in nodes_to_exclude(_mlp_graph("gelu"), keep_mlp_float=True)
+
+    def test_quantizes_projection_reading_a_gelu_by_default(self) -> None:
+        """Without ``keep_mlp_float`` the fast placement leaves the second MLP projection in INT8."""
+        assert "fc2" not in nodes_to_exclude(_mlp_graph("gelu"))
+
+    def test_keeps_projections_around_the_gelu_quantizable(self) -> None:
+        """The projection before the GELU and the next block's first projection stay quantizable."""
+        # The walk back from ``fc2`` stops at ``fc2``'s own producer chain, and the walk from ``next_fc1`` stops at
+        # ``fc2``, so neither sees the Erf.
+        excluded = nodes_to_exclude(_mlp_graph("gelu"), keep_mlp_float=True)
+        assert "fc1" not in excluded and "next_fc1" not in excluded
+
+    def test_keeps_projection_reading_a_relu_quantizable(self) -> None:
+        """A projection reading a ReLU (a decoder feed-forward layer) is not held back."""
+        assert "fc2" not in nodes_to_exclude(_mlp_graph("relu"), keep_mlp_float=True)
 
     def test_excludes_matmul_feeding_softmax(self) -> None:
         """A MatMul feeding a Softmax is excluded from INT8 quantization."""
@@ -262,11 +343,11 @@ class TestNodeSelection:
         # output must still be quantized, or the mode buys nothing.
         assert "projection" not in nodes_to_exclude(_attention_graph())
 
-    def test_head_walk_stops_at_the_first_matmul_of_a_path(self) -> None:
-        """The head walk stops at the first MatMul of a path, so a multiply behind it stays quantizable."""
-        # "values" feeds the head Gemm; the walk from the output ends at that Gemm, so a multiply behind it is
-        # not part of the head and stays quantizable.
-        assert "values" not in nodes_to_exclude(_attention_graph())
+    def test_excludes_value_matmul_reading_the_softmax_output(self) -> None:
+        """The multiply that applies the Softmax weights to the values is excluded from INT8 quantization."""
+        # "values" reads the Softmax output and a second activation. An 8-bit range over [0, 1] rounds small attention
+        # weights to zero, and a window with more tokens has more of them.
+        assert "values" in nodes_to_exclude(_attention_graph())
 
     def test_excludes_output_end_of_a_matmul_chain_but_not_its_start(self) -> None:
         """In a long chain of multiplies only a run at the output end is held back; the start stays quantizable."""
@@ -420,6 +501,12 @@ class TestConfigValidation:
         assert exporter.config.quantization == "int8"
 
     @pytest.mark.parametrize("quantization", [None, "fp32"])
+    def test_rejects_keep_mlp_float_without_int8(self, quantization: str | None, tmp_path: Path) -> None:
+        """The MLP placement setting changes nothing without INT8, so asking for it is refused."""
+        with pytest.raises(ValueError, match="int8_keep_mlp_float"):
+            OnnxExporter(OnnxConfig(output_dir=tmp_path, quantization=quantization, int8_keep_mlp_float=True))
+
+    @pytest.mark.parametrize("quantization", [None, "fp32"])
     def test_accepts_float_modes_without_calibration_data(self, quantization: str | None, tmp_path: Path) -> None:
         """Float modes construct the exporter without calibration_data."""
         exporter = OnnxExporter(OnnxConfig(output_dir=tmp_path, quantization=quantization))
@@ -433,6 +520,15 @@ class TestSettingPlumbing:
         """Quantization settings given to build_config reach the exporter config."""
         config = OnnxExporter.build_config(quantization="int8", calibration_data="images/", max_images=32)
         assert (config.quantization, config.calibration_data, config.max_images) == ("int8", "images/", 32)
+
+    def test_mlp_placement_setting_reaches_the_config(self) -> None:
+        """The opt-in precise placement given to build_config reaches the exporter config."""
+        config = OnnxExporter.build_config(quantization="int8", calibration_data="images/", int8_keep_mlp_float=True)
+        assert config.int8_keep_mlp_float is True
+
+    def test_mlp_placement_defaults_to_the_fast_placement(self) -> None:
+        """A config built without the setting keeps the fast placement."""
+        assert OnnxExporter.build_config(quantization="int8", calibration_data="images/").int8_keep_mlp_float is False
 
     @pytest.mark.parametrize(
         "two_stage_config",
@@ -476,6 +572,60 @@ class TestQuantizeInt8EndToEnd:
     Unmarked on purpose: ``e2e_onnx`` tests are by convention also ``integration`` and so skipped by the default CPU CI
     job, but this graph is a few nodes and the runtime is in the ``tests`` group, so it can run there.
     """
+
+    @pytest.mark.parametrize(
+        ("opset", "activation"),
+        [pytest.param(17, "gelu", id="decomposed-gelu"), pytest.param(20, "native-gelu", id="native-gelu")],
+    )
+    @pytest.mark.parametrize("keep_mlp_float", [False, True])
+    def test_mlp_placement_in_quantized_artifact(
+        self, tmp_path: Path, opset: int, activation: str, keep_mlp_float: bool
+    ) -> None:
+        """Both GELU forms leave the first projection quantized and keep the second in float only on request."""
+        import onnx
+        from onnx import helper
+
+        source = tmp_path / "mlp.onnx"
+        model = helper.make_model(_mlp_graph(activation), opset_imports=[helper.make_opsetid("", opset)], ir_version=9)
+        onnx.save(model, source)
+        data = np.linspace(-2, 2, 8, dtype=np.float32).reshape(8, 1, 1, 1)
+        artifact = onnx.load(quantize_int8(source, data, keep_mlp_float=keep_mlp_float))
+
+        assert _dequantized_inputs(artifact, "fc1") == [True, True]
+        assert _dequantized_inputs(artifact, "fc2") == [not keep_mlp_float, not keep_mlp_float]
+
+    def test_quantizes_graph_with_tensor_axes_reduce_max_feeding_topk(
+        self, tmp_path: Path, onnxruntime: object
+    ) -> None:
+        """Preserve proposal selection when ReduceMax takes axes as a tensor, as it does at opset 20."""
+        import onnx
+        from onnx import TensorProto, helper
+
+        graph = _mlp_graph("native-gelu")
+        graph.node.extend(
+            [
+                helper.make_node("Neg", ["x"], ["neg"]),
+                helper.make_node("Concat", ["x", "neg"], ["proposals"], axis=-1),
+                helper.make_node(
+                    "Constant", [], ["axes"], value=helper.make_tensor("axes", TensorProto.INT64, [1], [-2])
+                ),
+                helper.make_node(
+                    "Constant", [], ["one_row"], value=helper.make_tensor("k", TensorProto.INT64, [1], [1])
+                ),
+                helper.make_node("ReduceMax", ["proposals", "axes"], ["scores"], keepdims=0),
+                helper.make_node("TopK", ["scores", "one_row"], ["values", "indices"]),
+            ]
+        )
+        graph.output.append(helper.make_tensor_value_info("indices", TensorProto.INT64, [1, 1, 1]))
+        source = tmp_path / "proposals.onnx"
+        onnx.save(helper.make_model(graph, opset_imports=[helper.make_opsetid("", 20)], ir_version=9), source)
+        data = np.linspace(-2, 2, 8, dtype=np.float32).reshape(8, 1, 1, 1)
+
+        artifact = quantize_int8(source, data, keep_mlp_float=True)
+
+        session = onnxruntime.InferenceSession(str(artifact), providers=["CPUExecutionProvider"])
+        (indices,) = session.run(["indices"], {"x": data[:1]})
+        np.testing.assert_array_equal(indices, np.array([[[1]]], dtype=np.int64))
 
     @pytest.fixture
     def onnxruntime(self) -> object:

@@ -727,6 +727,36 @@ class TestTrainConfigT42PromotedFields:
         """The valid range stays accepted, including fractional warmup and zero for both fields."""
         assert getattr(_make_train_config(tmp_path, **{field: value}), field) == value
 
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("lr_vit_layer_decay", 0.0),
+            ("lr_vit_layer_decay", -0.8),
+            ("lr_component_decay", -0.7),
+        ],
+    )
+    def test_layer_decay_fields_reject_non_positive_values(self, tmp_path: Path, field: str, value: float) -> None:
+        """Reject negative decays and a zero ViT decay."""
+        with pytest.raises(ValidationError, match=field):
+            _make_train_config(tmp_path, **{field: value})
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [
+            ("lr_vit_layer_decay", 0.8),
+            ("lr_vit_layer_decay", 1.0),
+            ("lr_component_decay", 0.7),
+            ("lr_component_decay", 1.0),
+        ],
+    )
+    def test_layer_decay_fields_accept_positive_values(self, tmp_path: Path, field: str, value: float) -> None:
+        """Positive decay rates stay valid, including ``1.0`` for a disabled decay."""
+        assert getattr(_make_train_config(tmp_path, **{field: value}), field) == value
+
+    def test_component_decay_accepts_zero(self, tmp_path: Path) -> None:
+        """Zero component decay remains available for freezing encoder and decoder learning rates."""
+        assert _make_train_config(tmp_path, lr_component_decay=0.0).lr_component_decay == 0.0
+
     def test_batch_size_auto_is_accepted(self, tmp_path):
         """batch_size accepts the special 'auto' value."""
         tc = _make_train_config(tmp_path, batch_size="auto")
@@ -1470,7 +1500,6 @@ class TestPretrainWeightsCompatibilityWarning:
             ("lite_refpoint_refine", False),
             ("layer_norm", False),
             ("two_stage", False),
-            ("num_channels", 1),
         ],
     )
     def test_load_breaking_override_warns(self, field: str, value: object) -> None:
@@ -1502,10 +1531,14 @@ class TestPretrainWeightsCompatibilityWarning:
         [
             ("num_queries", 200),
             ("num_queries", 300),
+            ("num_queries", 400),
             ("group_detr", 8),
             ("num_classes", 5),
             ("resolution", 448),
             ("positional_encoding_size", 20),
+            # A 3-channel checkpoint loads and its stem is adapted to the new width, so nothing is left random.
+            ("num_channels", 1),
+            ("num_channels", 4),
         ],
     )
     def test_silent_field_overrides(self, field: str, value: object) -> None:
@@ -1515,7 +1548,6 @@ class TestPretrainWeightsCompatibilityWarning:
     @pytest.mark.parametrize(
         "field, value",
         [
-            ("num_queries", 400),
             ("group_detr", 20),
         ],
     )
@@ -1562,11 +1594,11 @@ class TestPretrainWeightsCompatibilityWarning:
             RFDETRNanoConfig,
             encoder="dinov2_registers_windowed_small",
             hidden_dim=384,
-            num_queries=400,
+            group_detr=20,
         )
         assert len(captured) == 1
         message = str(captured[0].message)
-        for needle in ("encoder", "hidden_dim", "num_queries"):
+        for needle in ("encoder", "hidden_dim", "group_detr"):
             assert needle in message, f"expected {needle!r} in consolidated warning message"
 
     def test_warning_is_user_warning_subclass(self) -> None:
@@ -1588,20 +1620,20 @@ class TestPretrainWeightsCompatibilityWarning:
         assert self._capture(_DefaultFactoryConfig, encoder="dinov2_registers_windowed_small") == []
 
     def test_increase_field_when_required_skips_comparison(self) -> None:
-        """A subclass where ``num_queries`` becomes required (no default) must be skipped."""
+        """A subclass where ``group_detr`` becomes required (no default) must be skipped."""
 
-        class _RequiredNumQueriesConfig(RFDETRNanoConfig):
-            num_queries: int  # type: ignore[misc]  # no default → required
+        class _RequiredGroupDetrConfig(RFDETRNanoConfig):
+            group_detr: int  # type: ignore[misc]  # no default → required
 
-        assert self._capture(_RequiredNumQueriesConfig, num_queries=400) == []
+        assert self._capture(_RequiredGroupDetrConfig, group_detr=20) == []
 
     def test_increase_field_with_non_int_default_skips_comparison(self) -> None:
-        """A subclass where ``num_queries`` has a non-int default must be skipped (can't ``>`` compare)."""
+        """A subclass where ``group_detr`` has a non-int default must be skipped (can't ``>`` compare)."""
 
         class _NonIntDefaultConfig(RFDETRNanoConfig):
-            num_queries: Any = "300"  # type: ignore[assignment]  # non-int default
+            group_detr: Any = "13"  # type: ignore[assignment]  # non-int default
 
-        assert self._capture(_NonIntDefaultConfig, num_queries="400") == []
+        assert self._capture(_NonIntDefaultConfig, group_detr="20") == []
 
     def test_explicit_variant_default_path_runs_arch_override_check(self) -> None:
         """Passing the variant's own published-default path string must still check arch overrides.
@@ -1654,7 +1686,6 @@ class TestBreakingListIntegrity:
             "two_stage",
             "patch_size",
             "segmentation_head",
-            "num_channels",
             "num_queries",
             "group_detr",
         }

@@ -36,6 +36,7 @@ from rfdetr.export._backend import _BackboneExport
 from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.backbone.dinov2 import DinoV2
+from rfdetr.utilities.exif import exif_orientation, upright_image
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -203,7 +204,7 @@ def make_infer_image(
     """Build the example input tensor an export traces with.
 
     Args:
-        infer_dir: Path to a sample image, or ``None`` to synthesize one.
+        infer_dir: Path to a sample image, read upright for its EXIF orientation, or ``None`` to synthesize one.
         shape: Target ``(height, width)``.
         batch_size: Number of copies stacked into the batch dimension.
         device: Device the returned tensor is placed on.
@@ -239,7 +240,7 @@ def make_infer_image(
                 "For non-RGB models, omit `infer_dir` to use a synthetic dummy input."
             )
         with Image.open(infer_dir) as _img:
-            image = _img.convert("RGB")
+            image = upright_image(_img, exif_orientation(_img)).convert("RGB")
 
     # Tensorize-then-resize with antialias=False mirrors RFDETR.predict()'s preprocessing, so the
     # traced example input (and any export sanity check run on it) sees production-domain tensors.

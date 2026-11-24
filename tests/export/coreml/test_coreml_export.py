@@ -60,6 +60,17 @@ _requires_coremltools = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason
 _COREML_MAX_ABS_DIFF = 1e-4
 
 
+class _FP16Transform:
+    """Stand-in for ``coremltools.transform.FP16ComputePrecision`` so the naming tests need no coremltools."""
+
+    def __init__(self, op_selector: Any = None) -> None:
+        self.op_selector = op_selector
+
+
+class _FP16TransformSubclass(_FP16Transform):
+    """A subclass of the stand-in, like a transform derived from ``FP16ComputePrecision``."""
+
+
 def _coreml_parity_diffs(
     mlpackage_path: Path,
     pytorch_model: torch.nn.Module,
@@ -374,14 +385,104 @@ class TestResolveComputePrecision:
         self, tmp_path: Path, precision: object, expected: object
     ) -> None:
         """Each name reaches its own member, no precision means float32, and a member is passed through."""
-        api = _CoreMLApi(convert=mock.Mock(), target=mock.Mock(), float32="fp32-member", float16="fp16-member")
+        api = _CoreMLApi(
+            convert=mock.Mock(),
+            target=mock.Mock(),
+            float32="fp32-member",
+            float16="fp16-member",
+            fp16_transform=_FP16Transform,
+        )
         exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path, compute_precision=precision))
 
         assert exporter._resolve_compute_precision(api) is expected
 
 
+class TestPrecisionFilenameLabel:
+    """``_resolve_output_file`` names the bundle after the resolved precision, without needing coremltools."""
+
+    @staticmethod
+    def _api() -> _CoreMLApi:
+        """Build bound entry points whose precision members are plain strings and whose transform is a stand-in.
+
+        Returns:
+            A ``_CoreMLApi`` with no real ``coremltools`` behind it.
+
+        Examples:
+            >>> TestPrecisionFilenameLabel._api().float16
+            'fp16-member'
+        """
+        return _CoreMLApi(
+            convert=mock.Mock(),
+            target=mock.Mock(),
+            float32="fp32-member",
+            float16="fp16-member",
+            fp16_transform=_FP16Transform,
+        )
+
+    @pytest.mark.parametrize(
+        "precision, label",
+        [
+            pytest.param("fp16-member", "fp16", id="float16-member"),
+            pytest.param("fp32-member", "fp32", id="float32-member"),
+            pytest.param(_FP16Transform(op_selector=lambda op: False), "fp16", id="transform-keeping-every-op-float32"),
+            pytest.param(_FP16Transform(), "fp16", id="transform-with-default-selector"),
+            pytest.param(_FP16TransformSubclass(), "fp16", id="transform-subclass"),
+        ],
+    )
+    def test_labels_a_recognized_precision_without_a_warning(
+        self,
+        tmp_path: Path,
+        precision: object,
+        label: str,
+        caplog: pytest.LogCaptureFixture,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A member or an ``FP16ComputePrecision`` instance, whatever its selector, names its own label silently."""
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path, variant_name="rfdetr-nano"))
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            output_file = exporter._resolve_output_file(tmp_path, precision, self._api(), backbone_only=False)
+
+        assert output_file.name == f"rfdetr-nano_{label}.mlpackage"
+        assert not any("Unrecognized CoreML compute precision" in record.getMessage() for record in caplog.records)
+
+    def test_labels_the_transform_class_itself_fp32_and_warns(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The class is not an instance of itself as a precision, so it takes the fp32 fallback and warns."""
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path, variant_name="rfdetr-nano"))
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            output_file = exporter._resolve_output_file(tmp_path, _FP16Transform, self._api(), backbone_only=False)
+
+        assert output_file.name == "rfdetr-nano_fp32.mlpackage"
+        assert any("Unrecognized CoreML compute precision" in record.getMessage() for record in caplog.records)
+
+
 class TestConvertDeploymentTarget:
     """``_build_mlmodel`` must hand ``coremltools.convert`` the iOS15 deployment target."""
+
+    def test_hands_a_precision_transform_to_convert_unchanged(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        """The transform object reaches ``convert`` as given, so its ``op_selector`` still decides what stays fp32."""
+        convert = mock.Mock(return_value="mlmodel")
+        api = _CoreMLApi(
+            convert=convert,
+            target=mock.Mock(),
+            float32="fp32-member",
+            float16="fp16-member",
+            fp16_transform=_FP16Transform,
+        )
+        exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path))
+        transform = _FP16Transform(op_selector=lambda op: op != "resample")
+        mocker.patch.object(exporter, "_export_program")
+        mocker.patch.object(exporter, "_check_op_coverage")
+        mocker.patch("rfdetr.export._coreml.exporter.rfdetr_pass_pipeline")
+
+        exporter._build_mlmodel(mock.Mock(), transform, api)
+
+        assert convert.call_args.kwargs["compute_precision"] is transform
 
     @pytest.mark.parametrize("precision_member", ["fp32-member", "fp16-member"])
     def test_converts_for_ios15_so_the_neural_engine_runs_a_spec_6_program(
@@ -396,7 +497,9 @@ class TestConvertDeploymentTarget:
         """
         target = mock.Mock()
         convert = mock.Mock(return_value="mlmodel")
-        api = _CoreMLApi(convert=convert, target=target, float32="fp32-member", float16="fp16-member")
+        api = _CoreMLApi(
+            convert=convert, target=target, float32="fp32-member", float16="fp16-member", fp16_transform=_FP16Transform
+        )
         exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path))
 
         export_program = mocker.patch.object(exporter, "_export_program")
@@ -424,7 +527,13 @@ class TestPassPipelineGuard:
         ``KeyError`` escaped ``_import_coreml_api`` unclassified, so a coremltools release that breaks the pass
         registration broke every export with an error that did not mention Core ML.
         """
-        api = _CoreMLApi(convert=mock.Mock(), target=mock.Mock(), float32="fp32-member", float16="fp16-member")
+        api = _CoreMLApi(
+            convert=mock.Mock(),
+            target=mock.Mock(),
+            float32="fp32-member",
+            float16="fp16-member",
+            fp16_transform=_FP16Transform,
+        )
         exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path))
 
         mocker.patch.object(exporter, "_export_program")
@@ -548,6 +657,29 @@ class TestExportCoremlBareDefaultNaming:
         assert output_file.name == "inference_model_fp16.mlpackage"
         mock_mlmodel.save.assert_called_once_with(str(output_file))
 
+    @_requires_coremltools
+    def test_fp16_compute_precision_transform_gets_fp16_label(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A ``FP16ComputePrecision`` transform is fp16 (coremltools lowers ``FLOAT16`` to one), so it is named so.
+
+        A caller passes the transform to keep selected ops, e.g. ``resample``, in float32. The bundle is fp16 either
+        way, so the filename must not say ``fp32`` and the export must not warn about an unrecognized precision.
+        """
+        import coremltools as ct
+
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        exporter = CoreMLExporter(CoreMLConfig(output_dir=tmp_path, variant_name="rfdetr-nano"))
+        transform = ct.transform.FP16ComputePrecision(op_selector=lambda op: op.op_type != "resample")
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            output_file = exporter._resolve_output_file(
+                tmp_path, transform, exporter._import_coreml_api(), backbone_only=False
+            )
+
+        assert output_file.name == "rfdetr-nano_fp16.mlpackage"
+        assert not any("Unrecognized CoreML compute precision" in record.getMessage() for record in caplog.records)
+
     @pytest.mark.parametrize(
         "variant_name, output_name, neural_engine, full_name, backbone_name",
         [
@@ -575,6 +707,7 @@ class TestExportCoremlBareDefaultNaming:
         marker, so it never overwrites the default export of the same model; an explicit ``output_name`` stays as given.
         """
         coremltools = mock.MagicMock()
+        coremltools.transform.FP16ComputePrecision = type("FP16ComputePrecision", (), {})
         full_model, backbone_model = mock.MagicMock(), mock.MagicMock()
         coremltools.convert.side_effect = [full_model, backbone_model]
         exported_program = mock.MagicMock()

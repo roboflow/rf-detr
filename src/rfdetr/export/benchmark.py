@@ -36,6 +36,7 @@ from rfdetr.export._tensorrt.inference import (
     _run_tensorrt_session,
     _TensorRTSession,
 )
+from rfdetr.utilities.exif import exif_orientation, upright_image
 from rfdetr.utilities.logger import get_logger
 
 # The public surface is the timing API only; the LW-DETR CLI helpers below stay importable by name but are not exported.
@@ -59,7 +60,16 @@ def get_image_list(ann_file: str) -> list[dict[str, Any]]:
 
 
 def load_image(file_path: str) -> Image.Image:
-    return Image.open(file_path).convert("RGB")
+    """Load an image file as an RGB image, upright for its EXIF orientation as ``predict()`` reads a path.
+
+    Args:
+        file_path: Image file to load.
+
+    Returns:
+        The decoded RGB image, closed from its file.
+    """
+    with Image.open(file_path) as image:
+        return upright_image(image, exif_orientation(image)).convert("RGB")
 
 
 _DEFAULT_INPUT_SIZE = (640, 640)
