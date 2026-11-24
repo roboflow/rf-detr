@@ -27,6 +27,7 @@ from rfdetr.export._benchmark import (
     _download,
     evaluate_coco_ap,
     evaluate_coco_map,
+    evaluate_coco_predictions,
     fetch_coco_val2017,
     select_coco_val_ids,
 )
@@ -467,6 +468,51 @@ class TestDownload:
         _download("http://images.cocodataset.org/val2017/000000000002.jpg", tmp_path / "000000000002.jpg")
 
         assert urlopen.call_args.kwargs["timeout"] > 0
+
+
+class TestEvaluateCocoPredictions:
+    """Score stored predictions on the whole subset or on parts of it, without a model or an image decode."""
+
+    @staticmethod
+    def _perfect_predictions() -> dict[int, sv.Detections]:
+        """Return the ground-truth detections of every synthetic image, keyed by image ID.
+
+        Examples:
+            >>> sorted(TestEvaluateCocoPredictions._perfect_predictions())
+            [1, 2, 3]
+        """
+        return {image_id: _gt_detections(Image.new("RGB", size)) for image_id, size in _IMAGE_SIZES.items()}
+
+    def test_stored_predictions_score_as_the_run_did(self, tmp_path: Path) -> None:
+        """Scoring what a run returned gives the AP :func:`evaluate_coco_ap` gives the run itself."""
+        subset = _write_coco(tmp_path)
+        stored = evaluate_coco_predictions(self._perfect_predictions(), subset, "detect")
+        live = evaluate_coco_ap(_gt_detections, subset, "detect", progress=False)
+        assert stored == live
+
+    def test_scores_only_the_requested_images(self, tmp_path: Path) -> None:
+        """A part of the subset is scored on its own: a miss outside it does not count, one inside it does."""
+        subset = _write_coco(tmp_path)
+        predictions = self._perfect_predictions() | {3: sv.Detections.empty()}
+        whole = evaluate_coco_predictions(predictions, subset, "detect")
+        part = evaluate_coco_predictions(predictions, subset, "detect", image_ids=[1, 2])
+        assert (part.n_images, part.box_ap) == (2, pytest.approx(1.0))
+        assert (whole.n_images, whole.box_ap) == (3, pytest.approx(whole.box_ap)) and whole.box_ap < 1.0
+
+    def test_all_empty_predictions_score_zero_without_an_evaluator(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        evaluator = mocker.patch("rfdetr.evaluation.coco_eval.CocoEvaluator", autospec=True)
+        empty = {image_id: sv.Detections.empty() for image_id in _IMAGE_SIZES}
+        result = evaluate_coco_predictions(empty, _write_coco(tmp_path), "detect")
+        assert (result.box_ap, result.box_ap50, result.task_ap, result.n_images) == (0.0, 0.0, None, 3)
+        evaluator.assert_not_called()
+
+    def test_missing_prediction_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(KeyError):
+            evaluate_coco_predictions({1: sv.Detections.empty()}, _write_coco(tmp_path), "detect")
+
+    def test_unknown_task_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="Unknown COCO task"):
+            evaluate_coco_predictions(self._perfect_predictions(), _write_coco(tmp_path), "pose")  # type: ignore[arg-type]
 
 
 class TestEvaluateCocoAp:

@@ -1097,13 +1097,23 @@ def _predict_shifted(prepared: _PreparedBatch, patch_size: int | None) -> _Predi
             outputs = context.run(placed[0] if len(placed) == 1 else torch.cat(placed))
             del placed
             split = {key: torch.chunk(outputs[key], len(chunk)) for key in _FUSED_OUTPUT_KEYS if key in outputs}
+            mapped_boxes = []
             for position, index in enumerate(chunk):
                 view_outputs = {key: parts[position] for key, parts in split.items()}
                 masks = view_outputs.get("pred_masks")
                 mask_size = None if masks is None else _mask_size(masks, size, canvas, ratio, len(groups))
                 view_outputs = map_to_image(view_outputs, views[index], size, canvas, mask_size)
-                candidates[index] = _shift_candidates(context.postprocess, view_outputs, prepared.target_sizes)
+                mapped_boxes.append(view_outputs["pred_boxes"])
                 mask_logits[index] = view_outputs.get("pred_masks")
+            # One top-k and one copy to the host for every view of the forward, not one pair per view: the rows are
+            # independent, so the result is the one a per-view call gives.
+            rows = _shift_candidates(
+                context.postprocess,
+                {"pred_logits": outputs["pred_logits"], "pred_boxes": torch.cat(mapped_boxes)},
+                prepared.target_sizes.repeat(len(chunk), 1),
+            )
+            for position, index in enumerate(chunk):
+                candidates[index] = rows[position * batch.shape[0] : (position + 1) * batch.shape[0]]
 
     thresholds = (
         None if prepared.threshold_by_class_id is None else prepared.threshold_by_class_id.float().cpu().numpy()

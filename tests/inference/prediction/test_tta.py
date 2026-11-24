@@ -386,11 +386,17 @@ class TestShiftTTAMaskFusion:
         as the per-pass post-processing built them before fusion: bilinear resize to the image, ``> 0``, then
         ``mean >= 0.5`` over the members that found the object.
         """
-        decode = mocker.spy(core, "_shift_candidates")
+        # Each pass's outputs after `map_to_image`, recorded as returned: `spy_return_list` needs pytest-mock 3.13.
+        passes = []
+        real_map = core.map_to_image
+
+        def record(*args: object, **kwargs: object) -> dict[str, torch.Tensor]:
+            passes.append(real_map(*args, **kwargs))
+            return passes[-1]
+
+        mocker.patch.object(core, "map_to_image", side_effect=record)
         context, image = partial(_grid_sensitive_context, _multi_query_run), torch.full((3, _SIDE, _SIDE), 0.5)
         detections = core._predict_batch(context, image, 0.0, None, None, False, False, 3)
-        # Each pass's outputs after `map_to_image`, read from call args: `spy_return_list` needs pytest-mock 3.13.
-        passes = [call.args[1] for call in decode.call_args_list]
         expected, strict = [], []
         for query in range(len(_OBJECTS)):
             members = [
@@ -733,6 +739,15 @@ class TestGroupedForward:
         np.testing.assert_array_equal(batched.xyxy, loop.xyxy)
         np.testing.assert_array_equal(batched.confidence, loop.confidence)
         np.testing.assert_array_equal(batched.mask, loop.mask)
+
+    def test_detections_are_decoded_once_per_forward_not_once_per_view(self, mocker: MockerFixture) -> None:
+        """One top-k and one host copy serve every view of a forward, so the host sync count does not grow with V."""
+        decode = mocker.spy(core, "_shift_candidates")
+        run, rows = self._counting_run()
+        mocker.patch.object(core, "_views_per_forward", side_effect=lambda _context, _rows, _canvas, views: views)
+        _predict_tta(_square_image(20), TTAConfig(shift=4, flip=True), run=run)
+        assert rows == [8]
+        assert decode.call_count == 1
 
     def test_views_are_fused_in_their_original_order_whichever_group_runs_first(self, mocker: MockerFixture) -> None:
         """A zoom view that shares no canvas with the shifts still counts as the view it is in the config."""

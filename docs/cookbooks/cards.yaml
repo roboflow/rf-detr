@@ -1,4 +1,10 @@
 cards:
+  - href: tta-latency-accuracy/
+    name: "TTA Views: Latency, Memory and Accuracy"
+    labels: [INFERENCE, LATENCY, COCO2017]
+    version: v1.13.0
+    author: Borda
+    description: "Sweep 1 to 8 test-time augmentation views (shift, mirror, zoom) for every model size on full COCO val2017, and plot box AP against latency, peak memory, per-stage cost and score steadiness to see when extra views pay."
   - href: multi-source-rf100vl/
     name: "Train on RF100-VL sources with size-balanced weights"
     labels: [TRAINING, PYTORCH LIGHTNING]
