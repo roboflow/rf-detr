@@ -11,7 +11,7 @@ Probe assumptions (worst-case so training does not OOM):
   uses the max resolution seen in training.
 - Targets: Memory grows with number of targets per image. We use
   auto_batch_max_targets_per_image (config) to synthesize that many targets per image so the probe reflects worst-case
-  matcher and loss memory.
+  matcher and loss memory. Keypoint models get fully visible keypoints on every target, in the criterion's schema.
 - EMA: When use_ema is True, an EMA copy of the model is kept in memory. We
   apply auto_batch_ema_headroom (e.g. 0.7) to the probed batch size so the effective safe batch leaves room for the EMA
   model.
@@ -78,23 +78,56 @@ def _make_synthetic_batch(
     segmentation_head: bool = False,
     max_targets_per_image: int = 1,
     num_channels: int = 3,
+    num_keypoints_per_class: Sequence[int] | None = None,
 ) -> tuple[NestedTensor, list[dict[str, torch.Tensor]]]:
     """Build a minimal (samples, targets) batch for probing.
 
-    Uses max_targets_per_image targets per image so memory reflects worst-case matcher and loss. When segmentation_head
-    is True, each target dict includes "masks" of shape (max_targets_per_image, resolution, resolution).
+    Uses max_targets_per_image targets per image so memory reflects worst-case matcher and loss.
+
+    Args:
+        micro_batch_size: Number of images in the batch.
+        resolution: Square image size in pixels.
+        device: Device the batch is allocated on.
+        num_classes: Number of classes; picks the synthetic label when there is no keypoint schema.
+        segmentation_head: If True, each target includes "masks" of shape (max_targets_per_image, resolution,
+            resolution).
+        max_targets_per_image: Number of synthetic targets per image.
+        num_channels: Number of image channels.
+        num_keypoints_per_class: The criterion's keypoint schema, or ``None`` for a model without keypoints. When
+            given, each target includes "keypoints" of shape (max_targets_per_image, max(num_keypoints_per_class), 3),
+            padded to the largest class the way the datasets pad them, and every target is labelled with the first
+            class that has that many keypoints, all of them visible: slot 0 of ``[17]``, slot 1 of the
+            background-first ``[0, 17]``.
+
+    Returns:
+        The random images as a ``NestedTensor`` and one target dict per image.
+
+    Examples:
+        >>> _, targets = _make_synthetic_batch(1, 32, torch.device("cpu"), 1, num_keypoints_per_class=[0, 17])
+        >>> targets[0]["labels"].tolist(), tuple(targets[0]["keypoints"].shape)
+        ([1], (1, 17, 3))
     """
     tensors = torch.randn(micro_batch_size, num_channels, resolution, resolution, device=device)
     mask = torch.zeros(micro_batch_size, resolution, resolution, dtype=torch.bool, device=device)
     samples = NestedTensor(tensors, mask)
 
     max_label = max(0, num_classes - 1)
+    label = min(1, max_label)
     n = max(1, max_targets_per_image)
+    keypoints: torch.Tensor | None = None
+    if num_keypoints_per_class:
+        # The keypoint loss only scores the keypoints of the target's own class, and a class with none (the
+        # background slot of [0, 17]) would leave it with nothing to measure.
+        max_keypoints = max(num_keypoints_per_class)
+        label = list(num_keypoints_per_class).index(max_keypoints)
+        # Normalized x, y inside the synthetic box below, visibility 2 (labelled and visible).
+        coords = torch.linspace(0.45, 0.55, max_keypoints, device=device)
+        keypoints = torch.stack([coords, coords, torch.full_like(coords, 2.0)], dim=-1).expand(n, max_keypoints, 3)
     targets: list[dict[str, torch.Tensor]] = []
     for idx in range(micro_batch_size):
         # Replicate one box/label n times so matcher and loss see n targets per image.
         boxes = torch.tensor([[0.5, 0.5, 0.2, 0.2]], dtype=torch.float32, device=device).expand(n, 4)
-        labels = torch.tensor([min(1, max_label)], dtype=torch.int64, device=device).expand(n)
+        labels = torch.tensor([label], dtype=torch.int64, device=device).expand(n)
         iscrowd = torch.zeros(n, dtype=torch.int64, device=device)
         area = torch.full((n,), 0.04, dtype=torch.float32, device=device)
         t: dict[str, torch.Tensor] = {
@@ -108,6 +141,8 @@ def _make_synthetic_batch(
         }
         if segmentation_head:
             t["masks"] = torch.zeros(n, resolution, resolution, dtype=torch.bool, device=device)
+        if keypoints is not None:
+            t["keypoints"] = keypoints
         targets.append(t)
     return samples, targets
 
@@ -249,11 +284,12 @@ def _probe_step(
 
     Args:
         model: The model to probe; already in train mode, and left untouched apart from its gradients.
-        criterion: The loss criterion (must match model output and target format).
+        criterion: The loss criterion (must match model output and target format). When it runs the "keypoints"
+            loss, the synthetic targets carry keypoints in its ``num_keypoints_per_class`` schema.
         micro_batch_size: Per-device batch size to attempt in this single step.
         resolution: Input spatial size (square) for the synthetic images.
         device: CUDA device the synthetic batch is allocated on.
-        num_classes: Number of classes, used to pick synthetic target labels.
+        num_classes: Number of classes; picks the synthetic label when the criterion has no keypoint schema.
         amp: Whether to run the forward under autocast.
         trainable_params: The model's ``requires_grad`` parameters, in the order ``shadow_params`` was built from --
             index i of one must correspond to index i of the other, which the aliasing loop asserts.
@@ -274,6 +310,11 @@ def _probe_step(
     try:
         model.zero_grad(set_to_none=True)
         criterion.zero_grad(set_to_none=True)
+        # Taken from the criterion rather than passed in: it is what reads target["keypoints"], so every caller of
+        # the probe builds keypoint targets in the schema the loss and matcher use.
+        keypoint_schema = None
+        if "keypoints" in getattr(criterion, "losses", ()):
+            keypoint_schema = getattr(criterion, "num_keypoints_per_class", None)
         samples, targets = _make_synthetic_batch(
             micro_batch_size=micro_batch_size,
             resolution=resolution,
@@ -282,6 +323,7 @@ def _probe_step(
             segmentation_head=segmentation_head,
             max_targets_per_image=max_targets_per_image,
             num_channels=num_channels,
+            num_keypoints_per_class=keypoint_schema,
         )
 
         autocast_kwargs: dict[str, Any] = {"device_type": "cuda", "enabled": amp}
@@ -371,7 +413,7 @@ def probe_max_micro_batch(
         criterion: The loss criterion (must match model output and target format).
         resolution: Input spatial size (square).
         device: CUDA device to run on.
-        num_classes: Number of classes (for synthetic targets).
+        num_classes: Number of classes; picks the synthetic label when the criterion has no keypoint schema.
         amp: Whether to use autocast for the forward.
         segmentation_head: If True, synthetic targets include "masks" for loss_masks.
         max_targets_per_image: Number of synthetic targets per image (worst-case memory).
