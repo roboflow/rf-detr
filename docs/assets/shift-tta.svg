@@ -1,0 +1,517 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="612" viewBox="0 0 1000 612" role="img" aria-labelledby="title desc">
+  <!-- Illustrative scores, box errors and a missed dog in pass 2. Generated; regenerate rather than hand-edit. -->
+  <title id="title">Plain prediction against shift test-time augmentation</title>
+  <desc id="desc">Two pages that flip. Page 1: a plain prediction runs the network once on the whole input image, which holds a person and a small dog, and returns a bounding box with a score for each: person 0.91 and dog 0.70, both kept. Page 2: with shift_tta=4 the same input is moved down and right by 0, a quarter, a half and three quarters of a patch on a canvas one patch larger, so nothing is cropped. Each snapshot goes through the same network once and returns its own boxes and scores. The network finds the person in every pass but misses the dog in one, so that pass counts as 0. The boxes are mapped back by subtracting each offset, grouped when they have the same class and an IoU above 0.6, and averaged into one box per object. In the combine panel the steps play in order: the boxes of each pass slide back by their offset, boxes of the same object are grouped, each group becomes one mean box, and its score is built from one quarter of every pass score, where a pass with no box adds nothing. The person gets 0.91 and the dog gets 0.54, and both are kept. Masks keep the pixels that at least half of the matched masks cover. Scores are illustrative.</desc>
+  <style>
+    text { font-family: "CMU Serif", "Latin Modern Roman", Georgia, "Times New Roman", serif; fill: #ECECEC; }
+    .h { font-size: 24px; } .s { font-size: 15px; fill: #B8B8B8; } .lbl { font-size: 18px; } .t { font-size: 13px; fill: #B8B8B8; }
+    .chip { font-size: 9px; font-weight: 700; fill: #16181D; }
+    .mid { text-anchor: middle; } .end { text-anchor: end; }
+    .run { animation-duration: 20s; animation-iteration-count: infinite; animation-timing-function: linear; }
+    .page { transform-origin: 40px 0px; }
+    @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
+    @keyframes pageA{0%{transform:scaleX(1);opacity:1}25.000%{transform:scaleX(1);opacity:1}28.000%{transform:scaleX(0);opacity:0}98.000%{transform:scaleX(0);opacity:0}100%{transform:scaleX(1);opacity:1}}
+    @keyframes pageB{0%{transform:scaleX(0);opacity:0}25.000%{transform:scaleX(0);opacity:0}28.000%{transform:scaleX(1);opacity:1}95.000%{transform:scaleX(1);opacity:1}98.000%{transform:scaleX(0);opacity:0}100%{transform:scaleX(0);opacity:0}}
+    @keyframes r2{0%{opacity:0}1.000%{opacity:0}3.000%{opacity:1}28.000%{opacity:1}28.500%{opacity:0}100%{opacity:0}}
+    @keyframes r3{0%{opacity:0}4.000%{opacity:0}6.000%{opacity:1}28.000%{opacity:1}28.500%{opacity:0}100%{opacity:0}}
+    @keyframes r4{0%{opacity:0}8.000%{opacity:0}10.000%{opacity:1}28.000%{opacity:1}28.500%{opacity:0}100%{opacity:0}}
+    @keyframes r5{0%{opacity:0}9.000%{opacity:0}11.000%{opacity:1}28.000%{opacity:1}28.500%{opacity:0}100%{opacity:0}}
+    @keyframes r6{0%{opacity:0}14.000%{opacity:0}16.000%{opacity:1}28.000%{opacity:1}28.500%{opacity:0}100%{opacity:0}}
+    @keyframes r7{0%{opacity:0}16.000%{opacity:0}18.000%{opacity:1}28.000%{opacity:1}28.500%{opacity:0}100%{opacity:0}}
+    @keyframes r8{0%{opacity:0}30.000%{opacity:0}32.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r9{0%{opacity:0}39.000%{opacity:0}41.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r10{0%{opacity:0}45.000%{opacity:0}47.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r11{0%{opacity:0}46.000%{opacity:0}48.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r12{0%{opacity:0}32.000%{opacity:0}34.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r13{0%{opacity:0}40.500%{opacity:0}42.500%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r14{0%{opacity:0}47.000%{opacity:0}49.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r15{0%{opacity:0}48.000%{opacity:0}50.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r16{0%{opacity:0}34.000%{opacity:0}36.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r17{0%{opacity:0}42.000%{opacity:0}44.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r18{0%{opacity:0}49.000%{opacity:0}51.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r19{0%{opacity:0}50.000%{opacity:0}52.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r20{0%{opacity:0}36.000%{opacity:0}38.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r21{0%{opacity:0}43.500%{opacity:0}45.500%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r22{0%{opacity:0}51.000%{opacity:0}53.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r23{0%{opacity:0}52.000%{opacity:0}54.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r24{0%{opacity:0}37.000%{opacity:0}39.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r25{0%{opacity:0}53.000%{opacity:0}55.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes gh26{0%{opacity:0;transform:translate(0px,0px)}55.000%{opacity:0;transform:translate(0px,0px)}56.500%{opacity:1;transform:translate(0px,0px)}60.000%{opacity:1;transform:translate(0px,0px)}71.000%{opacity:1;transform:translate(0px,0px)}73.000%{opacity:0.35;transform:translate(0px,0px)}98.000%{opacity:0.35;transform:translate(0px,0px)}98.500%{opacity:0;transform:translate(0px,0px)}100%{opacity:0;transform:translate(0px,0px)}}
+    @keyframes gh27{0%{opacity:0;transform:translate(6px,6px)}57.000%{opacity:0;transform:translate(6px,6px)}58.500%{opacity:1;transform:translate(6px,6px)}62.000%{opacity:1;transform:translate(0px,0px)}71.000%{opacity:1;transform:translate(0px,0px)}73.000%{opacity:0.35;transform:translate(0px,0px)}98.000%{opacity:0.35;transform:translate(0px,0px)}98.500%{opacity:0;transform:translate(6px,6px)}100%{opacity:0;transform:translate(6px,6px)}}
+    @keyframes gh28{0%{opacity:0;transform:translate(12px,12px)}59.000%{opacity:0;transform:translate(12px,12px)}60.500%{opacity:1;transform:translate(12px,12px)}64.000%{opacity:1;transform:translate(0px,0px)}71.000%{opacity:1;transform:translate(0px,0px)}73.000%{opacity:0.35;transform:translate(0px,0px)}98.000%{opacity:0.35;transform:translate(0px,0px)}98.500%{opacity:0;transform:translate(12px,12px)}100%{opacity:0;transform:translate(12px,12px)}}
+    @keyframes gh29{0%{opacity:0;transform:translate(18px,18px)}61.000%{opacity:0;transform:translate(18px,18px)}62.500%{opacity:1;transform:translate(18px,18px)}66.000%{opacity:1;transform:translate(0px,0px)}71.000%{opacity:1;transform:translate(0px,0px)}73.000%{opacity:0.35;transform:translate(0px,0px)}98.000%{opacity:0.35;transform:translate(0px,0px)}98.500%{opacity:0;transform:translate(18px,18px)}100%{opacity:0;transform:translate(18px,18px)}}
+    @keyframes grp{0%{opacity:0}65.000%{opacity:0}67.000%{opacity:1}85.000%{opacity:1}87.000%{opacity:0}100%{opacity:0}}
+    @keyframes r31{0%{opacity:0}71.000%{opacity:0}73.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r32{0%{opacity:0}85.000%{opacity:0}87.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r33{0%{opacity:0}76.000%{opacity:0}78.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r34{0%{opacity:0}77.000%{opacity:0}79.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r35{0%{opacity:0}78.500%{opacity:0}80.500%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r36{0%{opacity:0}80.000%{opacity:0}82.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r37{0%{opacity:0}81.500%{opacity:0}83.500%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r38{0%{opacity:0}84.000%{opacity:0}86.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r39{0%{opacity:0}85.000%{opacity:0}87.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r40{0%{opacity:0}77.000%{opacity:0}79.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r41{0%{opacity:0}78.500%{opacity:0}80.500%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r42{0%{opacity:0}80.000%{opacity:0}82.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r43{0%{opacity:0}81.500%{opacity:0}83.500%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r44{0%{opacity:0}84.000%{opacity:0}86.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r45{0%{opacity:0}85.000%{opacity:0}87.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r46{0%{opacity:0}55.000%{opacity:0}57.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r47{0%{opacity:0}65.000%{opacity:0}67.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r48{0%{opacity:0}71.000%{opacity:0}73.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r49{0%{opacity:0}77.000%{opacity:0}79.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r50{0%{opacity:0}85.000%{opacity:0}87.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+    @keyframes r51{0%{opacity:0}88.000%{opacity:0}90.000%{opacity:1}98.000%{opacity:1}98.500%{opacity:0}100%{opacity:0}}
+  </style>
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#5B7A99"/><stop offset="1" stop-color="#9DB6CC"/></linearGradient>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#B8B8B8"/></marker>
+  </defs>
+  <rect width="1000" height="612" rx="16" fill="#16181D"/>
+  <text class="h" x="40" y="46">One input, shifted snapshots, combined predictions</text>
+  <text class="s" x="40" y="70">Each snapshot is predicted once. The offsets are known, so the boxes are mapped back and combined. Scores are illustrative.</text>
+  <rect x="40" y="96" width="920" height="492" rx="12" fill="#22252C" stroke="#3A3F49"/>
+  <g class="page run" style="opacity:0; animation-name: pageA">
+  <text class="lbl" x="60" y="122">predict()</text>
+  <text class="s" x="60" y="140">the whole input image as it is: one pass through the network</text>
+  <text class="t end" x="940" y="122">page 1 of 2</text>
+  <g class="run" style="animation-name: r2">
+  <svg x="60" y="274.0" width="210" height="96" viewBox="0 0 140 64">
+    <g transform="translate(0 0)">
+      <rect width="140" height="54" fill="url(#sky)"/>
+      <rect y="54" width="140" height="10" fill="#4F6B45"/>
+      <circle cx="51" cy="18" r="5" fill="#F2C9A0"/>
+      <rect x="45" y="24" width="12" height="17" rx="3" fill="#5B8FD6"/>
+      <rect x="46" y="40" width="4.5" height="14" fill="#3B4A66"/><rect x="52" y="40" width="4.5" height="14" fill="#3B4A66"/>
+      <ellipse cx="100" cy="47" rx="10" ry="5" fill="#C08A5A"/><circle cx="112" cy="43" r="4" fill="#C08A5A"/>
+      <path d="M114 39 L116 43 L112 41z" fill="#8A5A1C"/><path d="M90 45 L85 40" stroke="#C08A5A" stroke-width="2" fill="none"/>
+      <rect x="94" y="50" width="3" height="4" fill="#8A5A1C"/><rect x="105" y="50" width="3" height="4" fill="#8A5A1C"/>
+    </g>
+    <line x1="0" y1="0" x2="0" y2="64" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="24" y1="0" x2="24" y2="64" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="48" y1="0" x2="48" y2="64" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="72" y1="0" x2="72" y2="64" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="96" y1="0" x2="96" y2="64" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="120" y1="0" x2="120" y2="64" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="0" x2="140" y2="0" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="24" x2="140" y2="24" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="48" x2="140" y2="48" stroke="#ECECEC" stroke-opacity="0.55"/>
+  </svg>
+  <text class="t" x="60" y="386">input image; the grid is the backbone patches</text>
+  </g>
+  <g class="run" style="animation-name: r3">
+  <line x1="274" y1="322" x2="316" y2="322" stroke="#B8B8B8" stroke-width="1.6" marker-end="url(#arr)"/>
+  <rect x="320" y="297" width="120" height="50" rx="8" fill="#16181D" stroke="#9A72AC" stroke-width="1.5"/>
+  <text class="lbl mid" x="380.0" y="328">network</text>
+  <line x1="444" y1="322" x2="486" y2="322" stroke="#B8B8B8" stroke-width="1.6" marker-end="url(#arr)"/>
+  </g>
+  <g class="run" style="animation-name: r4">
+  <svg x="490" y="274.0" width="210" height="96" viewBox="0 0 140 64">
+    <g transform="translate(0 0)">
+      <rect width="140" height="54" fill="url(#sky)"/>
+      <rect y="54" width="140" height="10" fill="#4F6B45"/>
+      <circle cx="51" cy="18" r="5" fill="#F2C9A0"/>
+      <rect x="45" y="24" width="12" height="17" rx="3" fill="#5B8FD6"/>
+      <rect x="46" y="40" width="4.5" height="14" fill="#3B4A66"/><rect x="52" y="40" width="4.5" height="14" fill="#3B4A66"/>
+      <ellipse cx="100" cy="47" rx="10" ry="5" fill="#C08A5A"/><circle cx="112" cy="43" r="4" fill="#C08A5A"/>
+      <path d="M114 39 L116 43 L112 41z" fill="#8A5A1C"/><path d="M90 45 L85 40" stroke="#C08A5A" stroke-width="2" fill="none"/>
+      <rect x="94" y="50" width="3" height="4" fill="#8A5A1C"/><rect x="105" y="50" width="3" height="4" fill="#8A5A1C"/>
+    </g>
+    <line x1="0" y1="0" x2="0" y2="64" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="24" y1="0" x2="24" y2="64" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="48" y1="0" x2="48" y2="64" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="72" y1="0" x2="72" y2="64" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="96" y1="0" x2="96" y2="64" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="120" y1="0" x2="120" y2="64" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="0" x2="140" y2="0" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="24" x2="140" y2="24" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="48" x2="140" y2="48" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <g class="run" style="animation-name: r5"><rect x="42" y="12" width="18" height="42" fill="none" stroke="#83C167" stroke-width="1.7"/><rect x="42" y="1" width="61" height="11" rx="2" fill="#83C167"/><text class="chip" x="45" y="9.3">person 0.91</text><rect x="88" y="40" width="28" height="15" fill="none" stroke="#83C167" stroke-width="1.7"/><rect x="88" y="29" width="46" height="11" rx="2" fill="#83C167"/><text class="chip" x="91" y="37.3">dog 0.70</text></g>
+  </svg>
+  <text class="t" x="490" y="386">output: every box with its score</text>
+  </g>
+  <g class="run" style="animation-name: r6">
+  <text class="lbl" x="722" y="308" style="fill:#83C167">person 0.91 is kept</text>
+  <text class="lbl" x="722" y="336" style="fill:#83C167">dog 0.70 is kept</text>
+  <text class="t" x="722" y="356">both are above the 0.5 threshold</text>
+  </g>
+  <g class="run" style="animation-name: r7">
+  <text class="s" x="60" y="522">One pass gives one box and one score per object.</text>
+  <text class="s" x="60" y="544">A score depends a little on where the object sits in the patch grid, and a small object can even be missed.</text>
+  <text class="s" x="60" y="566">Next page: shift_tta predicts shifted snapshots of the same input and combines them.</text>
+  </g>
+  </g>
+  <g class="page run" style="animation-name: pageB">
+  <text class="lbl" x="60" y="122">predict(shift_tta=4)</text>
+  <text class="s" x="60" y="140">the same input, moved down and right by 0, ¼, ½ and ¾ of a patch: four snapshots, four passes</text>
+  <text class="t end" x="940" y="122">page 2 of 2 (plain predict() gave person 0.91, dog 0.70)</text>
+  <svg x="60" y="331.2" width="126" height="57.6" viewBox="0 0 140 64">
+    <g transform="translate(0 0)">
+      <rect width="140" height="54" fill="url(#sky)"/>
+      <rect y="54" width="140" height="10" fill="#4F6B45"/>
+      <circle cx="51" cy="18" r="5" fill="#F2C9A0"/>
+      <rect x="45" y="24" width="12" height="17" rx="3" fill="#5B8FD6"/>
+      <rect x="46" y="40" width="4.5" height="14" fill="#3B4A66"/><rect x="52" y="40" width="4.5" height="14" fill="#3B4A66"/>
+      <ellipse cx="100" cy="47" rx="10" ry="5" fill="#C08A5A"/><circle cx="112" cy="43" r="4" fill="#C08A5A"/>
+      <path d="M114 39 L116 43 L112 41z" fill="#8A5A1C"/><path d="M90 45 L85 40" stroke="#C08A5A" stroke-width="2" fill="none"/>
+      <rect x="94" y="50" width="3" height="4" fill="#8A5A1C"/><rect x="105" y="50" width="3" height="4" fill="#8A5A1C"/>
+    </g>
+    <line x1="0" y1="0" x2="0" y2="64" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="24" y1="0" x2="24" y2="64" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="48" y1="0" x2="48" y2="64" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="72" y1="0" x2="72" y2="64" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="96" y1="0" x2="96" y2="64" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="120" y1="0" x2="120" y2="64" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="0" x2="140" y2="0" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="24" x2="140" y2="24" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="48" x2="140" y2="48" stroke="#ECECEC" stroke-opacity="0.55"/>
+  </svg>
+  <text class="t" x="60" y="403.8">one input image</text>
+  <text class="t" x="60" y="428.8">Nothing is cropped:</text>
+  <text class="t" x="60" y="443.8">the canvas is a patch</text>
+  <text class="t" x="60" y="458.8">larger, so no object</text>
+  <text class="t" x="60" y="473.8">leaves a snapshot.</text>
+  <text class="t" x="60" y="488.8">A pass can still miss</text>
+  <text class="t" x="60" y="503.8">a small one: it counts 0.</text>
+  <g class="run" style="animation-name: r8">
+    <path d="M190 360 H206 V204 H220" fill="none" stroke="#B8B8B8" stroke-width="1.4" marker-end="url(#arr)"/>
+  <svg x="224" y="179.8" width="90.2" height="48.4" viewBox="0 0 164 88">
+    <rect width="164" height="88" fill="#4A4F58"/>
+    <g transform="translate(0 0)">
+      <rect width="140" height="54" fill="url(#sky)"/>
+      <rect y="54" width="140" height="10" fill="#4F6B45"/>
+      <circle cx="51" cy="18" r="5" fill="#F2C9A0"/>
+      <rect x="45" y="24" width="12" height="17" rx="3" fill="#5B8FD6"/>
+      <rect x="46" y="40" width="4.5" height="14" fill="#3B4A66"/><rect x="52" y="40" width="4.5" height="14" fill="#3B4A66"/>
+      <ellipse cx="100" cy="47" rx="10" ry="5" fill="#C08A5A"/><circle cx="112" cy="43" r="4" fill="#C08A5A"/>
+      <path d="M114 39 L116 43 L112 41z" fill="#8A5A1C"/><path d="M90 45 L85 40" stroke="#C08A5A" stroke-width="2" fill="none"/>
+      <rect x="94" y="50" width="3" height="4" fill="#8A5A1C"/><rect x="105" y="50" width="3" height="4" fill="#8A5A1C"/>
+    </g>
+    <line x1="0" y1="0" x2="0" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="24" y1="0" x2="24" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="48" y1="0" x2="48" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="72" y1="0" x2="72" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="96" y1="0" x2="96" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="120" y1="0" x2="120" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="144" y1="0" x2="144" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="0" x2="164" y2="0" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="24" x2="164" y2="24" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="48" x2="164" y2="48" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="72" x2="164" y2="72" stroke="#ECECEC" stroke-opacity="0.55"/>
+  </svg>
+  <rect x="224" y="179.8" width="90.2" height="48.4" fill="none" stroke="#58C4DD" stroke-width="2.5"/>
+    <text class="t" x="224" y="240.2">+0,+0 px</text>
+  </g>
+  <g class="run" style="animation-name: r9">
+  <line x1="318" y1="204" x2="340" y2="204" stroke="#B8B8B8" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="428" y1="204" x2="440" y2="204" stroke="#B8B8B8" stroke-width="1.6" marker-end="url(#arr)"/>
+  </g>
+  <g class="run" style="animation-name: r10">
+  <svg x="444" y="155.6" width="180.4" height="96.8" viewBox="0 0 164 88">
+    <rect width="164" height="88" fill="#4A4F58"/>
+    <g transform="translate(0 0)">
+      <rect width="140" height="54" fill="url(#sky)"/>
+      <rect y="54" width="140" height="10" fill="#4F6B45"/>
+      <circle cx="51" cy="18" r="5" fill="#F2C9A0"/>
+      <rect x="45" y="24" width="12" height="17" rx="3" fill="#5B8FD6"/>
+      <rect x="46" y="40" width="4.5" height="14" fill="#3B4A66"/><rect x="52" y="40" width="4.5" height="14" fill="#3B4A66"/>
+      <ellipse cx="100" cy="47" rx="10" ry="5" fill="#C08A5A"/><circle cx="112" cy="43" r="4" fill="#C08A5A"/>
+      <path d="M114 39 L116 43 L112 41z" fill="#8A5A1C"/><path d="M90 45 L85 40" stroke="#C08A5A" stroke-width="2" fill="none"/>
+      <rect x="94" y="50" width="3" height="4" fill="#8A5A1C"/><rect x="105" y="50" width="3" height="4" fill="#8A5A1C"/>
+    </g>
+    <line x1="0" y1="0" x2="0" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="24" y1="0" x2="24" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="48" y1="0" x2="48" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="72" y1="0" x2="72" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="96" y1="0" x2="96" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="120" y1="0" x2="120" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="144" y1="0" x2="144" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="0" x2="164" y2="0" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="24" x2="164" y2="24" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="48" x2="164" y2="48" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="72" x2="164" y2="72" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <g class="run" style="animation-name: r11"><rect x="41" y="12" width="18" height="42" fill="none" stroke="#58C4DD" stroke-width="1.7"/><rect x="41" y="1" width="61" height="11" rx="2" fill="#58C4DD"/><text class="chip" x="44" y="9.3">person 0.90</text><rect x="89" y="40" width="28" height="15" fill="none" stroke="#58C4DD" stroke-width="1.7"/><rect x="89" y="29" width="46" height="11" rx="2" fill="#58C4DD"/><text class="chip" x="92" y="37.3">dog 0.72</text></g>
+  </svg>
+  <rect x="444" y="155.6" width="180.4" height="96.8" fill="none" stroke="#58C4DD" stroke-width="2.5"/>
+  </g>
+  <g class="run" style="animation-name: r12">
+    <path d="M190 360 H206 V308 H220" fill="none" stroke="#B8B8B8" stroke-width="1.4" marker-end="url(#arr)"/>
+  <svg x="224" y="283.8" width="90.2" height="48.4" viewBox="0 0 164 88">
+    <rect width="164" height="88" fill="#4A4F58"/>
+    <g transform="translate(6 6)">
+      <rect width="140" height="54" fill="url(#sky)"/>
+      <rect y="54" width="140" height="10" fill="#4F6B45"/>
+      <circle cx="51" cy="18" r="5" fill="#F2C9A0"/>
+      <rect x="45" y="24" width="12" height="17" rx="3" fill="#5B8FD6"/>
+      <rect x="46" y="40" width="4.5" height="14" fill="#3B4A66"/><rect x="52" y="40" width="4.5" height="14" fill="#3B4A66"/>
+      <ellipse cx="100" cy="47" rx="10" ry="5" fill="#C08A5A"/><circle cx="112" cy="43" r="4" fill="#C08A5A"/>
+      <path d="M114 39 L116 43 L112 41z" fill="#8A5A1C"/><path d="M90 45 L85 40" stroke="#C08A5A" stroke-width="2" fill="none"/>
+      <rect x="94" y="50" width="3" height="4" fill="#8A5A1C"/><rect x="105" y="50" width="3" height="4" fill="#8A5A1C"/>
+    </g>
+    <line x1="0" y1="0" x2="0" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="24" y1="0" x2="24" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="48" y1="0" x2="48" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="72" y1="0" x2="72" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="96" y1="0" x2="96" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="120" y1="0" x2="120" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="144" y1="0" x2="144" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="0" x2="164" y2="0" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="24" x2="164" y2="24" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="48" x2="164" y2="48" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="72" x2="164" y2="72" stroke="#ECECEC" stroke-opacity="0.55"/>
+  </svg>
+  <rect x="224" y="283.8" width="90.2" height="48.4" fill="none" stroke="#F0AC5F" stroke-width="2.5"/>
+    <text class="t" x="224" y="344.2">+4,+4 px</text>
+  </g>
+  <g class="run" style="animation-name: r13">
+  <line x1="318" y1="308" x2="340" y2="308" stroke="#B8B8B8" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="428" y1="308" x2="440" y2="308" stroke="#B8B8B8" stroke-width="1.6" marker-end="url(#arr)"/>
+  </g>
+  <g class="run" style="animation-name: r14">
+  <svg x="444" y="259.6" width="180.4" height="96.8" viewBox="0 0 164 88">
+    <rect width="164" height="88" fill="#4A4F58"/>
+    <g transform="translate(6 6)">
+      <rect width="140" height="54" fill="url(#sky)"/>
+      <rect y="54" width="140" height="10" fill="#4F6B45"/>
+      <circle cx="51" cy="18" r="5" fill="#F2C9A0"/>
+      <rect x="45" y="24" width="12" height="17" rx="3" fill="#5B8FD6"/>
+      <rect x="46" y="40" width="4.5" height="14" fill="#3B4A66"/><rect x="52" y="40" width="4.5" height="14" fill="#3B4A66"/>
+      <ellipse cx="100" cy="47" rx="10" ry="5" fill="#C08A5A"/><circle cx="112" cy="43" r="4" fill="#C08A5A"/>
+      <path d="M114 39 L116 43 L112 41z" fill="#8A5A1C"/><path d="M90 45 L85 40" stroke="#C08A5A" stroke-width="2" fill="none"/>
+      <rect x="94" y="50" width="3" height="4" fill="#8A5A1C"/><rect x="105" y="50" width="3" height="4" fill="#8A5A1C"/>
+    </g>
+    <line x1="0" y1="0" x2="0" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="24" y1="0" x2="24" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="48" y1="0" x2="48" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="72" y1="0" x2="72" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="96" y1="0" x2="96" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="120" y1="0" x2="120" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="144" y1="0" x2="144" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="0" x2="164" y2="0" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="24" x2="164" y2="24" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="48" x2="164" y2="48" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="72" x2="164" y2="72" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <g class="run" style="animation-name: r15"><rect x="49" y="17" width="18" height="42" fill="none" stroke="#F0AC5F" stroke-width="1.7"/><rect x="49" y="6" width="61" height="11" rx="2" fill="#F0AC5F"/><text class="chip" x="52" y="14.3">person 0.94</text><rect x="94" y="46" width="28" height="15" fill="none" stroke="#E5646E" stroke-width="1.7" stroke-dasharray="3 2"/><rect x="94" y="35" width="56" height="11" rx="2" fill="#E5646E"/><text class="chip" x="97" y="43.3">dog missed</text></g>
+  </svg>
+  <rect x="444" y="259.6" width="180.4" height="96.8" fill="none" stroke="#F0AC5F" stroke-width="2.5"/>
+  </g>
+  <g class="run" style="animation-name: r16">
+    <path d="M190 360 H206 V412 H220" fill="none" stroke="#B8B8B8" stroke-width="1.4" marker-end="url(#arr)"/>
+  <svg x="224" y="387.8" width="90.2" height="48.4" viewBox="0 0 164 88">
+    <rect width="164" height="88" fill="#4A4F58"/>
+    <g transform="translate(12 12)">
+      <rect width="140" height="54" fill="url(#sky)"/>
+      <rect y="54" width="140" height="10" fill="#4F6B45"/>
+      <circle cx="51" cy="18" r="5" fill="#F2C9A0"/>
+      <rect x="45" y="24" width="12" height="17" rx="3" fill="#5B8FD6"/>
+      <rect x="46" y="40" width="4.5" height="14" fill="#3B4A66"/><rect x="52" y="40" width="4.5" height="14" fill="#3B4A66"/>
+      <ellipse cx="100" cy="47" rx="10" ry="5" fill="#C08A5A"/><circle cx="112" cy="43" r="4" fill="#C08A5A"/>
+      <path d="M114 39 L116 43 L112 41z" fill="#8A5A1C"/><path d="M90 45 L85 40" stroke="#C08A5A" stroke-width="2" fill="none"/>
+      <rect x="94" y="50" width="3" height="4" fill="#8A5A1C"/><rect x="105" y="50" width="3" height="4" fill="#8A5A1C"/>
+    </g>
+    <line x1="0" y1="0" x2="0" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="24" y1="0" x2="24" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="48" y1="0" x2="48" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="72" y1="0" x2="72" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="96" y1="0" x2="96" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="120" y1="0" x2="120" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="144" y1="0" x2="144" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="0" x2="164" y2="0" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="24" x2="164" y2="24" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="48" x2="164" y2="48" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="72" x2="164" y2="72" stroke="#ECECEC" stroke-opacity="0.55"/>
+  </svg>
+  <rect x="224" y="387.8" width="90.2" height="48.4" fill="none" stroke="#9A72AC" stroke-width="2.5"/>
+    <text class="t" x="224" y="448.2">+8,+8 px</text>
+  </g>
+  <g class="run" style="animation-name: r17">
+  <line x1="318" y1="412" x2="340" y2="412" stroke="#B8B8B8" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="428" y1="412" x2="440" y2="412" stroke="#B8B8B8" stroke-width="1.6" marker-end="url(#arr)"/>
+  </g>
+  <g class="run" style="animation-name: r18">
+  <svg x="444" y="363.6" width="180.4" height="96.8" viewBox="0 0 164 88">
+    <rect width="164" height="88" fill="#4A4F58"/>
+    <g transform="translate(12 12)">
+      <rect width="140" height="54" fill="url(#sky)"/>
+      <rect y="54" width="140" height="10" fill="#4F6B45"/>
+      <circle cx="51" cy="18" r="5" fill="#F2C9A0"/>
+      <rect x="45" y="24" width="12" height="17" rx="3" fill="#5B8FD6"/>
+      <rect x="46" y="40" width="4.5" height="14" fill="#3B4A66"/><rect x="52" y="40" width="4.5" height="14" fill="#3B4A66"/>
+      <ellipse cx="100" cy="47" rx="10" ry="5" fill="#C08A5A"/><circle cx="112" cy="43" r="4" fill="#C08A5A"/>
+      <path d="M114 39 L116 43 L112 41z" fill="#8A5A1C"/><path d="M90 45 L85 40" stroke="#C08A5A" stroke-width="2" fill="none"/>
+      <rect x="94" y="50" width="3" height="4" fill="#8A5A1C"/><rect x="105" y="50" width="3" height="4" fill="#8A5A1C"/>
+    </g>
+    <line x1="0" y1="0" x2="0" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="24" y1="0" x2="24" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="48" y1="0" x2="48" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="72" y1="0" x2="72" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="96" y1="0" x2="96" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="120" y1="0" x2="120" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="144" y1="0" x2="144" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="0" x2="164" y2="0" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="24" x2="164" y2="24" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="48" x2="164" y2="48" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="72" x2="164" y2="72" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <g class="run" style="animation-name: r19"><rect x="55" y="25" width="18" height="42" fill="none" stroke="#9A72AC" stroke-width="1.7"/><rect x="55" y="14" width="61" height="11" rx="2" fill="#9A72AC"/><text class="chip" x="58" y="22.3">person 0.92</text><rect x="99" y="53" width="28" height="15" fill="none" stroke="#9A72AC" stroke-width="1.7"/><rect x="99" y="42" width="46" height="11" rx="2" fill="#9A72AC"/><text class="chip" x="102" y="50.3">dog 0.70</text></g>
+  </svg>
+  <rect x="444" y="363.6" width="180.4" height="96.8" fill="none" stroke="#9A72AC" stroke-width="2.5"/>
+  </g>
+  <g class="run" style="animation-name: r20">
+    <path d="M190 360 H206 V516 H220" fill="none" stroke="#B8B8B8" stroke-width="1.4" marker-end="url(#arr)"/>
+  <svg x="224" y="491.8" width="90.2" height="48.4" viewBox="0 0 164 88">
+    <rect width="164" height="88" fill="#4A4F58"/>
+    <g transform="translate(18 18)">
+      <rect width="140" height="54" fill="url(#sky)"/>
+      <rect y="54" width="140" height="10" fill="#4F6B45"/>
+      <circle cx="51" cy="18" r="5" fill="#F2C9A0"/>
+      <rect x="45" y="24" width="12" height="17" rx="3" fill="#5B8FD6"/>
+      <rect x="46" y="40" width="4.5" height="14" fill="#3B4A66"/><rect x="52" y="40" width="4.5" height="14" fill="#3B4A66"/>
+      <ellipse cx="100" cy="47" rx="10" ry="5" fill="#C08A5A"/><circle cx="112" cy="43" r="4" fill="#C08A5A"/>
+      <path d="M114 39 L116 43 L112 41z" fill="#8A5A1C"/><path d="M90 45 L85 40" stroke="#C08A5A" stroke-width="2" fill="none"/>
+      <rect x="94" y="50" width="3" height="4" fill="#8A5A1C"/><rect x="105" y="50" width="3" height="4" fill="#8A5A1C"/>
+    </g>
+    <line x1="0" y1="0" x2="0" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="24" y1="0" x2="24" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="48" y1="0" x2="48" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="72" y1="0" x2="72" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="96" y1="0" x2="96" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="120" y1="0" x2="120" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="144" y1="0" x2="144" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="0" x2="164" y2="0" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="24" x2="164" y2="24" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="48" x2="164" y2="48" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="72" x2="164" y2="72" stroke="#ECECEC" stroke-opacity="0.55"/>
+  </svg>
+  <rect x="224" y="491.8" width="90.2" height="48.4" fill="none" stroke="#5CD0B3" stroke-width="2.5"/>
+    <text class="t" x="224" y="552.2">+12,+12 px</text>
+  </g>
+  <g class="run" style="animation-name: r21">
+  <line x1="318" y1="516" x2="340" y2="516" stroke="#B8B8B8" stroke-width="1.6" marker-end="url(#arr)"/>
+  <line x1="428" y1="516" x2="440" y2="516" stroke="#B8B8B8" stroke-width="1.6" marker-end="url(#arr)"/>
+  </g>
+  <g class="run" style="animation-name: r22">
+  <svg x="444" y="467.6" width="180.4" height="96.8" viewBox="0 0 164 88">
+    <rect width="164" height="88" fill="#4A4F58"/>
+    <g transform="translate(18 18)">
+      <rect width="140" height="54" fill="url(#sky)"/>
+      <rect y="54" width="140" height="10" fill="#4F6B45"/>
+      <circle cx="51" cy="18" r="5" fill="#F2C9A0"/>
+      <rect x="45" y="24" width="12" height="17" rx="3" fill="#5B8FD6"/>
+      <rect x="46" y="40" width="4.5" height="14" fill="#3B4A66"/><rect x="52" y="40" width="4.5" height="14" fill="#3B4A66"/>
+      <ellipse cx="100" cy="47" rx="10" ry="5" fill="#C08A5A"/><circle cx="112" cy="43" r="4" fill="#C08A5A"/>
+      <path d="M114 39 L116 43 L112 41z" fill="#8A5A1C"/><path d="M90 45 L85 40" stroke="#C08A5A" stroke-width="2" fill="none"/>
+      <rect x="94" y="50" width="3" height="4" fill="#8A5A1C"/><rect x="105" y="50" width="3" height="4" fill="#8A5A1C"/>
+    </g>
+    <line x1="0" y1="0" x2="0" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="24" y1="0" x2="24" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="48" y1="0" x2="48" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="72" y1="0" x2="72" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="96" y1="0" x2="96" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="120" y1="0" x2="120" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="144" y1="0" x2="144" y2="88" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="0" x2="164" y2="0" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="24" x2="164" y2="24" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="48" x2="164" y2="48" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <line x1="0" y1="72" x2="164" y2="72" stroke="#ECECEC" stroke-opacity="0.55"/>
+    <g class="run" style="animation-name: r23"><rect x="59" y="30" width="18" height="42" fill="none" stroke="#5CD0B3" stroke-width="1.7"/><rect x="59" y="19" width="61" height="11" rx="2" fill="#5CD0B3"/><text class="chip" x="62" y="27.3">person 0.88</text><rect x="106" y="57" width="28" height="15" fill="none" stroke="#5CD0B3" stroke-width="1.7"/><rect x="106" y="46" width="46" height="11" rx="2" fill="#5CD0B3"/><text class="chip" x="109" y="54.3">dog 0.74</text></g>
+  </svg>
+  <rect x="444" y="467.6" width="180.4" height="96.8" fill="none" stroke="#5CD0B3" stroke-width="2.5"/>
+  </g>
+  <g class="run" style="animation-name: r24">
+  <rect x="344" y="158" width="80" height="404" rx="10" fill="#16181D" stroke="#9A72AC" stroke-width="1.8"/>
+  <text class="lbl mid" x="384" y="356">network</text>
+  <text class="t mid" x="384" y="376">the same</text>
+  <text class="t mid" x="384" y="391">weights,</text>
+  <text class="t mid" x="384" y="406">run 4 times</text>
+  </g>
+  <g class="run" style="animation-name: r25">
+  <path d="M628 204 H662 V360" fill="none" stroke="#B8B8B8" stroke-width="1.4"/>
+  <path d="M628 308 H662 V360" fill="none" stroke="#B8B8B8" stroke-width="1.4"/>
+  <path d="M628 412 H662 V360" fill="none" stroke="#B8B8B8" stroke-width="1.4"/>
+  <path d="M628 516 H662 V360" fill="none" stroke="#B8B8B8" stroke-width="1.4"/>
+  <line x1="662" y1="360" x2="674" y2="360" stroke="#B8B8B8" stroke-width="1.6" marker-end="url(#arr)"/>
+  </g>
+  <rect x="676" y="148" width="274" height="426" rx="10" fill="#1C1F25" stroke="#3A3F49"/>
+  <text class="lbl" x="690" y="172">map back, then combine</text>
+  <svg x="690" y="182" width="246" height="112.46" viewBox="0 0 140 64">
+      <rect width="140" height="54" fill="url(#sky)"/>
+      <rect y="54" width="140" height="10" fill="#4F6B45"/>
+      <circle cx="51" cy="18" r="5" fill="#F2C9A0"/>
+      <rect x="45" y="24" width="12" height="17" rx="3" fill="#5B8FD6"/>
+      <rect x="46" y="40" width="4.5" height="14" fill="#3B4A66"/><rect x="52" y="40" width="4.5" height="14" fill="#3B4A66"/>
+      <ellipse cx="100" cy="47" rx="10" ry="5" fill="#C08A5A"/><circle cx="112" cy="43" r="4" fill="#C08A5A"/>
+      <path d="M114 39 L116 43 L112 41z" fill="#8A5A1C"/><path d="M90 45 L85 40" stroke="#C08A5A" stroke-width="2" fill="none"/>
+      <rect x="94" y="50" width="3" height="4" fill="#8A5A1C"/><rect x="105" y="50" width="3" height="4" fill="#8A5A1C"/>
+    <g class="run" style="opacity:0.35; animation-name: gh26"><rect x="41" y="12" width="18" height="42" fill="none" stroke="#58C4DD" stroke-width="1.3" stroke-dasharray="3 2"/><rect x="89" y="40" width="28" height="15" fill="none" stroke="#58C4DD" stroke-width="1.3" stroke-dasharray="2 1.5"/></g><g class="run" style="opacity:0.35; animation-name: gh27"><rect x="43" y="11" width="18" height="42" fill="none" stroke="#F0AC5F" stroke-width="1.3" stroke-dasharray="3 2"/></g><g class="run" style="opacity:0.35; animation-name: gh28"><rect x="43" y="13" width="18" height="42" fill="none" stroke="#9A72AC" stroke-width="1.3" stroke-dasharray="3 2"/><rect x="87" y="41" width="28" height="15" fill="none" stroke="#9A72AC" stroke-width="1.3" stroke-dasharray="2 1.5"/></g><g class="run" style="opacity:0.35; animation-name: gh29"><rect x="41" y="12" width="18" height="42" fill="none" stroke="#5CD0B3" stroke-width="1.3" stroke-dasharray="3 2"/><rect x="88" y="39" width="28" height="15" fill="none" stroke="#5CD0B3" stroke-width="1.3" stroke-dasharray="2 1.5"/></g>
+    <g class="run" style="opacity:0; animation-name: grp"><rect x="38" y="8" width="26" height="50" rx="3" fill="none" stroke="#ECECEC" stroke-width="1" stroke-dasharray="2 2"/><rect x="66" y="8" width="41" height="11" rx="2" fill="#ECECEC"/><text class="chip" x="69" y="16.3">4 boxes</text><rect x="84" y="36" width="36" height="23" rx="3" fill="none" stroke="#ECECEC" stroke-width="1" stroke-dasharray="2 2"/><rect x="84" y="25" width="41" height="11" rx="2" fill="#ECECEC"/><text class="chip" x="87" y="33.3">3 boxes</text></g>
+    <g class="run" style="animation-name: r31"><rect x="42" y="12" width="18" height="42" fill="none" stroke="#83C167" stroke-width="2.2"/><rect x="88" y="40" width="28" height="15" fill="none" stroke="#83C167" stroke-width="2.2"/></g>
+    <g class="run" style="animation-name: r32"><rect x="42" y="12" width="18" height="42" fill="none" stroke="#83C167" stroke-width="2.2"/><rect x="42" y="1" width="61" height="11" rx="2" fill="#83C167"/><text class="chip" x="45" y="9.3">person 0.91</text><rect x="88" y="40" width="28" height="15" fill="none" stroke="#83C167" stroke-width="2.2"/><rect x="88" y="29" width="46" height="11" rx="2" fill="#83C167"/><text class="chip" x="91" y="37.3">dog 0.54</text></g>
+  </svg>
+  <g class="run" style="animation-name: r33">
+  <text class="t" x="690" y="314.46">score = sum of (pass score / 4)</text>
+  <text class="t" x="690" y="340.46">person</text>
+  <rect x="736" y="329.46" width="130" height="14" rx="3" fill="#2E323B"/>
+  <text class="t" x="690" y="364.46">dog</text>
+  <rect x="736" y="353.46" width="130" height="14" rx="3" fill="#2E323B"/>
+  </g>
+  <g class="run" style="animation-name: r34">
+  <rect x="736" y="329.46" width="29.25" height="14" fill="#58C4DD" stroke="#1C1F25" stroke-width="1"/>
+  </g>
+  <g class="run" style="animation-name: r35">
+  <rect x="765.25" y="329.46" width="30.55" height="14" fill="#F0AC5F" stroke="#1C1F25" stroke-width="1"/>
+  </g>
+  <g class="run" style="animation-name: r36">
+  <rect x="795.8" y="329.46" width="29.9" height="14" fill="#9A72AC" stroke="#1C1F25" stroke-width="1"/>
+  </g>
+  <g class="run" style="animation-name: r37">
+  <rect x="825.7" y="329.46" width="28.6" height="14" fill="#5CD0B3" stroke="#1C1F25" stroke-width="1"/>
+  </g>
+  <g class="run" style="animation-name: r38">
+  <text class="t" x="872" y="340.46">0.91</text>
+  </g>
+  <g class="run" style="animation-name: r39">
+  <line x1="801.0" y1="325.46" x2="801.0" y2="347.46" stroke="#ECECEC" stroke-dasharray="3 3"/>
+  <text class="t" x="904" y="340.46" style="fill:#83C167">kept</text>
+  </g>
+  <g class="run" style="animation-name: r40">
+  <rect x="736" y="353.46" width="23.4" height="14" fill="#58C4DD" stroke="#1C1F25" stroke-width="1"/>
+  </g>
+  <g class="run" style="animation-name: r41">
+  <line x1="759.4" y1="351.46" x2="759.4" y2="369.46" stroke="#E5646E" stroke-width="2" stroke-dasharray="2 2"/>
+  <text class="t" x="756.4" y="349.46" style="fill:#E5646E">0</text>
+  </g>
+  <g class="run" style="animation-name: r42">
+  <rect x="759.4" y="353.46" width="22.75" height="14" fill="#9A72AC" stroke="#1C1F25" stroke-width="1"/>
+  </g>
+  <g class="run" style="animation-name: r43">
+  <rect x="782.15" y="353.46" width="24.05" height="14" fill="#5CD0B3" stroke="#1C1F25" stroke-width="1"/>
+  </g>
+  <g class="run" style="animation-name: r44">
+  <text class="t" x="872" y="364.46">0.54</text>
+  </g>
+  <g class="run" style="animation-name: r45">
+  <line x1="801.0" y1="349.46" x2="801.0" y2="371.46" stroke="#ECECEC" stroke-dasharray="3 3"/>
+  <text class="t" x="904" y="364.46" style="fill:#83C167">kept</text>
+  </g>
+  <g class="run" style="animation-name: r46">
+  <text class="t" x="690" y="391.46">1  map back: subtract each offset</text>
+  </g>
+  <g class="run" style="animation-name: r47">
+  <text class="t" x="690" y="406.46">2  group: same class, IoU above 0.6,</text>
+  <text class="t" x="690" y="421.46">    one box per pass, best score first</text>
+  </g>
+  <g class="run" style="animation-name: r48">
+  <text class="t" x="690" y="436.46">3  box: mean of the group's boxes</text>
+  </g>
+  <g class="run" style="animation-name: r49">
+  <text class="t" x="690" y="451.46">4  score: sum over the group / 4</text>
+  <text class="t" x="690" y="466.46">    (a pass with no box counts as 0)</text>
+  </g>
+  <g class="run" style="animation-name: r50">
+  <text class="t" x="690" y="481.46">5  keep if the mean score > threshold</text>
+  </g>
+  <g class="run" style="animation-name: r51">
+  <text class="t" x="690" y="496.46">6  mask: pixels in at least half</text>
+  </g>
+  </g>
+</svg>

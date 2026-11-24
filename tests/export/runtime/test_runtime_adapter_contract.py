@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import builtins
 import logging
 import sys
 from pathlib import Path
@@ -19,8 +20,10 @@ import torch
 from pytest_mock import MockerFixture
 
 from rfdetr.export._runtime.adapters import ExportRuntime, _input_array, load_runtime
-from rfdetr.export._runtime.metadata import ExportMetadata
+from rfdetr.export._runtime.context import load_exported_context
+from rfdetr.export._runtime.metadata import ExportMetadata, metadata_from_model, read_metadata, write_metadata
 from tests.export._openvino_shapes import FakePartialShape
+from tests.export.conftest import _make_rfdetr
 
 
 def _load_onnx_runtime(
@@ -747,6 +750,94 @@ class TestExecuTorchRuntimeAdapter:
         method.execute.assert_called_once()
         assert result["pred_boxes"].shape == (1, 2, 4)
 
+    def test_tensorrt_registers_its_delegate_and_reports_cuda(
+        self, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture, tmp_path: Path
+    ) -> None:
+        """A TensorRT program imports the delegate package before the program loads, and reports the CUDA policy."""
+        path = tmp_path / "model.pte"
+        path.write_bytes(b"pte")
+        events: list[str] = []
+        engine = mocker.Mock()
+        engine.load_program.side_effect = lambda _path: events.append("load_program") or mocker.Mock()
+        runtime_class = SimpleNamespace(get=lambda: engine)
+        monkeypatch.setitem(sys.modules, "executorch", SimpleNamespace(runtime=SimpleNamespace(Runtime=runtime_class)))
+        monkeypatch.setitem(sys.modules, "executorch.runtime", SimpleNamespace(Runtime=runtime_class))
+        monkeypatch.delitem(sys.modules, "torch_tensorrt_executorch_runtime", raising=False)
+        mocker.patch("rfdetr.export._executorch.exporter._check_executorch_available")
+        mocker.patch("torch.cuda.is_available", return_value=True)
+        metadata = _metadata(
+            format="executorch",
+            task="detect",
+            backend="tensorrt",
+            input_shape=(1, 3, 8, 8),
+            outputs={"pred_boxes": 0, "pred_logits": 1},
+        )
+        delegate = SimpleNamespace(__name__="torch_tensorrt_executorch_runtime")
+        original_import = __import__
+
+        def _import(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == "torch_tensorrt_executorch_runtime":
+                events.append("register")
+                return delegate
+            return original_import(name, *args, **kwargs)
+
+        monkeypatch.setattr("builtins.__import__", _import)
+
+        runtime = load_runtime(path, metadata)
+
+        assert events == ["register", "load_program"]
+        assert runtime.info["device"] == "cuda"
+
+    def test_tensorrt_without_its_delegate_names_the_extra(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """A TensorRT program without the delegate package fails with the extra that installs it."""
+        path = tmp_path / "model.pte"
+        path.write_bytes(b"pte")
+        monkeypatch.setitem(sys.modules, "torch_tensorrt_executorch_runtime", None)
+        monkeypatch.setattr("torch.cuda.is_available", lambda: True)
+        metadata = _metadata(
+            format="executorch",
+            task="detect",
+            backend="tensorrt",
+            input_shape=(1, 3, 8, 8),
+            outputs={"pred_boxes": 0, "pred_logits": 1},
+        )
+
+        with pytest.raises(ImportError, match=r"rfdetr\[executorch-tensorrt\]"):
+            load_runtime(path, metadata)
+
+    def test_tensorrt_rejects_a_cpu_device(self, tmp_path: Path) -> None:
+        """A TensorRT program runs on the GPU, so an explicit CPU request is refused before anything loads."""
+        path = tmp_path / "model.pte"
+        path.write_bytes(b"pte")
+        metadata = _metadata(
+            format="executorch",
+            task="detect",
+            backend="tensorrt",
+            input_shape=(1, 3, 8, 8),
+            outputs={"pred_boxes": 0, "pred_logits": 1},
+        )
+
+        with pytest.raises(ValueError, match="ExecuTorch TensorRT requires cuda or auto"):
+            load_runtime(path, metadata, device="cpu")
+
+    def test_tensorrt_without_cuda_is_refused(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """A TensorRT program on a host with no CUDA device is refused before the delegate or program loads."""
+        path = tmp_path / "model.pte"
+        path.write_bytes(b"pte")
+        monkeypatch.setattr("torch.cuda.is_available", lambda: False)
+        metadata = _metadata(
+            format="executorch",
+            task="detect",
+            backend="tensorrt",
+            input_shape=(1, 3, 8, 8),
+            outputs={"pred_boxes": 0, "pred_logits": 1},
+        )
+
+        with pytest.raises(RuntimeError, match="requires an available CUDA device"):
+            load_runtime(path, metadata)
+
     def test_runtime_compatibility_error_prevents_program_load(self, mocker: MockerFixture, tmp_path: Path) -> None:
         """A mismatched ExecuTorch runtime stops before the program loader runs."""
         path = tmp_path / "model.pte"
@@ -838,3 +929,69 @@ class TestCoreMLRuntimeAdapter:
 
         with pytest.raises(ValueError, match="also permit CPU"):
             load_runtime(path, metadata, device="ane")
+
+
+class TestExecuTorchTensorRTLoader:
+    """The TensorRT delegate loader accepts an explicit CUDA device and reads the backend from the sidecar."""
+
+    @pytest.fixture
+    def tensorrt_pte(
+        self, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture, tmp_path: Path
+    ) -> tuple[Path, ExportMetadata]:
+        """A ``.pte`` path and TensorRT metadata, with ExecuTorch, CUDA and the delegate package stubbed."""
+        path = tmp_path / "model.pte"
+        path.write_bytes(b"pte")
+        runtime_class = SimpleNamespace(get=lambda: mocker.Mock())
+        monkeypatch.setitem(sys.modules, "executorch", SimpleNamespace(runtime=SimpleNamespace(Runtime=runtime_class)))
+        monkeypatch.setitem(sys.modules, "executorch.runtime", SimpleNamespace(Runtime=runtime_class))
+        monkeypatch.setitem(sys.modules, "torch_tensorrt_executorch_runtime", SimpleNamespace())
+        mocker.patch("rfdetr.export._executorch.exporter._check_executorch_available")
+        mocker.patch("torch.cuda.is_available", return_value=True)
+        metadata = _metadata(
+            format="executorch",
+            task="detect",
+            backend="tensorrt",
+            input_shape=(1, 3, 8, 8),
+            outputs={"pred_boxes": 0, "pred_logits": 1},
+        )
+        return path, metadata
+
+    def test_explicit_cuda_device_is_accepted(self, tensorrt_pte: tuple[Path, ExportMetadata]) -> None:
+        """Asking for ``device="cuda"`` loads the TensorRT program and reports the CUDA policy."""
+        path, metadata = tensorrt_pte
+
+        runtime = load_runtime(path, metadata, device="cuda")
+
+        assert runtime.info["device"] == "cuda"
+
+    def test_foreign_module_not_found_is_reraised(
+        self, monkeypatch: pytest.MonkeyPatch, tensorrt_pte: tuple[Path, ExportMetadata]
+    ) -> None:
+        """A delegate package that is installed but fails to import a dependency raises its own error, not the hint."""
+        path, metadata = tensorrt_pte
+        monkeypatch.delitem(sys.modules, "torch_tensorrt_executorch_runtime")
+        real_import = builtins.__import__
+
+        def import_with_broken_delegate(name: str, *args: Any, **kwargs: Any) -> Any:
+            if name == "torch_tensorrt_executorch_runtime":
+                raise ModuleNotFoundError("No module named 'tensorrt'", name="tensorrt")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", import_with_broken_delegate)
+
+        with pytest.raises(ModuleNotFoundError, match="No module named 'tensorrt'"):
+            load_runtime(path, metadata)
+
+    def test_sidecar_round_trip_selects_the_tensorrt_policy(self, tensorrt_pte: tuple[Path, ExportMetadata]) -> None:
+        """Export metadata for a TensorRT ``.pte`` is written to the sidecar and selects the CUDA policy on load."""
+        path, _ = tensorrt_pte
+        exported = metadata_from_model(
+            _make_rfdetr(), format="executorch", shape=(8, 8), batch_size=1, dynamic_batch=False, backend="tensorrt"
+        )
+
+        sidecar = write_metadata(path, exported)
+        context = load_exported_context(path, device="auto", metadata=None)
+
+        assert sidecar is not None
+        assert read_metadata(path).backend == "tensorrt"
+        assert context.runtime_info["device"] == "cuda"

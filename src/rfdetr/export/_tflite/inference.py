@@ -36,6 +36,7 @@ from rfdetr.export._runtime.adapters import (
 from rfdetr.export._runtime.decode import decode_detections
 from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.export._runtime.preprocess import preprocess_to_nchw
+from rfdetr.utilities.exif import exif_orientation, upright_image
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
@@ -251,7 +252,8 @@ def _run_inference(
 
     Returns:
         A tuple of ``(detections, pil_img)`` where ``detections`` contains pixel-space ``xyxy`` boxes (and ``mask`` for
-        segmentation models) and ``pil_img`` is the original PIL image at its original resolution.
+        segmentation models) and ``pil_img`` is the decoded PIL image at its original resolution, upright for its EXIF
+        orientation, in the frame of the boxes.
 
     Raises:
         ValueError: If *rank4_output* is neither ``None`` nor one of ``"masks"``/``"keypoints"``, if the model's
@@ -272,7 +274,8 @@ def _run_inference(
             "Export the model with float32 quantization or implement input quantization manually."
         )
 
-    with PILImage.open(image_path) as pil_img:
+    with PILImage.open(image_path) as opened:
+        pil_img = upright_image(opened, exif_orientation(opened))
         inp_tensor = _preprocess_image(pil_img, (int(height), int(width)), int(channels))
 
     out_det, raw_outputs = _run_interpreter_raw(interp, inp_det[0]["index"], inp_tensor)

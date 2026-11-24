@@ -17,7 +17,7 @@ from rfdetr._namespace import _namespace_from_configs
 from rfdetr.config import DatasetFile, ModelConfig, RFDETRSegSmallConfig, RFDETRSmallConfig, TrainConfig
 from rfdetr.datasets import _DATASET_BUILDERS, build_dataset
 from rfdetr.datasets.coco import build_coco, build_roboflow_from_coco
-from rfdetr.datasets.o365 import build_o365_raw
+from rfdetr.datasets.o365 import O365_MAX_IMAGE_PIXELS, build_o365_raw
 from rfdetr.datasets.yolo import build_roboflow_from_yolo
 
 ALL_REQUIRED_PIPELINE_OPTIONS = (
@@ -250,6 +250,29 @@ class TestPipelineOptionsHaveNoSilentFallback:
 
         with pytest.raises(AttributeError, match=missing_option):
             builder(complete_namespace, resolution=512)
+
+
+def test_o365_builder_raises_pixel_limit_for_its_dataset_only() -> None:
+    """Object365 passes its raised pixel limit to its own dataset instead of setting it process-wide (#1716)."""
+    captured = _call_o365_builder(_training_namespace(RFDETRSmallConfig()))
+
+    assert captured["dataset_kwargs"]["max_image_pixels"] == O365_MAX_IMAGE_PIXELS
+
+
+@pytest.mark.parametrize(
+    "builder",
+    [
+        pytest.param(_call_coco_builder, id="coco"),
+        pytest.param(_call_roboflow_coco_builder, id="roboflow-coco"),
+        pytest.param(_call_yolo_builder, id="yolo"),
+        pytest.param(_call_o365_builder, id="o365"),
+    ],
+)
+def test_builder_passes_num_channels_to_its_dataset(builder: BuilderCall) -> None:
+    """Every builder tells its dataset how many channels the model takes (#1727)."""
+    captured = builder(_training_namespace(RFDETRSmallConfig(num_channels=4)))
+
+    assert captured["dataset_kwargs"]["num_channels"] == 4
 
 
 class TestConfigValuesReachTheTransformPipeline:

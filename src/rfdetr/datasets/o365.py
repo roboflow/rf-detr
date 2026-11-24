@@ -11,8 +11,6 @@
 from pathlib import Path
 from typing import Any
 
-from PIL import Image
-
 from rfdetr.config import MultiScale
 from rfdetr.datasets.coco import CocoDetection, make_coco_transforms, make_coco_transforms_square_div_64
 from rfdetr.utilities.logger import get_logger
@@ -20,7 +18,8 @@ from rfdetr.utilities.logger import get_logger
 # O365 contains images larger than PIL's default 178M-pixel limit.
 # Set a generous but finite cap (2 billion pixels ~ a 45k x 45k image) instead of
 # disabling the guard entirely, so PIL still protects against decompression bombs.
-Image.MAX_IMAGE_PIXELS = 2_000_000_000
+# Passed to the dataset rather than assigned to PIL.Image.MAX_IMAGE_PIXELS, which belongs to the application.
+O365_MAX_IMAGE_PIXELS = 2_000_000_000
 
 logger = get_logger()
 
@@ -90,6 +89,8 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
             ),
+            max_image_pixels=O365_MAX_IMAGE_PIXELS,
+            num_channels=getattr(args, "num_channels", 3),
         )
     else:
         dataset = CocoDetection(
@@ -106,6 +107,8 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
             ),
+            max_image_pixels=O365_MAX_IMAGE_PIXELS,
+            num_channels=getattr(args, "num_channels", 3),
         )
     return dataset
 
