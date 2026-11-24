@@ -768,7 +768,7 @@ def load_pretrain_weights(
     # Auto-align num_keypoints_per_class from checkpoint when the user did not explicitly set it, so the model keeps
     # the checkpoint's own class layout, as the background-first [0, 17] of the preview checkpoint against the
     # active-first default [17]. An explicitly set schema is restored after the load below, which moves the class-head
-    # rows to match it. Mirrors the existing num_classes auto-align pattern (lines ~385-392).
+    # rows to match it. Mirrors the num_classes auto-align above.
     _user_overrode_kp_schema = "num_keypoints_per_class" in getattr(mc, "model_fields_set", set())
     if (
         not _user_overrode_kp_schema
