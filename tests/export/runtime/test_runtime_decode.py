@@ -59,20 +59,31 @@ class _CountingArray(np.ndarray):
 class TestDecodeDetections:
     """``decode_detections()`` — sigmoid, background exclusion, top-k selection, box conversion."""
 
-    def test_skips_debug_statistics_when_debug_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """No logits or scores reduction runs while the logger is not at DEBUG.
+    @pytest.mark.parametrize(
+        ("debug_enabled", "expected_reductions"),
+        [
+            pytest.param(False, [], id="debug-off"),
+            pytest.param(True, ["min", "max", "mean", "min", "max"], id="debug-on"),
+        ],
+    )
+    def test_runs_debug_statistics_reductions_only_when_debug_enabled(
+        self, monkeypatch: pytest.MonkeyPatch, debug_enabled: bool, expected_reductions: list[str]
+    ) -> None:
+        """The logits and scores reductions run only while the logger is at DEBUG.
 
         The statistics are only log arguments; computing them on every call costs a pass over the score grid for output
-        nobody reads.
+        nobody reads. The DEBUG-on case is the positive control: it proves the spy sees both guarded blocks, so the
+        empty list in the DEBUG-off case cannot come from a spy that never observes a reduction.
         """
-        monkeypatch.setattr(decode_module.logger, "isEnabledFor", lambda level: False)
+        monkeypatch.setattr(decode_module.logger, "isEnabledFor", lambda level: debug_enabled)
+        monkeypatch.setattr(decode_module.logger, "debug", lambda *args: None)
         _CountingArray.reductions.clear()
         logits = np.array([[2.0, -5.0]], dtype=np.float32).view(_CountingArray)
         boxes = np.array([[0.5, 0.5, 0.2, 0.2]], dtype=np.float32)
 
         decode_detections(boxes, logits, (10, 10))
 
-        assert _CountingArray.reductions == []
+        assert _CountingArray.reductions == expected_reductions
 
     def test_logs_debug_statistics_when_debug_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """With DEBUG enabled, the logits and scores statistics are logged with their values."""
@@ -91,6 +102,41 @@ class TestDecodeDetections:
         assert scores_call[0].startswith("Scores stats")
         np.testing.assert_allclose(scores_call[1:3], [1 / (1 + np.exp(5.0)), 1 / (1 + np.exp(-2.0))], rtol=1e-6)
         assert scores_call[3:] == (0.3, 1)
+
+    def test_logs_empty_statistics_when_debug_enabled_and_logits_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With DEBUG enabled and no queries, both statistics lines say ``empty`` instead of reducing an empty grid."""
+        calls: list[tuple[object, ...]] = []
+        monkeypatch.setattr(decode_module.logger, "isEnabledFor", lambda level: level == logging.DEBUG)
+        monkeypatch.setattr(decode_module.logger, "debug", lambda *args: calls.append(args))
+        logits = np.zeros((0, 3), dtype=np.float32)
+        boxes = np.zeros((0, 4), dtype=np.float32)
+
+        decode_detections(boxes, logits, (10, 10))
+
+        logits_call, scores_call = calls
+        assert logits_call[0].startswith("Logits stats: empty")
+        assert logits_call[1] == (0, 3)
+        assert scores_call[0].startswith("Scores stats: empty")
+        assert scores_call[1:] == (0.3, 0)
+
+    def test_logs_empty_scores_statistics_when_background_exclusion_leaves_no_class(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """With DEBUG enabled, a grid whose only class is excluded logs real logits but ``empty`` scores."""
+        calls: list[tuple[object, ...]] = []
+        monkeypatch.setattr(decode_module.logger, "isEnabledFor", lambda level: level == logging.DEBUG)
+        monkeypatch.setattr(decode_module.logger, "debug", lambda *args: calls.append(args))
+        logits = np.zeros((2, 1), dtype=np.float32)
+        boxes = np.full((2, 4), 0.5, dtype=np.float32)
+
+        decoded = decode_detections(boxes, logits, (10, 10), background_class_id=0)
+
+        logits_call, scores_call = calls
+        assert logits_call[0].startswith("Logits stats: shape=")
+        assert logits_call[1] == (2, 1)
+        assert scores_call[0].startswith("Scores stats: empty")
+        assert scores_call[1:] == (0.3, 0)
+        assert decoded.confidence.shape == (0,)
 
     def test_output_is_identical_with_debug_statistics_on_and_off(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Enabling DEBUG logs the statistics but changes no decoded field, dtype included."""
