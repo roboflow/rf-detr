@@ -675,7 +675,7 @@ class TestProbeStepKeypointTargets:
 
     @pytest.mark.usefixtures("mock_empty_cache")
     def test_probe_max_micro_batch_searches_with_keypoint_criterion(self, tmp_path: Path) -> None:
-        """The entry point ``batch_size="auto"`` uses runs every candidate with a keypoint criterion, not just one step."""
+        """The search ``batch_size="auto"`` runs probes every candidate with a keypoint criterion, not one step."""
         criterion, model = _keypoint_criterion_and_model(tmp_path, [0, 17], 1)
 
         safe = auto_batch.probe_max_micro_batch(
