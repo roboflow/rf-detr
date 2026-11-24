@@ -120,6 +120,8 @@ model.export(format="onnx", quantization="int8", calibration_data="calibration_i
 
 Pass `int8_keep_mlp_float=True` to also keep GELU-fed weighted projections in float. This includes the second layer of backbone MLPs and can include projections in segmentation heads. GELU outputs can have outlier channels that determine the 8-bit step for the entire tensor. The option defaults to `False` and requires `quantization="int8"` for ONNX.
 
+The default favors speed, and the option favors accuracy. It keeps more multiplies in float, so its export runs slower than the default one. Use it when the default INT8 export loses too much accuracy on your data. The larger models are the most likely to need it. The [CPU cookbook](../../cookbooks/export-cpu/) exports, times and scores both placements for one model.
+
 ```python
 model.export(format="onnx", quantization="int8", calibration_data="calibration_images/", int8_keep_mlp_float=True)
 ```
