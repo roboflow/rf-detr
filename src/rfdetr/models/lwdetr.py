@@ -140,7 +140,8 @@ class LWDETR(nn.Module):
             backbone: torch module of the backbone to be used. See backbone.py
             transformer: torch module of the transformer architecture. See transformer.py
             segmentation_head: Mask head applied to the decoder outputs, or None for a model without masks.
-            num_classes: Number of outputs of the classification head, with the background slot included.
+            num_classes: Number of outputs of the classification head: one more than the largest class id
+                         (``build_model`` passes ``args.num_classes + 1``).
             num_queries: Number of object queries per group. This is the maximal number of objects the model can
                          detect in a single image.
             aux_loss: True if auxiliary decoding losses (loss at each decoder layer) are to be used.
@@ -156,7 +157,8 @@ class LWDETR(nn.Module):
                          reference box before a sigmoid.
             use_grouppose_keypoints: If True, build the GroupPose keypoint head.
             num_keypoints_per_class: Number of keypoints of each class, indexed by class id. It cannot have more
-                         entries than ``num_classes``. Only used with ``use_grouppose_keypoints``.
+                         entries than ``num_classes``. Only read by the keypoint head; the list is still stored in
+                         the ``_kp_active_mask`` buffer.
             grouppose_keypoint_dim_downscale: Factor the hidden dimension is divided by to get the width of the
                          keypoint head.
         """
