@@ -14,11 +14,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `RFDETR.predict(..., shift_tta=N)` averages `N` passes with the image moved by fractions of a backbone patch, for confidence scores that change less when objects move by a few pixels ([#1599](https://github.com/roboflow/rf-detr/issues/1599)). Detections match across passes by class and box IoU above 0.6; a pass that missed the object counts as score 0, a pass that scored it low counts at its own score, and `threshold` applies only to the averaged score. It costs `N` forward passes. On RF-DETR-N fine-tuned on RF100-VL `deeppcb`, moving test images by up to one patch flipped the keep-or-drop decision of 21.0% of the defects with one pass and 3.7% with `shift_tta=4`, while test mAP50-95 went from 0.702 to 0.708. Detection and segmentation models; keypoint models raise a `ValueError`.
 
-- Training and fine-tuning with `num_channels=1` or `num_channels=4`, for example RGB plus a motion or optical-flow channel stored as the alpha plane of RGBA images. `model.train()` used to build a 3-channel patch embedding whatever `num_channels` said, and the dataset loaders converted every image to RGB. ([#1735](https://github.com/roboflow/rf-detr/pull/1735), [#1723](https://github.com/roboflow/rf-detr/pull/1723))
-
-    - The COCO, YOLO and WebDataset loaders decode to the model's channel count. With `num_channels=4` a file without a fourth channel, `CMYK` included, raises a `ValueError` that names it. The fourth channel is data, not transparency: `Resize` resamples each plane on its own, and normalization reuses the red mean and standard deviation for it, as `predict()` does.
-    - A checkpoint saved from such a model loads back as `pretrain_weights` with the same `num_channels`, keeping its patch-embedding weights; another `num_channels` raises a `ValueError` that names both counts. It used to fail in `load_state_dict` with a size mismatch on `patch_embeddings.projection.weight`.
-
 ### Documentation
 
 - Cookbook for joint training on three RF100-VL datasets 20x apart in size, with `WeightedMultiSourceBatchSampler` weights computed automatically as the inverse of each source's measured size (`docs/cookbooks/multi-source-rf100vl.ipynb`).
