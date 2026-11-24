@@ -78,9 +78,7 @@ class TestDeepGrayscale:
         image = Image.fromarray(np.array([[0, 128, 255]], dtype=np.int32))
         converted = convert_image(image, "RGB", "int32.png")
         assert converted.mode == "RGB"
-        np.testing.assert_array_equal(
-            np.asarray(converted), [[[0, 0, 0], [128, 128, 128], [255, 255, 255]]]
-        )
+        np.testing.assert_array_equal(np.asarray(converted), [[[0, 0, 0], [128, 128, 128], [255, 255, 255]]])
 
     def test_refuses_float_pixels_naming_the_file(self) -> None:
         """``F`` images raise a ``ValueError`` that names the image."""
