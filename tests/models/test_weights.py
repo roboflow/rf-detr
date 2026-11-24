@@ -21,6 +21,7 @@ import torch
 
 from rfdetr import RFDETR, RFDETRNano
 from rfdetr.config import RFDETRBaseConfig, RFDETRNanoConfig, TrainConfig
+from rfdetr.models.lwdetr import LWDETR
 from rfdetr.models.weights import (
     _adapt_input_conv,
     _pad_query_param_per_group,
@@ -32,6 +33,7 @@ from rfdetr.models.weights import (
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.reproducibility import seed_all
 from tests._markers import _requires_peft
+from tests.models.test_lwdetr_keypoints import _HIDDEN_DIM, _DummyKeypointTransformer
 
 #: ``num_classes`` default of ``RFDETRBaseConfig``; an explicit value equal to it must still count as explicit.
 _DEFAULT_NUM_CLASSES = RFDETRBaseConfig.model_fields["num_classes"].default
@@ -324,6 +326,213 @@ class TestLoadPretrainWeightsReinitScenarios(_PatchWeightsIO):
         load_pretrain_weights(nn_model, mc)
 
         assert nn_model.reinitialize_keypoint_head.call_args_list == [call([17]), call([0, 17])]
+        # [17] -> [0, 17]: the keypoint class moves from row 0 to row 1, the keypoint-free rows follow in order.
+        nn_model.reorder_detection_head.assert_called_once_with([1, 0, *range(2, 91)])
+
+
+def _keypoint_lwdetr(num_keypoints_per_class: list[int], num_rows: int = 2, group_detr: int = 1) -> LWDETR:
+    """Build a real keypoint ``LWDETR`` on the dummy transformer, with the given keypoint schema.
+
+    Args:
+        num_keypoints_per_class: Keypoint schema, e.g. ``[17]`` (active-first) or ``[0, 17]`` (background-first).
+        num_rows: Rows in each class head, the no-object row included.
+        group_detr: Number of query groups, which is also the number of two-stage encoder class heads.
+
+    Returns:
+        A model with one decoder class head and ``group_detr`` two-stage encoder class heads, each with ``num_rows``
+        rows.
+
+    Examples:
+        >>> model = _keypoint_lwdetr([0, 17])
+        >>> model.class_embed.out_features, model.get_num_keypoints_per_class()
+        (2, [0, 17])
+        >>> _keypoint_lwdetr([17, 0], num_rows=3).transformer.enc_out_class_embed[0].out_features
+        3
+        >>> len(_keypoint_lwdetr([17], group_detr=2).transformer.enc_out_class_embed)
+        2
+    """
+    return LWDETR(
+        backbone=MagicMock(),
+        transformer=_DummyKeypointTransformer(hidden_dim=_HIDDEN_DIM, num_keypoints_per_class=num_keypoints_per_class),
+        segmentation_head=None,
+        num_classes=num_rows,
+        num_queries=2,
+        aux_loss=False,
+        group_detr=group_detr,
+        two_stage=True,
+        lite_refpoint_refine=True,
+        bbox_reparam=False,
+        use_grouppose_keypoints=True,
+        num_keypoints_per_class=num_keypoints_per_class,
+        grouppose_keypoint_dim_downscale=1,
+    )
+
+
+def _fill_class_rows(model: LWDETR) -> None:
+    """Give row ``r`` of every class head of *model* the weights ``r`` and the bias ``10 * r + 0.5``.
+
+    Args:
+        model: A model with a decoder class head and, optionally, two-stage encoder class heads.
+
+    Examples:
+        >>> model = _keypoint_lwdetr([0, 17])
+        >>> _fill_class_rows(model)
+        >>> model.class_embed.bias.tolist()
+        [0.5, 10.5]
+        >>> bool((model.class_embed.weight[1] == 1.0).all())
+        True
+    """
+    with torch.no_grad():
+        for head in [model.class_embed, *model.transformer.enc_out_class_embed]:
+            rows = torch.arange(head.out_features, dtype=head.weight.dtype)
+            head.weight.copy_(rows[:, None].expand_as(head.weight))
+            head.bias.copy_(rows * 10 + 0.5)
+
+
+class TestLoadPretrainWeightsKeypointClassRows(_PatchWeightsIO):
+    """The keypoint class keeps its checkpoint weights when the configured schema puts it in another slot."""
+
+    @staticmethod
+    def _load(
+        monkeypatch: pytest.MonkeyPatch,
+        checkpoint_schema: list[int],
+        checkpoint_rows: int,
+        configured_schema: list[int],
+        num_classes: int,
+        group_detr: int = 1,
+        class_names: list[str] | None = None,
+    ) -> tuple[LWDETR, list[str]]:
+        """Load a ``checkpoint_schema`` checkpoint with distinct rows into a ``configured_schema`` model.
+
+        Args:
+            monkeypatch: Pytest monkeypatch serving the checkpoint.
+            checkpoint_schema: Keypoint schema of the checkpoint.
+            checkpoint_rows: Class-head rows of the checkpoint, the no-object row included.
+            configured_schema: Keypoint schema the model is configured with explicitly.
+            num_classes: Configured class count.
+            group_detr: Query groups of the checkpoint and the model, one two-stage encoder class head each.
+            class_names: Class names stored in the checkpoint args.
+
+        Returns:
+            The loaded model and the class names ``load_pretrain_weights`` returned.
+        """
+        source = _keypoint_lwdetr(checkpoint_schema, num_rows=checkpoint_rows, group_detr=group_detr)
+        _fill_class_rows(source)
+        _serve_checkpoint(
+            monkeypatch,
+            {
+                "model": source.state_dict(),
+                "args": SimpleNamespace(
+                    segmentation_head=False,
+                    patch_size=14,
+                    class_names=class_names or ["person"],
+                    num_queries=2,
+                    group_detr=group_detr,
+                ),
+            },
+        )
+        mc = _base_config(
+            num_classes=num_classes,
+            num_queries=2,
+            num_select=2,
+            group_detr=group_detr,
+            use_grouppose_keypoints=True,
+            num_keypoints_per_class=configured_schema,
+        )
+        model = _keypoint_lwdetr(configured_schema, num_rows=num_classes + 1, group_detr=group_detr)
+        return model, load_pretrain_weights(model, mc)
+
+    @staticmethod
+    def _assert_rows(model: LWDETR, order: list[int], group_detr: int = 1) -> None:
+        """Assert each class head holds, in row ``i``, the checkpoint row ``order[i]`` and has ``len(order)`` rows.
+
+        Args:
+            model: Model whose decoder and encoder class heads are checked.
+            order: The checkpoint row each row of the head is expected to hold.
+            group_detr: Expected number of two-stage encoder class heads.
+
+        Examples:
+            >>> model = _keypoint_lwdetr([0, 17])
+            >>> _fill_class_rows(model)
+            >>> TestLoadPretrainWeightsKeypointClassRows._assert_rows(model, [0, 1])
+        """
+        heads = [model.class_embed, *model.transformer.enc_out_class_embed]
+        assert len(heads) == group_detr + 1
+        for head in heads:
+            assert head.out_features == len(order)
+            torch.testing.assert_close(head.bias, torch.tensor([10.0 * r + 0.5 for r in order]))
+            torch.testing.assert_close(
+                head.weight, torch.tensor(order, dtype=head.weight.dtype)[:, None].expand_as(head.weight)
+            )
+
+    @pytest.mark.parametrize(
+        ("checkpoint_schema", "checkpoint_rows", "configured_schema", "num_classes", "order"),
+        [
+            pytest.param([0, 17], 2, [17], 1, [1, 0], id="background_first_to_active_first"),
+            pytest.param([17], 2, [0, 17], 1, [1, 0], id="active_first_to_background_first"),
+            pytest.param([0, 17], 2, [17, 0], 2, [1, 0, 0], id="box_only_class_added"),
+            pytest.param([0, 17], 2, [17, 0, 0], 3, [1, 0, 0, 0], id="two_box_only_classes_added"),
+            pytest.param([0, 17], 2, [21], 1, [1, 0], id="other_keypoint_count"),
+            pytest.param([0, 17], 2, [17, 4], 2, [1, 0, 0], id="keypoint_class_added_starts_from_background"),
+            pytest.param([0, 0, 17], 3, [17], 1, [2, 0], id="head_cut_before_the_keypoint_row"),
+        ],
+    )
+    def test_keypoint_class_keeps_its_checkpoint_rows(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        checkpoint_schema: list[int],
+        checkpoint_rows: int,
+        configured_schema: list[int],
+        num_classes: int,
+        order: list[int],
+    ) -> None:
+        """Each class-head row follows its class from the checkpoint schema to the configured one.
+
+        The docs' custom keypoint snippet passes the dataset's schema, ``[17]`` for people alone, or ``[17, 0]`` and
+        ``[17, 0, 0]`` with box-only classes, while the preview checkpoint uses ``[0, 17]``. The rows stayed in place,
+        so the person class started fine-tuning from the background row. The rows are taken from the loaded head in one
+        step that also sizes it, so a head grown for box-only classes, or cut below the keypoint row, keeps the person
+        row too, and a keypoint class with another count, or an added one, never inherits the person logits in the no-
+        object row.
+        """
+        model, _ = self._load(monkeypatch, checkpoint_schema, checkpoint_rows, configured_schema, num_classes)
+
+        self._assert_rows(model, order)
+
+    def test_every_encoder_head_follows_its_class(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With ``group_detr=2`` the decoder head and both two-stage encoder heads are reordered."""
+        model, _ = self._load(monkeypatch, [0, 17], 2, [17, 0], 2, group_detr=2)
+
+        self._assert_rows(model, [1, 0, 0], group_detr=2)
+
+    def test_unmappable_schema_keeps_the_checkpoint_rows_and_warns(
+        self, monkeypatch: pytest.MonkeyPatch, captured: list[str]
+    ) -> None:
+        """Keypoint classes that swap places have no row mapping: the head stays as loaded, with a warning."""
+        model, _ = self._load(monkeypatch, [17, 4], 3, [4, 17], 2)
+
+        self._assert_rows(model, [0, 1, 2])
+        assert any("no class-head row mapping" in message and "[17, 4]" in message for message in captured)
+
+    def test_mapped_schema_does_not_warn_about_missing_mapping(
+        self, monkeypatch: pytest.MonkeyPatch, captured: list[str]
+    ) -> None:
+        """A schema with a row mapping, moved or not, never reports a missing one."""
+        self._load(monkeypatch, [0, 17], 2, [17], 1)
+
+        assert not any("no class-head row mapping" in message for message in captured)
+
+    def test_class_names_follow_the_rows(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The returned class names are permuted with the rows, so name ``i`` still describes row ``i``."""
+        _, names = self._load(monkeypatch, [17, 0, 4], 4, [17, 4, 0], 3, class_names=["a", "b", "c"])
+
+        assert names == ["a", "c", "b"]
+
+    def test_class_names_dropped_when_a_row_has_no_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A new row that takes a row the checkpoint gave no name returns no names rather than a wrong list."""
+        _, names = self._load(monkeypatch, [0, 17], 2, [17], 1, class_names=["person"])
+
+        assert names == []
 
 
 # ---------------------------------------------------------------------------
