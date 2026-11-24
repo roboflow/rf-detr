@@ -1406,7 +1406,6 @@ class TestPretrainWeightsCompatibilityWarning:
             ("lite_refpoint_refine", False),
             ("layer_norm", False),
             ("two_stage", False),
-            ("num_channels", 1),
         ],
     )
     def test_load_breaking_override_warns(self, field: str, value: object) -> None:
@@ -1443,6 +1442,9 @@ class TestPretrainWeightsCompatibilityWarning:
             ("num_classes", 5),
             ("resolution", 448),
             ("positional_encoding_size", 20),
+            # A 3-channel checkpoint loads and its stem is adapted to the new width, so nothing is left random.
+            ("num_channels", 1),
+            ("num_channels", 4),
         ],
     )
     def test_silent_field_overrides(self, field: str, value: object) -> None:
@@ -1590,7 +1592,6 @@ class TestBreakingListIntegrity:
             "two_stage",
             "patch_size",
             "segmentation_head",
-            "num_channels",
             "num_queries",
             "group_detr",
         }
