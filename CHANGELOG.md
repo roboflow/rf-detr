@@ -19,11 +19,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Breaking Changes
 
 - `rfdetr` no longer depends on `transformers`. A core install (`pip install rfdetr`) no longer installs `transformers`, `tokenizers`, `huggingface_hub`, `safetensors` and their dependencies: 19 fewer packages and 89 MB less in `site-packages` (CPU PyTorch, Python 3.12, macOS arm64). `rfdetr[train]` and `rfdetr[lora]` still install `transformers` through `peft`.
+
     - Code that imports `transformers` and relied on `rfdetr` to install it must install it directly: `pip install transformers`.
     - On a core install, building a patch-14 DINOv2 backbone with 37 positional encodings and `pretrain_weights=None`, such as the deprecated RF-DETR Base configs, raises an `ImportError` that asks for `huggingface_hub` and `safetensors`.
     - On a core install, building a non-windowed `DinoV2(use_windowed_attn=False)` raises an `ImportError` that asks for `transformers`.
 
 - Photos with an orientation tag, as phones save them, are read upright, as viewers and annotation tools show them, in training, validation, `predict()` on a path or URL, INT8 calibration, the export sample image and the export benchmark and COCO scoring helpers. Before, labels drawn on the upright photo landed on the wrong pixels. A PIL image passed to `predict()` keeps the caller's pixel order. ([#1739](https://github.com/roboflow/rf-detr/pull/1739))
+
     - The tag is read as `PIL.ImageOps.exif_transpose` reads it (EXIF, a PNG `Raw profile type exif` chunk, or XMP `tiff:Orientation`); untagged files decode as before, and a file with corrupt EXIF can now raise Pillow's `Possibly corrupt EXIF data` `UserWarning`.
     - Labels drawn on the stored pixels of tagged photos, such as pseudo-labels from an earlier `predict()`, no longer line up: regenerate them on the upright photos or strip the orientation metadata. The COCO and WebDataset readers warn once per dataset object when the boxes of a quarter-turned photo fit only its stored frame.
 
