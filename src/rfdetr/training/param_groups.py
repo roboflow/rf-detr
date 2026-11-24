@@ -28,46 +28,6 @@ logger = get_logger()
 _PARAM_GROUP_SETTINGS = ("lr", "lr_encoder", "lr_vit_layer_decay", "lr_component_decay", "weight_decay")
 
 
-def get_vit_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: int = 12) -> float:
-    """Calculate lr decay rate for different ViT blocks.
-
-    Args:
-        name: parameter name.
-        lr_decay_rate: base lr decay rate.
-        num_layers: number of ViT blocks.
-
-    Returns:
-        lr decay rate for the given parameter.
-    """
-    # NOTE: near-duplicate of get_dinov2_lr_decay_rate in models/backbone/backbone.py (same formula,
-    # different layer-key pattern: this matches ".blocks.", that matches ".layer.").
-    # If updating this formula, update the sibling too.
-    layer_id = num_layers + 1
-    if name.startswith("backbone"):
-        if ".pos_embed" in name or ".patch_embed" in name:
-            layer_id = 0
-        elif ".blocks." in name and ".residual." not in name:
-            layer_id = int(name[name.find(".blocks.") :].split(".")[2]) + 1
-    logger.debug(f"name: {name}, lr_decay: {lr_decay_rate ** (num_layers + 1 - layer_id)}")
-    return lr_decay_rate ** (num_layers + 1 - layer_id)
-
-
-def get_vit_weight_decay_rate(name: str, weight_decay_rate: float = 1.0) -> float:
-    """Calculate weight decay rate for different ViT parameters.
-
-    Args:
-        name: parameter name.
-        weight_decay_rate: base weight decay rate.
-
-    Returns:
-        weight decay rate for the given parameter.
-    """
-    if ("gamma" in name) or ("pos_embed" in name) or ("rel_pos" in name) or ("bias" in name) or ("norm" in name):
-        weight_decay_rate = 0.0
-    logger.debug(f"name: {name}, weight_decay rate: {weight_decay_rate}")
-    return weight_decay_rate
-
-
 def _hyperparameter_key(param_group: dict[str, Any]) -> tuple[tuple[str, str], ...]:
     """Return the hyperparameter overrides of ``param_group``, without its parameters.
 
