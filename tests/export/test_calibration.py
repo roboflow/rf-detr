@@ -22,6 +22,7 @@ from rfdetr.export._runtime.calibration import (
     calibration_batches,
     warn_if_too_few_samples,
 )
+from tests._oriented_photo import upright_reference, write_oriented_photo
 
 
 @pytest.fixture
@@ -140,6 +141,19 @@ class TestDirectoryEdgeForms:
         expected = (np.array([255, 0, 128]) / 255 - np.array([0.485, 0.456, 0.406])) / np.array([0.229, 0.224, 0.225])
         batch = next(calibration_batches(tmp_path, height=8, width=8))
         np.testing.assert_allclose(batch[0, :, 0, 0], expected, atol=1e-5)
+
+    def test_tagged_photo_is_calibrated_upright(self, tmp_path: Path) -> None:
+        """A photo with EXIF orientation 6 gives the batch of its upright copy, as training and ``predict()`` see it."""
+        tagged_dir, upright_dir = tmp_path / "tagged", tmp_path / "upright"
+        tagged_dir.mkdir()
+        upright_dir.mkdir()
+        write_oriented_photo(tagged_dir / "photo.png", 6, width=32, height=16)
+        Image.fromarray(upright_reference(tagged_dir / "photo.png")).save(upright_dir / "photo.png")
+        expected = next(calibration_batches(upright_dir, height=24, width=12))
+
+        batch = next(calibration_batches(tagged_dir, height=24, width=12))
+
+        np.testing.assert_array_equal(batch, expected)
 
 
 class TestArraySources:

@@ -38,6 +38,7 @@ from rfdetr._prediction.sources import has_only_finite_images, is_expanded_sourc
 from rfdetr._prediction.thresholds import _class_thresholds
 from rfdetr._prediction.types import _ImageInput, _PredictionInput, _ThresholdInput
 from rfdetr.models.postprocess import PostProcess
+from rfdetr.utilities.exif import exif_orientation, upright_image
 from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_to_pixel_covariance
 from rfdetr.utilities.logger import get_logger
 
@@ -366,7 +367,11 @@ def _decode_local_image(path: str, gpu_device: torch.device | None = None) -> to
     torchvision decodes the same buffer, so a file changed on disk after the read cannot skip
     Pillow's decompression-bomb limit. The cost is that the whole encoded file is in memory before
     Pillow inspects its header, whereas opening the path with Pillow reads only the header; a file
-    that ends up on the Pillow path pays that read before Pillow opens it again.
+    that ends up on the caller's Pillow path pays that read before Pillow opens it again.
+
+    A file with an EXIF orientation is decoded here by Pillow from that same buffer and turned upright
+    (:func:`rfdetr.utilities.exif.upright_image`), so it keeps the single read and the worker-thread
+    decode. It is never left encoded for the GPU, which cannot apply the turn.
 
     Unlike Pillow, torchvision's bundled libjpeg and libpng print their messages about corrupt data
     (``Corrupt JPEG data: ...``) straight to the process's standard error. torchvision offers no hook to
@@ -383,8 +388,8 @@ def _decode_local_image(path: str, gpu_device: torch.device | None = None) -> to
             here.
 
     Returns:
-        An RGB ``uint8`` CHW tensor, the file's bytes as an :class:`_EncodedJpeg` for the GPU, or ``None`` when the
-        caller should use Pillow.
+        An RGB ``uint8`` CHW tensor, upright for a file with an EXIF orientation, the file's bytes as an
+        :class:`_EncodedJpeg` for the GPU, or ``None`` when the caller should use Pillow.
 
     Raises:
         Image.DecompressionBombError: If Pillow's header check rejects an oversized image.
@@ -402,6 +407,15 @@ def _decode_local_image(path: str, gpu_device: torch.device | None = None) -> to
             # rejected below, so read the bit depth first rather than pay for a full decode.
             if header.format == "PNG" and stream.getbuffer()[_PNG_BIT_DEPTH_OFFSET] == 16:
                 return None
+            # A photo with an EXIF orientation is decoded by Pillow from the bytes already read and turned upright as
+            # training decodes it, here on the worker: nvjpeg cannot apply the tag, and Pillow stays the one
+            # implementation of the turn. The steps match the caller's Pillow path: turn, convert, copy.
+            orientation = exif_orientation(header)
+            if orientation != 1:
+                upright = upright_image(header, orientation)
+                if upright.mode != "RGB":
+                    upright = upright.convert("RGB")
+                return _uint8_image_to_chw_view(np.array(upright, dtype=np.uint8, copy=True))
             on_gpu = gpu_device is not None and _decodes_on_gpu(header, gpu_device)
             sampling = JpegImagePlugin.get_sampling(header) if on_gpu else -1
     except OSError:
@@ -1082,7 +1096,10 @@ def _prepare_batch(
                     img = decoded
                     decoded_local_file = True
             if not decoded_local_file:
+                # rf-detr decodes this file itself, so it shows the photo upright, as the dataset readers do.
+                # A PIL image passed in by the caller keeps the pixel order the caller chose.
                 img = Image.open(img)
+                img = upright_image(img, exif_orientation(img))
 
         range_known_valid = decoded_local_file
         deferred_widen = decoded_local_file

@@ -36,6 +36,7 @@ from rfdetr.export._runtime.adapters import (
 from rfdetr.export._runtime.decode import decode_detections
 from rfdetr.export._runtime.metadata import ExportMetadata
 from rfdetr.export._runtime.preprocess import preprocess_to_nchw
+from rfdetr.utilities.exif import exif_orientation, upright_image
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
@@ -303,8 +304,9 @@ def _run_inference(
 
     **Input contract** (must match ``RFDETR.predict()`` preprocessing exactly):
 
-    - Image is opened with Pillow and converted to ``"RGB"`` (3-channel) or ``"L"``
-      (1-channel greyscale) depending on the model's channel count. PIL is used only to decode and
+    - Image is opened with Pillow, turned upright for its EXIF orientation as ``predict()`` turns a file it reads,
+      and converted to ``"RGB"`` (3-channel) or ``"L"``
+      (1-channel greyscale) depending on the model's channel count. PIL is used only to decode, turn and
       convert — never to resize.
     - Resize follows ``RFDETR.predict()``'s exact convention — bilinear, half-pixel centers,
       ``antialias=False`` — applied by :func:`~rfdetr.export._runtime.preprocess.preprocess_to_nchw` via
@@ -332,7 +334,7 @@ def _run_inference(
 
     Returns:
         A tuple of ``(detections, pil_img)`` where ``detections`` contains pixel-space ``xyxy`` boxes and ``pil_img`` is
-        the original PIL image at its original resolution.
+        the decoded PIL image at its original resolution, upright for its EXIF orientation, in the frame of the boxes.
 
     Examples:
         .. code-block:: python
@@ -347,7 +349,8 @@ def _run_inference(
     # ONNX NCHW: [batch, channels, height, width]
     _, channels, height, width = inputs[0].shape
 
-    with PILImage.open(image_path) as pil_img:
+    with PILImage.open(image_path) as opened:
+        pil_img = upright_image(opened, exif_orientation(opened))
         inp_tensor = preprocess_to_nchw(pil_img, height, width, channels)
 
     raw_outputs = _run_onnx_raw(session, input_name, inp_tensor)
