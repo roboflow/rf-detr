@@ -946,9 +946,9 @@ class ModelConfig(BaseConfig):
         """Expand and resolve the pretrain_weights path.
 
         Bare filenames (no directory component, e.g. ``rf-detr-base.pth``) are resolved to the model cache directory so
-        weights land in a stable, user-configurable location (``$XDG_CACHE_HOME/roboflow/models`` or
-        ``~/.cache/roboflow/models`` by default, an existing ``~/.roboflow/models`` directory, or the path set via the
-        ``RF_HOME`` environment variable) instead of CWD.
+        weights land in a stable, user-configurable location instead of CWD. The location follows the resolution order
+        documented on :func:`rfdetr.assets.model_weights.get_model_cache_dir` (``RF_HOME`` and ``ROBOFLOW_HOME`` first,
+        then the XDG cache directory, with an existing ``~/.roboflow/models`` kept only while the XDG one is absent).
 
         Paths that already contain a directory separator (e.g. ``~/models/x.pth``, ``/abs/path/x.pth``,
         ``models/x.pth``) are normalised with ``os.path.realpath`` as before.
