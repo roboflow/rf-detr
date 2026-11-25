@@ -23,9 +23,11 @@ Download Priority Order:
 
 from __future__ import annotations
 
+import functools
 import os
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 
 from rfdetr.platform import _IS_RFDETR_PLUS_AVAILABLE
 from rfdetr.utilities.files import _download_file, _validate_file_md5
@@ -39,9 +41,9 @@ _RF_HOME_ENV_VAR = "RF_HOME"
 _ROBOFLOW_HOME_ENV_VAR = "ROBOFLOW_HOME"
 #: XDG Base Directory Specification cache root environment variable.
 _XDG_CACHE_HOME_ENV_VAR = "XDG_CACHE_HOME"
-#: Legacy pre-XDG cache directory preserved when already present on disk.
+#: Legacy pre-XDG cache directory, used for as long as the XDG or default target directory does not exist.
 _LEGACY_CACHE_DIR = "~/.roboflow/models"
-#: Default XDG cache directory used when no override or existing legacy directory applies.
+#: Default XDG cache directory used when no override applies and ``XDG_CACHE_HOME`` is unset, empty or not absolute.
 _DEFAULT_CACHE_DIR = "~/.cache/roboflow/models"
 
 
@@ -279,18 +281,46 @@ class ModelWeights(ModelWeightsBase):
     # All methods inherited from ModelWeightsBase
 
 
+@functools.cache
+def _log_legacy_cache_hint(legacy_dir: str, target_dir: str, legacy_in_use: bool) -> None:
+    """Log once per distinct directory pair which model cache is used while a legacy cache directory exists.
+
+    Args:
+        legacy_dir: Absolute path of the existing legacy ``~/.roboflow/models`` directory.
+        target_dir: Absolute path of the XDG or default cache directory.
+        legacy_in_use: ``True`` when the legacy directory is returned (the target does not exist yet), ``False`` when
+            the existing target wins and the legacy directory is ignored.
+
+    Examples:
+        >>> _log_legacy_cache_hint("/old/models", "/new/models", True)  # doctest: +SKIP
+    """
+    if legacy_in_use:
+        logger.info(
+            "Using the legacy model cache %s. Move it to %s (or set RF_HOME) to adopt the XDG cache location.",
+            legacy_dir,
+            target_dir,
+        )
+    else:
+        logger.info(
+            "Using the model cache %s; the legacy model cache %s is ignored and can be moved or removed.",
+            target_dir,
+            legacy_dir,
+        )
+
+
 def get_model_cache_dir() -> str:
     """Return the directory where RF-DETR caches downloaded model weights.
 
-    Resolves the cache location in priority order:
+    Resolves the cache location by these rules:
 
-    1. ``RF_HOME`` environment variable (canonical override).
-    2. ``ROBOFLOW_HOME`` environment variable (accepted alias).
-    3. ``XDG_CACHE_HOME`` environment variable (with ``roboflow/models`` appended) when set to an absolute path per the
-       XDG Base Directory Specification; empty or relative values are ignored.
-    4. Existing ``~/.roboflow/models`` directory on disk, preserving backwards compatibility so upgraded installations
-       reuse previously downloaded checkpoints without re-downloading.
-    5. ``~/.cache/roboflow/models`` (the XDG default when ``XDG_CACHE_HOME`` is unset).
+    1. A non-empty ``RF_HOME`` environment variable (canonical override) is used as the exact directory.
+    2. Otherwise a non-empty ``ROBOFLOW_HOME`` environment variable (accepted alias) is used as the exact directory.
+    3. Otherwise the *target* directory is ``$XDG_CACHE_HOME/roboflow/models`` when ``XDG_CACHE_HOME`` is an absolute
+       path as written (``~`` is not expanded; an empty or relative value counts as unset, per the XDG Base Directory
+       Specification), else ``~/.cache/roboflow/models``.
+    4. Exception: an existing ``~/.roboflow/models`` directory is used instead for as long as the target directory from
+       rule 3 does not exist, so upgraded installations reuse previously downloaded checkpoints without
+       re-downloading. Once the target exists, it wins and the legacy directory is ignored.
 
     Set ``RF_HOME`` (or ``ROBOFLOW_HOME``) to override the exact model directory, or ``XDG_CACHE_HOME`` to relocate the
     shared XDG cache root:
@@ -330,20 +360,24 @@ def get_model_cache_dir() -> str:
     if explicit_dir:
         return os.path.abspath(os.path.expanduser(explicit_dir))
 
-    # Per the XDG Base Directory Specification, relative paths in XDG_CACHE_HOME are invalid and must be ignored.
+    # Per the XDG Base Directory Specification, a non-absolute XDG_CACHE_HOME is invalid and must be ignored. The raw
+    # value is tested, not its expansion: a literal "~/x" (the shell did not expand it) is relative. `Path.is_absolute`
+    # needs a drive and a root on Windows on every supported Python, unlike `os.path.isabs` for a drive-less "/cache".
     xdg_cache_home = os.environ.get(_XDG_CACHE_HOME_ENV_VAR)
-    if xdg_cache_home:
-        expanded_xdg = os.path.expanduser(xdg_cache_home)
-        if os.path.isabs(expanded_xdg):
-            return os.path.abspath(os.path.join(expanded_xdg, "roboflow", "models"))
+    if xdg_cache_home and Path(xdg_cache_home).is_absolute():
+        target_dir = os.path.abspath(os.path.join(xdg_cache_home, "roboflow", "models"))
+    else:
+        target_dir = os.path.abspath(os.path.expanduser(_DEFAULT_CACHE_DIR))
 
-    # Backwards compatibility: keep using ~/.roboflow/models when already populated on disk so upgrading
-    # users do not re-download checkpoints or split caches across two directories.
+    # Backwards compatibility: an existing ~/.roboflow/models stays in use only while the target does not exist, so
+    # upgrading users do not re-download checkpoints, and a target that already exists is never abandoned for the
+    # legacy directory (which would split the cache when an older release recreates it).
     legacy_dir = os.path.abspath(os.path.expanduser(_LEGACY_CACHE_DIR))
-    if os.path.isdir(legacy_dir):
-        return legacy_dir
-
-    return os.path.abspath(os.path.expanduser(_DEFAULT_CACHE_DIR))
+    if not os.path.isdir(legacy_dir):
+        return target_dir
+    legacy_in_use = not os.path.isdir(target_dir)
+    _log_legacy_cache_hint(legacy_dir, target_dir, legacy_in_use)
+    return legacy_dir if legacy_in_use else target_dir
 
 
 def download_pretrain_weights(
