@@ -236,6 +236,7 @@ detections = model.predict("image.jpg", threshold=0.5, shift_tta=4)
 - Each pass costs one forward pass, so `shift_tta=4` takes about 4 times as long. `2` is the cheaper middle ground.
 - Detections match across passes when they have the same class and a box IoU above 0.6. The fused box is the mean box, and the fused score is the mean score over all passes, with a pass that missed the object counting as 0. No pass is held to `threshold` on its own: a pass that scores the object low still counts at its own score, and `threshold` applies only to the averaged score. Averaged scores can sit a little lower than single-pass ones; pick the threshold with `shift_tta` on.
 - Segmentation masks keep the pixels that at least half of the matched masks cover. Keypoint models do not support `shift_tta`, and the value is checked before any image is read.
+- `RFDETRInference.predict(..., tta=TTAConfig())` adds zoomed and mirrored views and is opt-in as well. [Test-Time Augmentation](../tta.md) measures what each recipe adds and costs on COCO val2017.
 
 On RF-DETR-N fine-tuned on the `deeppcb` dataset of RF100-VL, moving each test image by 0 to 16 pixels changed the keep-or-drop decision for 21.0% of the defects with one pass, 7.4% with `shift_tta=2` and 3.7% with `shift_tta=4`, each at its own best-F1 threshold. Test mAP50-95 was 0.702, 0.699 and 0.708.
 

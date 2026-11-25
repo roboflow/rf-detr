@@ -781,8 +781,9 @@ def predict(
             next batch's context before the current batch's results are yielded, so pass it only when nothing changes
             the model between batches, as for a predictor that owns its model or runtime.
         tta: The test-time augmentation views to fuse (see :class:`~rfdetr._prediction.tta.TTAConfig`). ``None`` and
-            ``TTAConfig()`` run the plain prediction. A request with several views is refused for a fixed-shape or
-            fixed-batch runtime before any source is opened, and it skips ``prepare_ahead``.
+            ``TTAConfig(zoom=())`` run the plain prediction; ``TTAConfig()`` runs the plain image and three zooms. A
+            request with several views is refused for a fixed-shape or fixed-batch runtime before any source is
+            opened, and it skips ``prepare_ahead``.
 
     Returns:
         A lazy generator, a scalar image result, or a list of results.
@@ -1359,7 +1360,8 @@ def _plan_views(
     validate_shift_tta(shift_tta, patch_size)
     if tta is not None and shift_tta != 1:
         raise ValueError("Pass either shift_tta or tta, not both.")
-    config = TTAConfig(shift=shift_tta) if tta is None else tta
+    # `shift_tta` means shifted passes only, so the zoom that a bare `TTAConfig` defaults to must not join them.
+    config = TTAConfig(shift=shift_tta, zoom=()) if tta is None else tta
     if view_count(config) > 1 and any(context.num_keypoints_per_class):
         raise ValueError(f"{'shift_tta' if tta is None else 'tta'} does not support keypoint models.")
     num_windows = getattr(context.config, "num_windows", 1)

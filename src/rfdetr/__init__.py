@@ -42,6 +42,7 @@ if _IS_NUMPY_INSTALLED and not hasattr(numpy, "complex_"):
 
 
 from rfdetr._prediction.thresholds import ClassThresholds
+from rfdetr._prediction.tta import TTAConfig
 from rfdetr.detr import RFDETR
 from rfdetr.inference import ModelContext, RFDETRInference
 from rfdetr.platform import _PLUS_EXPORTS
@@ -66,6 +67,7 @@ __all__ = [
     "ClassThresholds",
     "ModelContext",
     "RFDETRInference",
+    "TTAConfig",
     "from_checkpoint",
     "RFDETRKeypointPreview",
     "RFDETRNano",

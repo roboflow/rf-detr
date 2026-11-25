@@ -35,9 +35,13 @@ if TYPE_CHECKING:
 # Two detections of different passes are the same object when they share a class and overlap by more than this.
 _SAME_OBJECT_IOU = 0.6
 
-# Provisional range of ``TTAConfig.zoom``, to be confirmed or narrowed by the Stage 2 zoom sweep of the plan.
+# Range of ``TTAConfig.zoom``. The cookbook measured scales from 0.85 to 1.5; the lower bound leaves some room below.
 ZOOM_MIN = 0.75
 ZOOM_MAX = 1.5
+
+# The zoom views of ``TTAConfig()``: the plain image plus these three scales, four views. On COCO val2017 this recipe
+# added 2.0 to 4.0 box AP on Nano, Small and Large, at 3 to 4 times the latency of one plain call.
+DEFAULT_ZOOM = (0.85, 1.25, 1.5)
 
 
 def validate_shift_tta(shift_tta: object, patch_size: int) -> int:
@@ -87,22 +91,30 @@ def shift_offsets(patch_size: int, passes: int) -> list[int]:
 class TTAConfig:
     """The test-time augmentation views of one ``RFDETRInference.predict`` call.
 
-    The default is one view, the plain prediction. Every view costs one forward pass over a canvas at least as large
-    as the image, so the cost grows with the number of views (see :func:`view_count`) and, for zoom, with the canvas
-    area. Mirroring assumes an object keeps its class when the image is flipped: a class that does not (arrows, turn
-    signs) splits into two groups and loses score.
+    Passing ``tta`` at all is the opt-in; ``tta=None`` is the plain prediction. ``TTAConfig()`` is the recommended
+    recipe, the plain image plus three zoomed copies (``DEFAULT_ZOOM``), four views. Ask for another mix with explicit
+    fields: when ``shift`` or ``flip`` is given and ``zoom`` is not, the config holds exactly the views you named and no
+    zoom, so ``TTAConfig(shift=4)`` is four views. ``TTAConfig(zoom=())`` is one view, the plain prediction. Every view
+    costs one forward pass over a canvas at least as large as the image, so the cost grows with the number of views
+    (see :func:`view_count`) and, for zoom, with the canvas area. Mirroring assumes an object keeps its class when the
+    image is flipped: a class that does not (arrows, turn signs) splits into two groups and loses score.
 
     Attributes:
         shift: Number of sub-patch shifted views, from 1 to the backbone patch size; 1 adds no shift.
         flip: Also run every view mirrored left to right.
         zoom: Extra views at these scales, each a resized copy of the image on a larger canvas. Every value is a finite
-            number inside ``[ZOOM_MIN, ZOOM_MAX]`` and not 1.
+            number inside ``[ZOOM_MIN, ZOOM_MAX]`` and not 1. ``None``, the default, means ``DEFAULT_ZOOM`` when
+            ``shift`` is 1 and ``flip`` is off, and no zoom otherwise; it is stored as the tuple it resolves to.
 
     Raises:
         TypeError: If a field has the wrong type, or ``zoom`` is a string, a mapping or a set.
         ValueError: If ``shift`` is below 1, or a ``zoom`` is not finite, equals 1, is out of range or repeats.
 
     Examples:
+        >>> TTAConfig()
+        TTAConfig(shift=1, flip=False, zoom=(0.85, 1.25, 1.5))
+        >>> TTAConfig(shift=4)
+        TTAConfig(shift=4, flip=False, zoom=())
         >>> TTAConfig(shift=2, flip=True, zoom=[1.25])
         TTAConfig(shift=2, flip=True, zoom=(1.25,))
         >>> view_count(TTAConfig(shift=2, flip=True, zoom=(1.25,)))
@@ -111,7 +123,7 @@ class TTAConfig:
 
     shift: int = 1
     flip: bool = False
-    zoom: tuple[float, ...] = ()
+    zoom: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
         """Check every field and store ``zoom`` as a tuple of floats."""
@@ -121,10 +133,13 @@ class TTAConfig:
             raise ValueError(f"TTAConfig.shift must be at least 1, got {self.shift!r}.")
         if not isinstance(self.flip, bool):
             raise TypeError(f"TTAConfig.flip must be a bool, got {type(self.flip).__name__}.")
-        if not isinstance(self.zoom, (list, tuple)):
-            raise TypeError(f"TTAConfig.zoom must be a list or tuple of numbers, got {type(self.zoom).__name__}.")
+        requested = self.zoom
+        if requested is None:
+            requested = DEFAULT_ZOOM if self.shift == 1 and not self.flip else ()
+        if not isinstance(requested, (list, tuple)):
+            raise TypeError(f"TTAConfig.zoom must be a list or tuple of numbers, got {type(requested).__name__}.")
         zoom: list[float] = []
-        for value in self.zoom:
+        for value in requested:
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise TypeError(f"TTAConfig.zoom holds numbers only, got {type(value).__name__}.")
             if not math.isfinite(value) or value == 1.0 or not ZOOM_MIN <= value <= ZOOM_MAX:
@@ -133,7 +148,7 @@ class TTAConfig:
                 )
             zoom.append(float(value))
         if len(set(zoom)) != len(zoom):
-            raise ValueError(f"TTAConfig.zoom must not repeat a value, got {self.zoom!r}.")
+            raise ValueError(f"TTAConfig.zoom must not repeat a value, got {requested!r}.")
         object.__setattr__(self, "zoom", tuple(zoom))
 
 
@@ -148,11 +163,13 @@ def view_count(config: TTAConfig) -> int:
 
     Examples:
         >>> view_count(TTAConfig())
+        4
+        >>> view_count(TTAConfig(zoom=()))
         1
         >>> view_count(TTAConfig(shift=4, flip=True))
         8
     """
-    return (config.shift + len(config.zoom)) * (2 if config.flip else 1)
+    return (config.shift + len(config.zoom or ())) * (2 if config.flip else 1)
 
 
 @dataclass(frozen=True)
@@ -213,7 +230,7 @@ def build_views(config: TTAConfig, patch_size: int, size: tuple[int, int]) -> li
     validate_shift_tta(config.shift, patch_size)
     views = [_View(offset=offset) for offset in shift_offsets(patch_size, config.shift)]
     sizes = {placed_size(views[0], size)}
-    for zoom in config.zoom:
+    for zoom in config.zoom or ():
         view = _View(scale=zoom)
         placed = placed_size(view, size)
         if placed in sizes:

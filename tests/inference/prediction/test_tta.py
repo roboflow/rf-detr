@@ -21,6 +21,7 @@ from pytest_mock import MockerFixture
 from rfdetr import ClassThresholds, RFDETRSegNano
 from rfdetr._prediction import core, pipelines
 from rfdetr._prediction.tta import (
+    DEFAULT_ZOOM,
     TTAConfig,
     _View,
     build_views,
@@ -613,7 +614,8 @@ class TestViews:
     @pytest.mark.parametrize(
         ("config", "count"),
         [
-            (TTAConfig(), 1),
+            (TTAConfig(zoom=()), 1),
+            (TTAConfig(), 4),
             (TTAConfig(shift=4), 4),
             (TTAConfig(flip=True), 2),
             (TTAConfig(zoom=(1.25,)), 2),
@@ -634,8 +636,21 @@ class TestViews:
         assert [v.flip for v in views] == [False] * 3 + [True] * 3
         assert [(v.scale, v.offset) for v in views[:3]] == [(v.scale, v.offset) for v in views[3:]]
 
-    def test_default_config_is_the_plain_path(self) -> None:
-        assert len(build_views(TTAConfig(), _PATCH, (_SIDE, _SIDE))) == 1
+    def test_empty_zoom_without_shift_or_flip_is_the_plain_path(self) -> None:
+        assert len(build_views(TTAConfig(zoom=()), _PATCH, (_SIDE, _SIDE))) == 1
+
+    def test_default_config_is_the_plain_image_and_the_default_zooms(self) -> None:
+        config = TTAConfig()
+        assert config.zoom == DEFAULT_ZOOM
+        views = build_views(config, _PATCH, (_SIDE, _SIDE))
+        assert [(v.scale, v.offset, v.flip) for v in views] == [(1.0, 0, False)] + [(z, 0, False) for z in DEFAULT_ZOOM]
+
+    @pytest.mark.parametrize("config", [TTAConfig(shift=2), TTAConfig(flip=True), TTAConfig(shift=2, flip=True)])
+    def test_naming_shift_or_flip_holds_no_default_zoom(self, config: TTAConfig) -> None:
+        assert config.zoom == ()
+
+    def test_explicit_zoom_replaces_the_default_next_to_shift_and_flip(self) -> None:
+        assert TTAConfig(shift=2, flip=True, zoom=(1.25,)).zoom == (1.25,)
 
     def test_zoom_that_places_the_image_at_the_base_size_is_refused(self) -> None:
         with pytest.raises(ValueError, match="the size of another view"):
@@ -782,7 +797,7 @@ class TestEarlyRefusal:
     def test_plain_request_is_not_refused(self, field: str) -> None:
         value = {"fixed_shape": True, "batch_size": 1, "fixed_resolution": _SIDE}[field]
         context = replace(_grid_sensitive_context(), **{field: value})
-        for tta in (None, TTAConfig()):
+        for tta in (None, TTAConfig(zoom=())):
             _, _, views = core._plan_views(context, 1, tta, None, None)
             assert len(views) == 1
 
@@ -794,8 +809,10 @@ class TestEarlyRefusal:
         context = replace(_grid_sensitive_context(), num_keypoints_per_class=[17])
         with pytest.raises(ValueError, match="tta does not support keypoint models"):
             core._plan_views(context, 1, TTAConfig(flip=True), None, None)
-        for tta in (None, TTAConfig()):
+        for tta in (None, TTAConfig(zoom=())):
             assert len(core._plan_views(context, 1, tta, None, None)[2]) == 1
+        with pytest.raises(ValueError, match="tta does not support keypoint models"):
+            core._plan_views(context, 1, TTAConfig(), None, None)
 
     def test_several_views_skip_prepare_ahead(self) -> None:
         assert pipelines._may_prepare_ahead(True, "cuda", True, 1)

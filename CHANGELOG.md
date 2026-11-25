@@ -14,9 +14,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `RFDETR.predict(..., shift_tta=N)` averages `N` passes with the image moved by fractions of a backbone patch, for confidence scores that change less when objects move by a few pixels ([#1599](https://github.com/roboflow/rf-detr/issues/1599)). Detections match across passes by class and box IoU above 0.6; a pass that missed the object counts as score 0, a pass that scored it low counts at its own score, and `threshold` applies only to the averaged score. It costs `N` forward passes. On RF-DETR-N fine-tuned on RF100-VL `deeppcb`, moving test images by up to one patch flipped the keep-or-drop decision of 21.0% of the defects with one pass and 3.7% with `shift_tta=4`, while test mAP50-95 went from 0.702 to 0.708. Detection and segmentation models; keypoint models raise a `ValueError`.
 
+- `RFDETRInference.predict(..., tta=TTAConfig(...))` fuses shifted, mirrored (`flip`) and zoomed views of each image, opt-in and off by default. `TTAConfig()` is the plain image plus three zoomed copies (four views); naming `shift` or `flip` without `zoom` gives exactly those views. On a CUDA device the views of one canvas size run as one forward pass; on MPS and CPU each view is its own pass. Detection and segmentation models; keypoint models, `inference()` snapshots and exported runtimes refuse several views. On COCO val2017 the default recipe added 4.02, 3.11 and 1.96 box AP to Nano, Small and Large at 3 to 4 times the latency of one plain call, and eight shift views added 3.65 (Atto) to 1.09 (2XLarge) box AP.
+
 ### Documentation
 
 - Cookbook for joint training on three RF100-VL datasets 20x apart in size, with `WeightedMultiSourceBatchSampler` weights computed automatically as the inverse of each source's measured size (`docs/cookbooks/multi-source-rf100vl.ipynb`).
+
+- Test-time augmentation page with the AP, latency and memory study of every detection size on COCO val2017, and a cookbook that reruns it on your hardware
 
 ### Breaking Changes
 
