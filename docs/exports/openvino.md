@@ -140,32 +140,32 @@ NNCF is a separate install — `pip install nncf` — rather than part of the `r
 
     The export asks NNCF for `ModelType.TRANSFORMER` rather than its generic defaults. Measured on a 500-image COCO val2017 subset, plain `nncf.quantize(model, dataset)` cost **5.34 mAP on Nano and 6.18 on Small** — worse than a comparable ONNX Runtime configuration — because it quantizes normalization and the elementwise math around attention along with the matrix multiplies. The transformer recipe keeps those paths in float. Measure on your own data before deploying.
 
-On the Colab x86 host of the [measured table below](#measured-latency-on-an-x86-cpu), the INT8 IR cost 0.4 mAP against the fp32 IR (56.1 against 56.5) and ran at the same speed (274.2 against 274.6 ms at batch 1), for a file 3.6 times smaller (32.3 against 115.0 MB).
+On the Colab x86 host of the [measured table below](#measured-latency-on-an-x86-cpu), the INT8 IR cost 0.4 mAP against the fp32 IR (56.1 against 56.5) and was no faster (260.7 ± 29.8 against 246.8 ± 17.3 ms at batch 1), for a file 3.6 times smaller (32.3 against 115.0 MB).
 
 ## Measured Latency on an x86 CPU
 
-Colab x86-64 host with 4 physical cores (8 logical), Linux 6.6, `RFDETRSmall`, `rfdetr` 1.12.0.dev0, ONNX Runtime 1.22.1, OpenVINO 2026.4.1, NNCF 3.4.0, 15 warmup + 50 timed runs per row, from the [CPU cookbook](../../cookbooks/export-cpu/). Every latency is the end-to-end `predict()` call (preprocessing, forward, postprocessing) through `RFDETRInference`; OpenVINO is pinned to the physical-core count. `FPS` is images per second. `mAP@50:95` is a seeded 500-image COCO val2017 subset, scored on the same batch-1 artifact that was timed; the INT8 artifacts were calibrated on 100 other val2017 images held out of that subset. The INT8 artifacts are batch 1 only.
+Colab x86-64 host, AMD EPYC 7B12 with 4 physical cores (8 logical), Linux 6.6, `RFDETRSmall`, `rfdetr` 1.13.0.dev0 from the `develop` archive (commit not recorded), PyTorch version not recorded, ONNX Runtime 1.22.1, OpenVINO 2026.4.1, NNCF 3.4.0, run on 2026-11-24, 15 warmup + 50 timed runs per row, from the [CPU cookbook](../../cookbooks/export-cpu/). Every latency is the end-to-end `predict()` call (preprocessing, forward, postprocessing) through `RFDETRInference`; OpenVINO is pinned to the physical-core count. `FPS` is images per second. `mAP@50:95` is a seeded 500-image COCO val2017 subset, scored on the same batch-1 artifact that was timed; the INT8 artifacts were calibrated on 100 other val2017 images held out of that subset. The INT8 artifacts are batch 1 only.
 
-| Runtime | Precision | Quantization | Batch | end2end [ms]     | FPS [img/s] | mAP@50:95 [%] | Size [MB] | Memory [MB] |
-| ------- | --------- | ------------ | ----- | ---------------- | ----------- | ------------- | --------- | ----------- |
-| CPU     | fp32      | —            | 1     | 373.65 ± 61.10   | 2.7         | 56.5          | 115.0     | 319.7       |
-| CPU     | fp16      | —            | 1     | 452.30 ± 45.50   | 2.2         | 56.5          | 58.2      | 209.6       |
-| CPU     | INT8      | static NNCF  | 1     | 542.10 ± 74.40   | 1.8         | 56.1          | 32.3      | 138.1       |
-| CPU     | fp32      | —            | 4     | 1451.96 ± 223.26 | 2.8         | —             | 115.0     | 639.9       |
-| CPU     | fp16      | —            | 4     | 1619.20 ± 249.61 | 2.5         | —             | 58.2      | 523.8       |
+| Runtime | Precision | Quantization | Batch | end2end [ms] | FPS [img/s] | mAP@50:95 [%] | Size [MB] | Memory [MB] |
+| ------- | --------- | ------------ | ----- | ------------ | ----------- | ------------- | --------- | ----------- |
+| CPU     | fp32      | —            | 1     | 246.8 ± 17.3 | 4.1         | 56.5          | 115.0     | 318.3       |
+| CPU     | fp16      | —            | 1     | 268.1 ± 25.3 | 3.7         | 56.5          | 58.2      | 213.8       |
+| CPU     | INT8      | static NNCF  | 1     | 260.7 ± 29.8 | 3.8         | 56.1          | 32.3      | 140.4       |
+| CPU     | fp32      | —            | 4     | 947.7 ± 58.2 | 4.2         | —             | 115.0     | 633.8       |
+| CPU     | fp16      | —            | 4     | 981.3 ± 77.4 | 4.1         | —             | 58.2      | 525.9       |
 
 What the table supports:
 
-- On this host the fp32 IR (373.7 ms) is level with eager PyTorch (401.6 ms) and its TorchScript `inference()` snapshot (377.9 ms): the standard deviations are 15 to 16% of the mean, so none of the three can be ranked at batch 1 (see the [PyTorch baseline](index.md#pytorch-baseline)). It is faster than [ONNX Runtime fp32](onnx.md#on-an-x86-cpu) (546.9 ms) by a gap well outside the noise.
-- The fp16 IR (452.3 ms) is no faster than the fp32 IR, within about one standard deviation of it, and half the size. It saves disk and bandwidth, not arithmetic.
-- The INT8 IR (542.1 ms) is slower than the fp32 IR on this host, though 3.6 times smaller and within 0.4 mAP. An earlier run on a different Colab host measured it at the speed of the fp32 IR, so INT8 speed on a CPU depends on the host's vector instructions and is worth measuring on the machine you deploy to.
-- Batching helps little on this CPU: 2.7 FPS at batch 1, 2.8 at batch 4 for fp32.
-- Predicting a folder of 64 images gave no more than batch 1: 2.8 img/s for the fp32 IR, 2.7 for fp16 and 2.0 for INT8. The model, not the input side, is the limit on a CPU.
-- This run was slower and noisier than an earlier one on another Colab host (eager PyTorch 401.6 against 345.4 ms), so compare rows within this table, never against numbers from another run.
+- On this host the fp32 IR (246.8 ms) is the fastest full-accuracy route at batch 1. It is ahead of eager PyTorch (329.0 ms), its TorchScript `inference()` snapshot (318.5 ms) and [ONNX Runtime fp32](onnx.md#on-an-x86-cpu) (335.9 ms) by more than three standard deviations (see the [PyTorch baseline](index.md#pytorch-baseline)).
+- The fp16 IR (268.1 ms) is no faster than the fp32 IR, within about one standard deviation of it, and half the size. It saves disk and bandwidth, not arithmetic.
+- The INT8 IR (260.7 ms) is no faster than the fp32 IR on this host, though 3.6 times smaller and within 0.4 mAP. An earlier run of this cookbook on another Colab host had it 1.45 times slower than the fp32 IR (542.1 against 373.7 ms), so INT8 speed on a CPU depends on the host and is worth measuring on the machine you deploy to.
+- Batching helps little on this CPU: 4.1 FPS at batch 1, 4.2 at batch 4 for fp32.
+- Predicting a folder of 64 images gave no more than batch 1: 4.0 img/s for the fp32 IR, 4.2 for fp16 and 4.2 for INT8. The model, not the input side, is the limit on a CPU.
+- Compare rows within this table, never against numbers from another run: the earlier run on another Colab host timed eager PyTorch at 401.6 ms against 329.0 ms here.
 
 ### Every Size on the Run Pages
 
-The [latency cookbook](../../cookbooks/measure-latency/) times OpenVINO FP32, FP16 and INT8 for every pretrained size on a Colab x86 CPU (AMD EPYC 7B12, 8 logical cores, OpenVINO 2026.4.1, NNCF 3.4.0, `rfdetr` 1.13.0.dev0), as the median of 200 images at batch 1 after 50 warm-up calls. Its tables are on the Run pages for [detection](../learn/run/detection.md#fastest-configuration-on-an-x86-cpu), [segmentation](../learn/run/segmentation.md#fastest-configuration-on-an-x86-cpu) and [keypoints](../learn/run/keypoints.md#fastest-configuration-on-an-x86-cpu). They use a different protocol from the table above: OpenVINO is asked for all 8 logical cores with hyper-threading enabled, where the table above pins it to the 4 physical cores, and the host and the `rfdetr` version differ, so compare numbers only within one set. For `RFDETRSmall` the cookbook measured OpenVINO FP32 at 258.05 ms, against 373.65 ms in the table above; which of the differences causes the gap was not isolated. In the cookbook:
+The [latency cookbook](../../cookbooks/measure-latency/) times OpenVINO FP32, FP16 and INT8 for every pretrained size on a Colab x86 CPU (AMD EPYC 7B12, 8 logical cores, OpenVINO 2026.4.1, NNCF 3.4.0, `rfdetr` 1.13.0.dev0), as the median of 200 images at batch 1 after 50 warm-up calls. Its tables are on the Run pages for [detection](../learn/run/detection.md#fastest-configuration-on-an-x86-cpu), [segmentation](../learn/run/segmentation.md#fastest-configuration-on-an-x86-cpu) and [keypoints](../learn/run/keypoints.md#fastest-configuration-on-an-x86-cpu). They use a different protocol from the table above: OpenVINO is asked for all 8 logical cores with hyper-threading enabled, where the table above pins it to the 4 physical cores, and it takes the median over 200 different images where the table above averages 50 calls on one image, so compare numbers only within one set. For `RFDETRSmall` the cookbook measured OpenVINO FP32 at 258.05 ms, against 246.8 ms in the table above. In the cookbook:
 
 - OpenVINO is among the fastest of the six configurations only at mid sizes (detection Nano to Large, segmentation Small to XLarge) and is never alone there.
 - OpenVINO INT8 takes 0.86 to 1.01 times the FP32 time for detection, 0.92 to 1.09 times for segmentation and 0.97 times for keypoints, and FP16 takes 0.95 to 1.25 times, 1.00 to 1.04 times and 1.03 times. INT8 speed on a CPU depends on the host, so measure it on yours.
