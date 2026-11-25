@@ -45,6 +45,11 @@ keywords = [
 dependencies = [
     "requests",                        # weight download from remote URLs
     "numpy",                           # array conversion throughout inference, evaluation, export, and visualization
+    # TODO(#1734): torch and torchvision are not needed to run an exported model on ONNX Runtime. Extras cannot remove a
+    #   base dependency, so a runtime-only install excludes them on the user's side today (uv `exclude-dependencies`, or
+    #   `pip install --no-deps`; see docs/exports/onnx.md). A first-class install needs one of: (1) move torch and
+    #   torchvision out of the base dependencies into an extra, which is a breaking change for `pip install rfdetr`, or
+    #   (2) publish a separate runtime package.
     "torch>=2.2.0",                    # core tensor ops and model forward pass
     "torchvision>=0.17.0",             # image transforms and ops (aligned with torch>=2.2.0)
     "tqdm",                            # progress bars during weight download

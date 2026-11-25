@@ -41,26 +41,36 @@ if _IS_NUMPY_INSTALLED and not hasattr(numpy, "complex_"):
         setattr(numpy, "complex_", _complex128)
 
 
-from rfdetr._prediction.thresholds import ClassThresholds
-from rfdetr.detr import RFDETR
-from rfdetr.inference import ModelContext, RFDETRInference
 from rfdetr.platform import _PLUS_EXPORTS
-from rfdetr.variants import (
-    RFDETRBase,  # DEPRECATED # noqa: F401
-    RFDETRKeypointPreview,
-    RFDETRLarge,
-    RFDETRLargeDeprecated,  # DEPRECATED # noqa: F401
-    RFDETRMedium,
-    RFDETRNano,
-    RFDETRSeg2XLarge,
-    RFDETRSegLarge,
-    RFDETRSegMedium,
-    RFDETRSegNano,
-    RFDETRSegPreview,  # DEPRECATED # noqa: F401
-    RFDETRSegSmall,
-    RFDETRSegXLarge,
-    RFDETRSmall,
-)
+from rfdetr.utilities.imports import _IS_TORCH_INSTALLED
+
+# Without PyTorch the package still imports, so a runtime-only environment can reach the torch-free helpers (see
+# rfdetr.export._onnx.reference); the names below then raise an ImportError from __getattr__.
+if _IS_TORCH_INSTALLED:
+    from rfdetr._prediction.thresholds import ClassThresholds
+    from rfdetr.detr import RFDETR
+    from rfdetr.inference import ModelContext, RFDETRInference
+    from rfdetr.variants import (
+        RFDETRBase,  # DEPRECATED # noqa: F401
+        RFDETRKeypointPreview,
+        RFDETRLarge,
+        RFDETRLargeDeprecated,  # DEPRECATED # noqa: F401
+        RFDETRMedium,
+        RFDETRNano,
+        RFDETRSeg2XLarge,
+        RFDETRSegLarge,
+        RFDETRSegMedium,
+        RFDETRSegNano,
+        RFDETRSegPreview,  # DEPRECATED # noqa: F401
+        RFDETRSegSmall,
+        RFDETRSegXLarge,
+        RFDETRSmall,
+    )
+
+    def from_checkpoint(path: str | os.PathLike[str], **kwargs: Any) -> RFDETR:
+        """Convenience wrapper for RFDETR.from_checkpoint(); see that method for full documentation."""
+        return RFDETR.from_checkpoint(path, **kwargs)
+
 
 __all__ = [
     "ClassThresholds",
@@ -81,13 +91,13 @@ __all__ = [
 ]
 
 
-def from_checkpoint(path: str | os.PathLike[str], **kwargs: Any) -> RFDETR:
-    """Convenience wrapper for RFDETR.from_checkpoint(); see that method for full documentation."""
-    return RFDETR.from_checkpoint(path, **kwargs)
-
-
 # Lazily resolved names: avoids eager pytorch_lightning import at `import rfdetr` time.
 _LAZY_TRAINING = frozenset({"RFDETRModelModule", "RFDETRDataModule", "build_trainer"})
+
+# Names that exist only with PyTorch installed.
+_TORCH_BACKED = frozenset(
+    {*__all__, *_LAZY_TRAINING, "RFDETR", "RFDETRBase", "RFDETRLargeDeprecated", "RFDETRSegPreview"}
+)
 
 # Legacy module aliases removed in v1.9.0; imports raise a migration-hint ImportError.
 _REMOVE_IN_VERSION_1_9 = {
@@ -169,6 +179,11 @@ def __getattr__(name: str) -> Any:
             if exc.name != module_name:
                 raise
             raise ImportError(_REMOVE_IN_VERSION_1_9[name]) from None
+
+    if not _IS_TORCH_INSTALLED and name in _TORCH_BACKED:
+        raise ImportError(
+            f"rfdetr.{name} requires PyTorch, which is not installed. Install it with `pip install torch torchvision`."
+        )
 
     if name in _LAZY_TRAINING:
         from rfdetr import training as _training

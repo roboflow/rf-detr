@@ -101,7 +101,49 @@ xyxy *= np.array([image.width, image.height, image.width, image.height], dtype=n
 boxes, labels, confidences = xyxy, class_ids[keep], scores[keep]
 ```
 
-For a fuller reference implementation (name-based matching with a documented shape-based fallback), see `_run_inference` in [`src/rfdetr/export/_onnx/inference.py`](https://github.com/roboflow/rf-detr/blob/develop/src/rfdetr/export/_onnx/inference.py).
+For a fuller reference implementation (name-based matching with a documented shape-based fallback), see `_run_inference` in [`src/rfdetr/export/_onnx/reference.py`](https://github.com/roboflow/rf-detr/blob/develop/src/rfdetr/export/_onnx/reference.py).
+
+## Run without PyTorch
+
+A deployment that only runs an exported `.onnx` file on ONNX Runtime does not need PyTorch or TorchVision. The package imports without them, and the NumPy reference helpers in `rfdetr.export._onnx.reference` preprocess the image, run the session and decode detections with `numpy`, `Pillow`, `supervision` and `onnxruntime` only.
+
+`torch` and `torchvision` are base dependencies of `rfdetr`, so the install has to leave them out explicitly.
+
+=== "uv (recommended)"
+
+    Exclude both packages in the `pyproject.toml` of the project you deploy. uv resolves and locks every other dependency as usual.
+
+    ```toml
+    [project]
+    dependencies = ["rfdetr", "onnxruntime"]
+
+    [tool.uv]
+    exclude-dependencies = ["torch", "torchvision"]
+    ```
+
+=== "pip"
+
+    pip cannot exclude one dependency, so install the package alone and then the rest of its base dependencies by hand. `pip check` reports `torch` and `torchvision` as missing in this environment, which is expected.
+
+    ```bash
+    pip install --no-deps rfdetr
+    pip install numpy pillow supervision "pydantic>=2,<3" "pyDeprecate>=0.9,<0.10" requests tqdm onnxruntime
+    ```
+
+Export the model in an environment with the full install, then predict in the runtime environment:
+
+```python
+from rfdetr.export._onnx.reference import _create_onnx_session, _run_inference
+
+session = _create_onnx_session("output/rfdetr-nano.onnx")
+detections, image = _run_inference(session, "image.jpg", threshold=0.5, background_class_id=None)
+```
+
+`detections` is a `supervision.Detections` with pixel `xyxy` boxes. Set `background_class_id` from the checkpoint layout, as described in the warning above: `None` for the pretrained COCO checkpoints, `-1` (the default) for checkpoints trained on contiguous class IDs.
+
+!!! note "What this environment supports"
+
+    Detection models on ONNX Runtime, one image per call. `RFDETRInference`, the model classes, training and export need PyTorch, and asking for one of them raises an `ImportError` that says so. Without TorchVision the image is resized by a NumPy implementation of the same bilinear filter, so box coordinates can differ from `RFDETRInference` by a small fraction of a pixel.
 
 ## INT8 Quantization
 

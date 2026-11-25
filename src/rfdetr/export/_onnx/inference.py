@@ -13,16 +13,19 @@ These functions handle session creation, image preprocessing, and detection deco
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
-from PIL import Image as PILImage
-from supervision import Detections
 
+from rfdetr.export._onnx.reference import (  # noqa: F401  (the reference helpers stay importable from here)
+    _create_onnx_session,
+    _logical_cpu_count,
+    _run_inference,
+    _run_onnx_raw,
+)
 from rfdetr.export._runtime.adapters import (
     ExportRuntime,
     _check_input_interface,
@@ -33,21 +36,13 @@ from rfdetr.export._runtime.adapters import (
     _single_input,
     _thread_count_option,
 )
-from rfdetr.export._runtime.decode import decode_detections
 from rfdetr.export._runtime.metadata import ExportMetadata
-from rfdetr.export._runtime.preprocess import preprocess_to_nchw
-from rfdetr.utilities.exif import exif_orientation, upright_image
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
     from rfdetr.export._runtime.adapters import ExportRuntime
 
 logger = get_logger()
-
-
-def _run_onnx_raw(session: Any, input_name: str, array: Any) -> list[Any]:
-    """Execute one ONNX batch through the shared session path."""
-    return cast(list[Any], session.run(None, {input_name: array}))
 
 
 def _onnx_dtype(type_name: str) -> np.dtype[Any]:
@@ -105,24 +100,6 @@ def _run_onnx_bound(session: Any, input_name: str, batch: torch.Tensor, outputs:
     session.run_with_iobinding(binding)
     binding.synchronize_outputs()
     return results
-
-
-def _logical_cpu_count() -> int:
-    """Return the logical cores this process may run on, which is what a CPU thread pool should be sized to.
-
-    ``os.sched_getaffinity`` honours ``taskset`` and container CPU sets where the platform has it, so a pool is never
-    larger than the cores the process can use; elsewhere this is ``os.cpu_count``.
-
-    Returns:
-        The number of usable logical cores, at least 1.
-
-    Examples:
-        >>> _logical_cpu_count() >= 1
-        True
-    """
-    if hasattr(os, "sched_getaffinity"):
-        return max(1, len(os.sched_getaffinity(0)))
-    return max(1, os.cpu_count() or 1)
 
 
 def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, options: Mapping[str, Any]) -> ExportRuntime:
@@ -206,207 +183,3 @@ def load_export_runtime(path: Path, metadata: ExportMetadata, device: str, optio
         device=torch.device("cuda", device_id) if on_device else torch.device("cpu"),
         borrowed_outputs=False,
     )
-
-
-def _create_onnx_session(
-    model_path: str | Path,
-    providers: list[str | tuple[str, dict[str, Any]]] | None = None,
-    num_threads: int | None = None,
-) -> Any:
-    """Load an ONNX model and create an ONNX Runtime inference session.
-
-    Imports ``onnxruntime`` at call time so that the rest of the package remains usable without it installed.  Input and
-    output names / shapes are logged at DEBUG level for troubleshooting.
-
-    When ``providers`` is ``None``, the session auto-selects the best available backend: CUDA if ``onnxruntime-gpu`` is
-    installed, otherwise CPU (with a warning).  Pass an explicit list to pin the backend — useful for benchmarking
-    CPU vs CUDA side-by-side.
-
-    The session's CPU intra-op thread pool -- the one actually created under this function's default sequential
-    execution mode -- is configured to block rather than busy-spin while idle, since spinning would otherwise contend
-    for CPU with any other work sharing the process for as long as the session lives, including this module's own
-    ``preprocess_to_nchw`` step, which prefers torchvision when it is installed. The inter-op entry is set for the
-    same reason but has no effect here: ONNX Runtime only creates an inter-op thread pool under
-    ``ExecutionMode.ORT_PARALLEL``, which this function never requests.
-
-    Args:
-        model_path: Path to the ``.onnx`` model file.
-        providers: Ordered list of ORT execution providers, e.g.
-            ``["CUDAExecutionProvider", "CPUExecutionProvider"]``.  When ``None`` (default), the best available
-            provider is selected automatically.
-        num_threads: Size of the CPU intra-op thread pool, or ``None`` to leave it to ONNX Runtime, which sizes it
-            to the physical cores. Pass the logical core count to use hyperthreads too.
-
-    Returns:
-        An ``onnxruntime.InferenceSession`` ready for inference.
-
-    Raises:
-        ImportError: If ``onnxruntime`` is not installed.
-
-    Examples:
-        .. code-block:: python
-
-            sess = _create_onnx_session("model.onnx")
-            print(sess.get_inputs()[0].name)
-    """
-    try:
-        import onnxruntime as ort
-    except ImportError as exc:
-        raise ImportError(
-            "ONNX Runtime inference requires 'onnxruntime'. Install it: `pip install onnxruntime`"
-        ) from exc
-
-    if providers is None:
-        _preferred = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-        _available = ort.get_available_providers()
-        providers = [p for p in _preferred if p in _available] or ["CPUExecutionProvider"]
-        if providers[0] == "CPUExecutionProvider":
-            logger.warning(
-                "CUDAExecutionProvider not available — running ONNX inference on CPU. "
-                "Install onnxruntime-gpu for GPU acceleration: `pip install onnxruntime-gpu`"
-            )
-    session_options = ort.SessionOptions()
-    if num_threads is not None:
-        session_options.intra_op_num_threads = num_threads
-    # ORT's default CPU intra-op thread pool busy-spins while idle instead of blocking, trading
-    # wake-up latency for CPU usage between calls. That spinning contends for CPU with any other
-    # work in this process -- including this module's own torchvision-based preprocessing in
-    # ``preprocess_to_nchw`` -- for as long as the session lives, and measurably slows down the
-    # session's own next call too. Disabling it only changes how idle threads wait, not computed
-    # values. This session never sets ``execution_mode``, so it stays at ORT's default
-    # ExecutionMode.ORT_SEQUENTIAL, under which ORT never creates an inter-op thread pool at all --
-    # that pool only exists under ORT_PARALLEL. The inter-op entry below is set defensively for
-    # that case; it has no effect on this function's own (sequential) behavior, applies identically
-    # regardless of the requested execution provider, and does not change computed values either way.
-    session_options.add_session_config_entry("session.intra_op.allow_spinning", "0")
-    session_options.add_session_config_entry("session.inter_op.allow_spinning", "0")
-    session = ort.InferenceSession(str(model_path), sess_options=session_options, providers=providers)
-    logger.debug("ONNX Runtime providers in use: %s", session.get_providers())
-    for inp in session.get_inputs():
-        logger.debug("Input  : name=%s  shape=%s  type=%s", inp.name, inp.shape, inp.type)
-    for out in session.get_outputs():
-        logger.debug("Output : name=%s  shape=%s  type=%s", out.name, out.shape, out.type)
-    return session
-
-
-def _run_inference(
-    session: Any,
-    image_path: str | Path,
-    threshold: float = 0.3,
-    num_select: int | None = None,
-    background_class_id: int | None = -1,
-) -> tuple[Detections, PILImage.Image]:
-    """Preprocess one image, run ONNX Runtime inference, and decode detections.
-
-    Reads input shape from the session (NCHW ``float32``), resizes and normalises the image with ImageNet statistics,
-    invokes the model, then decodes the ``dets`` / ``labels`` output tensors into a :class:`supervision.Detections`
-    object with pixel-space ``xyxy`` boxes.
-
-    **Input contract** (must match ``RFDETR.predict()`` preprocessing exactly):
-
-    - Image is opened with Pillow, turned upright for its EXIF orientation as ``predict()`` turns a file it reads,
-      and converted to ``"RGB"`` (3-channel) or ``"L"``
-      (1-channel greyscale) depending on the model's channel count. PIL is used only to decode, turn and
-      convert — never to resize.
-    - Resize follows ``RFDETR.predict()``'s exact convention — bilinear, half-pixel centers,
-      ``antialias=False`` — applied by :func:`~rfdetr.export._runtime.preprocess.preprocess_to_nchw` via
-      ``torchvision`` when importable
-      (bit-exact) or the pure-NumPy ``_bilinear_resize_half_pixel`` fallback. PIL's own BILINEAR/BICUBIC
-      filters apply adaptive antialiasing when downscaling and would shift pixel values away from predict(),
-      degrading confidence.
-    - Pixel values are scaled to ``[0, 1]`` then normalised with ImageNet
-      statistics: ``mean=[0.485, 0.456, 0.406]``, ``std=[0.229, 0.224, 0.225]``.
-    - The tensor is kept as ``[1, C, H, W]`` (NCHW) — unlike the TFLite helper
-      which uses NHWC because ``onnx2tf`` transposes at export time.  ONNX RT consumes the native ONNX NCHW layout
-      directly.
-
-    Args:
-        session: ONNX Runtime ``InferenceSession`` returned by
-            ``_create_onnx_session``.
-        image_path: Path to the input image (any format supported by Pillow).
-            RGB images are used as-is; RGBA / palette images are converted.
-        threshold: Confidence threshold; detections below this are discarded.
-        num_select: Maximum query/class pairs selected before thresholding. ``None`` uses the exported model's query
-            count, matching shipped RF-DETR configurations; pass an explicit value for custom exports.
-        background_class_id: Exported class slot to exclude before selection. The default ``-1`` preserves the common
-            final-slot background convention. Pass ``None`` for sparse COCO checkpoints, whose final slot is class 90,
-            or ``0`` for legacy background-first keypoint checkpoints.
-
-    Returns:
-        A tuple of ``(detections, pil_img)`` where ``detections`` contains pixel-space ``xyxy`` boxes and ``pil_img`` is
-        the decoded PIL image at its original resolution, upright for its EXIF orientation, in the frame of the boxes.
-
-    Examples:
-        .. code-block:: python
-
-            sess = _create_onnx_session("model.onnx")
-            dets, img = _run_inference(sess, "photo.jpg", threshold=0.3)
-            print(dets.confidence)
-    """
-    inputs = session.get_inputs()
-    outputs = session.get_outputs()
-    input_name = inputs[0].name
-    # ONNX NCHW: [batch, channels, height, width]
-    _, channels, height, width = inputs[0].shape
-
-    with PILImage.open(image_path) as opened:
-        pil_img = upright_image(opened, exif_orientation(opened))
-        inp_tensor = preprocess_to_nchw(pil_img, height, width, channels)
-
-    raw_outputs = _run_onnx_raw(session, input_name, inp_tensor)
-
-    # RF-DETR ONNX output names: "dets" = pred_boxes, "labels" = pred_logits.
-    # Match by name so the code is robust to output reordering.
-    output_names = [out.name for out in outputs]
-    boxes_idx = next((i for i, name in enumerate(output_names) if "dets" in name), None)
-    logits_idx = next((i for i, name in enumerate(output_names) if "labels" in name), None)
-    if boxes_idx is None or logits_idx is None:
-        # Fall back to shape-based matching: boxes (*, 4) and logits (*, num_classes+1).
-        logger.warning(
-            "Name-based ONNX output matching failed (available names: %s). Falling back to shape-based matching.",
-            output_names,
-        )
-        shape_boxes_candidates = [
-            i for i, arr_out in enumerate(raw_outputs) if arr_out.ndim == 3 and arr_out.shape[-1] == 4
-        ]
-        shape_logits_candidates = [
-            i for i, arr_out in enumerate(raw_outputs) if arr_out.ndim == 3 and arr_out.shape[-1] != 4
-        ]
-        if len(shape_boxes_candidates) == 1 and len(shape_logits_candidates) == 1:
-            boxes_idx = shape_boxes_candidates[0]
-            logits_idx = shape_logits_candidates[0]
-        elif len(raw_outputs) == 2:
-            # Ambiguous shapes (e.g. num_classes==3 → logits dim==4 == boxes dim).
-            # ONNX preserves output order: index 0 = dets (boxes), index 1 = labels (logits).
-            logger.warning(
-                "Shape-based ONNX output matching is ambiguous (both outputs have last dim==4, "
-                "which happens when num_classes==3).  Falling back to positional order: "
-                "output 0 = boxes ('dets'), output 1 = logits ('labels').  "
-                "If detections look wrong, inspect output names with _create_onnx_session() "
-                "and set LOG_LEVEL=DEBUG."
-            )
-            boxes_idx = 0
-            logits_idx = 1
-        else:
-            available_shapes = [list(arr_out.shape) for arr_out in raw_outputs]
-            raise ValueError(
-                f"Shape-based ONNX output matching failed. Expected exactly one rank-3 tensor with "
-                f"last dim == 4 (boxes) and one rank-3 tensor with last dim != 4 (logits). "
-                f"Available output shapes: {available_shapes}"
-            )
-
-    boxes_cwh = raw_outputs[boxes_idx][0]  # (Q, 4) normalised cxcywh
-    # Background placement is checkpoint-dependent and cannot be inferred from the tensor width alone.
-    logits = raw_outputs[logits_idx][0]
-
-    decoded = decode_detections(
-        boxes_cwh,
-        logits,
-        pil_img.size,
-        threshold=threshold,
-        num_select=num_select,
-        background_class_id=background_class_id,
-    )
-
-    detections = Detections(xyxy=decoded.xyxy, confidence=decoded.confidence, class_id=decoded.class_id.astype(int))
-    return detections, pil_img
