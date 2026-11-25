@@ -84,6 +84,8 @@ def _render_overall_merged(title_pfx: str, overall: dict[str, float], max_dets: 
         title_pfx: Capitalised split name used in the title (e.g. ``"Val"``).
         overall: Ordered mapping of metric label → scalar value. The optional keys ``"gated mAP 50:95"`` (with
             ``"gated segm mAP 50:95"``) and ``"agnostic mAP 50:95"`` / ``"agnostic mAP 50"`` each add a column group.
+            ``"gated applied"`` set to ``0.0`` relabels the gated group as the all-class fallback; absent means the
+            gate applied.
         max_dets: Maximum detection count used for the mAR column label.
         min_class_support: Ground-truth instance floor shown in the header of the gated group.
 
@@ -140,7 +142,11 @@ def _render_overall_merged(title_pfx: str, overall: dict[str, float], max_dets: 
         gated_cols = [("50:95", _fmt(overall["gated mAP 50:95"]))]
         if "gated segm mAP 50:95" in overall:
             gated_cols.append(("segm 50:95", _fmt(overall["gated segm mAP 50:95"])))
-        groups.append((f"mAP N≥{min_class_support}", gated_cols))
+        # Absent key = gate applied; 0.0 = the gated value is the all-class fallback, so N≥k would mislabel it.
+        gate_applied = overall.get("gated applied", 1.0) != 0.0
+        groups.append(
+            (f"mAP N≥{min_class_support}" if gate_applied else f"mAP all (N≥{min_class_support} unmet)", gated_cols)
+        )
     if "agnostic mAP 50:95" in overall:
         groups.append(
             (

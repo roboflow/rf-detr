@@ -417,7 +417,8 @@ def _append_training_callbacks(
         early_stopping_monitor_ema = f"val/ema_{det_key}"
     # Under a support floor, selection follows the gated mAP COCOEvalCallback logs beside the all-class one.
     # Only box/mask mAP has a gated variant: mAR and the OKS keypoint metrics stay ungated.
-    if tc.min_class_support > 0 and tc.best_model_metric == "map" and not has_keypoints:
+    selection_support_floor = tc.min_class_support if tc.best_model_metric == "map" and not has_keypoints else 0
+    if selection_support_floor > 0:
         monitor_regular += "_gated"
         early_stopping_monitor_ema += "_gated"
     monitor_ema = early_stopping_monitor_ema if enable_ema else None
@@ -443,6 +444,7 @@ def _append_training_callbacks(
             run_test=tc.run_test,
             skip_best_epochs=tc.skip_best_epochs,
             smooth_alpha=best_model_smooth_alpha,
+            min_class_support=selection_support_floor,
         )
     )
 
@@ -456,6 +458,7 @@ def _append_training_callbacks(
                 monitor_regular=monitor_regular,
                 monitor_ema=early_stopping_monitor_ema,
                 skip_best_epochs=tc.skip_best_epochs,
+                min_class_support=selection_support_floor,
             )
         )
 

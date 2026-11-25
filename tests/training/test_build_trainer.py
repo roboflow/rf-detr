@@ -22,6 +22,7 @@ from pytorch_lightning.accelerators import XLAAccelerator
 from pytorch_lightning.callbacks import LearningRateMonitor, ModelCheckpoint, TQDMProgressBar
 from pytorch_lightning.loggers import CSVLogger, MLFlowLogger, TensorBoardLogger, WandbLogger
 from pytorch_lightning.strategies import DDPStrategy, ModelParallelStrategy
+from pytorch_lightning.trainer.call import _call_callbacks_load_state_dict, _call_callbacks_on_load_checkpoint
 from pytorch_lightning.utilities.exceptions import MisconfigurationException
 
 from rfdetr.config import (
@@ -521,6 +522,80 @@ class TestBuildTrainerCallbacks:
         early = _find_callback(trainer, RFDETREarlyStopping)
         assert early._monitor_regular == "val/mAP_50_95_gated"
         assert early._monitor_ema == "val/ema_mAP_50_95_gated"
+
+    @pytest.mark.parametrize(
+        ("saved_floor", "resumed_floor", "restores_state"),
+        [
+            pytest.param(0, 0, True, id="keep-ungated"),
+            pytest.param(0, 5, False, id="enable-gating"),
+            pytest.param(5, 8, False, id="change-floor"),
+            pytest.param(5, 0, False, id="disable-gating"),
+            pytest.param(5, 5, True, id="keep-floor"),
+        ],
+    )
+    def test_support_floor_controls_selection_state_restore(
+        self, tmp_path: Path, saved_floor: int, resumed_floor: int, restores_state: bool
+    ) -> None:
+        """Lightning loads best-score and patience history only for the same support floor."""
+        saved = build_trainer(_tc(tmp_path, min_class_support=saved_floor, early_stopping=True), _mc())
+        saved_best = _find_callback(saved, BestModelCallback)
+        saved_early = _find_callback(saved, RFDETREarlyStopping)
+        saved_best.best_model_score = torch.tensor(0.75)
+        saved_early.best_score = torch.tensor(0.75)
+        saved_early.wait_count = 2
+        checkpoint = {
+            "callbacks": {
+                saved_best.state_key: saved_best.state_dict(),
+                saved_early.state_key: saved_early.state_dict(),
+            }
+        }
+
+        resumed = build_trainer(_tc(tmp_path, min_class_support=resumed_floor, early_stopping=True), _mc())
+        _call_callbacks_load_state_dict(resumed, checkpoint)
+
+        best = _find_callback(resumed, BestModelCallback)
+        early = _find_callback(resumed, RFDETREarlyStopping)
+        assert best.best_model_score == (torch.tensor(0.75) if restores_state else None)
+        assert early.best_score.item() == (0.75 if restores_state else -float("inf"))
+        assert early.wait_count == (2 if restores_state else 0)
+
+    @pytest.mark.parametrize(
+        ("saved_floor", "resumed_floor", "restores_state"),
+        [
+            pytest.param(5, 0, False, id="disable-gating"),
+            pytest.param(5, 8, False, id="change-floor"),
+            pytest.param(None, 5, False, id="unknown-floor"),
+            pytest.param(5, 5, True, id="match-known-floor"),
+        ],
+    )
+    def test_legacy_gated_checkpoint_restores_only_matching_history(
+        self, tmp_path: Path, saved_floor: int | None, resumed_floor: int, restores_state: bool
+    ) -> None:
+        """Older gated checkpoint keys require the serialized floor to establish a match."""
+        saved_best = BestModelCallback(output_dir=str(tmp_path / "out"), monitor_regular="val/mAP_50_95_gated")
+        saved_early = RFDETREarlyStopping(monitor_regular="val/mAP_50_95_gated")
+        saved_best.best_model_score = torch.tensor(0.75)
+        saved_early.best_score = torch.tensor(0.75)
+        saved_early.wait_count = 2
+        checkpoint = {
+            "pytorch-lightning_version": "2.6.0",
+            "callbacks": {
+                saved_best.state_key: saved_best.state_dict(),
+                saved_early.state_key: saved_early.state_dict(),
+            },
+            "args": {"min_class_support": saved_floor},
+        }
+        resumed = build_trainer(_tc(tmp_path, min_class_support=resumed_floor, early_stopping=True), _mc())
+
+        with pytest.warns(UserWarning, match="callbacks used to create the checkpoint"):
+            _call_callbacks_on_load_checkpoint(resumed, checkpoint)
+        _call_callbacks_load_state_dict(resumed, checkpoint)
+
+        best = _find_callback(resumed, BestModelCallback)
+        early = _find_callback(resumed, RFDETREarlyStopping)
+        assert best.best_model_score == (torch.tensor(0.75) if restores_state else None)
+        assert early.best_score.item() == (0.75 if restores_state else -float("inf"))
+        assert early.wait_count == (2 if restores_state else 0)
 
     @pytest.mark.parametrize(
         ("tc_kwargs", "expected_support", "expected_agnostic"),

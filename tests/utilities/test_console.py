@@ -124,6 +124,23 @@ class TestRenderOverallMerged:
         assert result == _render_overall_merged("Val", _minimal_overall(), 500, min_class_support=10)
 
     @pytest.mark.parametrize(
+        ("applied", "expected", "unexpected"),
+        [
+            (1.0, "mAP N≥10", "unmet"),
+            (0.0, "mAP all (N≥10 unmet)", "mAP N≥10"),
+        ],
+    )
+    def test_gated_header_reflects_whether_the_gate_applied(
+        self, applied: float, expected: str, unexpected: str
+    ) -> None:
+        """The all-class fallback is not labelled ``mAP N≥k``; an absent flag keeps the plain gated header."""
+        overall = {**_minimal_overall(), "gated mAP 50:95": 0.4, "gated applied": applied}
+        result = _render_overall_merged("Val", overall, 500, min_class_support=10)
+        assert expected in result
+        assert unexpected not in result
+        assert len({len(line) for line in result.splitlines()[1:]}) == 1
+
+    @pytest.mark.parametrize(
         ("extra", "expected", "unexpected"),
         [
             pytest.param({"gated mAP 50:95": 0.6111}, ["mAP N≥10", "0.6111"], ["segm 50:95", "agnostic"], id="gated"),

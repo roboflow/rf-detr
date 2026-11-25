@@ -48,7 +48,7 @@ from rfdetr.utilities.console import (
     _render_overall_merged,
     _render_summary_tables,
 )
-from rfdetr.utilities.distributed import is_dist_avail_and_initialized
+from rfdetr.utilities.distributed import is_dist_avail_and_initialized, is_main_process
 from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
@@ -253,6 +253,10 @@ class COCOEvalCallback(Callback):
         # sync so it is issued symmetrically on all DDP ranks (see _should_compute_ema).
         self._ema_has_updates: bool = False
         self._missing_rich_warning_emitted: bool = False
+        # Splits already warned about an empty ``min_class_support`` set; cleared when a fit starts.
+        self._no_eligible_class_warned: set[str] = set()
+        # Whether the support gate really applied, per logged ``*_gated`` key (False = all-class fallback).
+        self._gated_applied_by_key: dict[str, bool] = {}
         self._output_widget: Any = None  # ipywidgets.Output, created lazily
         self._keypoint_mode: bool = False
         self._use_segm_metrics: bool = segmentation
@@ -365,6 +369,7 @@ class COCOEvalCallback(Callback):
             trainer: The PTL Trainer.
             pl_module: The LightningModule.
         """
+        self._no_eligible_class_warned.clear()
         self._resolve_class_names(trainer)
 
     def on_validation_start(self, trainer: Any, pl_module: Any) -> None:
@@ -1042,6 +1047,7 @@ class COCOEvalCallback(Callback):
                 # Merged ahead of the EMA metrics: its per-class ground-truth counts decide the gated set.
                 merged = distributed_merge_matching_data(f1_local)
                 support_by_cid, eligible_cids = self._class_support(merged)
+                self._warn_if_no_eligible_class(trainer, split, eligible_cids)
                 should_compute_ema, ema_metrics = self._compute_and_log_ema_metrics(
                     trainer, pl_module, split, pfx, mar_key, eligible_cids
                 )
@@ -1091,6 +1097,7 @@ class COCOEvalCallback(Callback):
         # collective, so it stays unconditional and in the same position on every rank.
         merged = distributed_merge_matching_data(f1_local)
         support_by_cid, eligible_cids = self._class_support(merged)
+        self._warn_if_no_eligible_class(trainer, split, eligible_cids)
 
         overall: dict[str, float] = {
             "mAP 50:95": float(metrics[f"{pfx}map"]),
@@ -1204,17 +1211,54 @@ class COCOEvalCallback(Callback):
         support_by_cid = {int(cid): int(data["total_gt"]) for cid, data in merged.items()}
         return support_by_cid, {cid for cid, n in support_by_cid.items() if n >= self._min_class_support}
 
-    def _gated_map(self, metrics: dict[str, Any], pfx: str, eligible: set[int], split: str) -> float:
+    def _warn_if_no_eligible_class(self, trainer: Any, split: str, eligible_cids: set[int] | None) -> None:
+        """Warn once per split per fit when no class reaches ``min_class_support``.
+
+        Support comes from the split's fixed ground truth, so the answer is the same on every epoch and for the base
+        and EMA tracks. The warning therefore fires here rather than inside each gated-mAP computation, on the
+        global-zero rank only, and once per split until the next fit starts.
+
+        Args:
+            trainer: The PTL Trainer (used to check ``is_global_zero``).
+            split: Metric namespace — ``"val"``, ``"test"``, or ``"train"``.
+            eligible_cids: Output of :meth:`_class_support`; ``None`` when no floor is set.
+        """
+        if eligible_cids is None or eligible_cids or split in self._no_eligible_class_warned:
+            return
+        self._no_eligible_class_warned.add(split)
+        if not getattr(trainer, "is_global_zero", True):
+            return
+        logger.warning(
+            "%s: no class has min_class_support=%d ground-truth instances, so '%s/mAP_50_95_gated' falls back to the "
+            "all-class mAP and the F1 sweep (%s/F1, precision, recall) falls back to every class with ground truth",
+            split,
+            self._min_class_support,
+            split,
+            split,
+        )
+
+    def _gated_map(
+        self,
+        metrics: dict[str, Any],
+        pfx: str,
+        eligible: set[int],
+        split: str,
+        applied: list[bool] | None = None,
+    ) -> float:
         """Macro-average AP 50:95 over only the classes clearing the support floor.
 
         Recomputed from ``map_per_class``, because ``map`` is the mean over every class carrying ground truth. Falls
-        back to that all-class ``map`` when no class clears the floor, so a monitored metric never goes NaN.
+        back to that all-class ``map`` when no eligible class has a valid per-class AP, so a monitored metric never
+        goes NaN. An empty ``eligible`` set is warned about once per split by :meth:`_warn_if_no_eligible_class`; this
+        method only warns when eligible classes exist but none produced a valid AP (for example with no detections).
 
         Args:
             metrics: Output of the mAP metric's ``compute()`` (base or EMA).
             pfx: Key prefix selecting the IoU type (``""``, ``"bbox_"`` or ``"segm_"``).
             eligible: Category ids meeting ``min_class_support``.
             split: Metric namespace, used only in the fallback warning.
+            applied: Optional list that receives one flag: ``True`` when the returned value is the gated mean,
+                ``False`` when it is the all-class fallback.
 
         Returns:
             Macro AP 50:95 across the eligible classes.
@@ -1228,13 +1272,17 @@ class COCOEvalCallback(Callback):
             if len(classes) == len(per_class):
                 # -1 is the COCO sentinel for a class with no ground truth in this split.
                 values = [float(ap) for cid, ap in zip(classes, per_class) if int(cid) in eligible and float(ap) >= 0]
+        if applied is not None:
+            applied.append(bool(values))
         if not values:
-            logger.warning(
-                "%s: no class reached min_class_support=%d, falling back to the all-class %smAP",
-                split,
-                self._min_class_support,
-                pfx,
-            )
+            if eligible and is_main_process():
+                logger.warning(
+                    "%s: no valid per-class %smAP for the %d eligible classes (no detections?), falling back to the "
+                    "all-class value",
+                    split,
+                    pfx,
+                    len(eligible),
+                )
             return float(metrics[f"{pfx}map"])
         return float(np.mean(values))
 
@@ -1260,18 +1308,24 @@ class COCOEvalCallback(Callback):
             metric_prefix: ``"ema_"`` for the EMA track.
 
         Returns:
-            Summary-table entries keyed by label.
+            Summary-table entries keyed by label, plus ``"gated applied"``: ``1.0`` when every logged gated value is a
+            real gated mean, ``0.0`` when any is the all-class fallback (the console header then says so).
         """
         overall: dict[str, float] = {}
         variants = [(pfx, "", "mAP")]
         if self._use_segm_metrics and "segm_map" in metrics:
             variants.append(("segm_", "segm_", "segm mAP"))
+        all_applied = True
         for key_pfx, name_pfx, label in variants:
-            gated = self._gated_map(metrics, key_pfx, eligible, split)
+            applied: list[bool] = []
+            gated = self._gated_map(metrics, key_pfx, eligible, split, applied)
             log_key = f"{split}/{metric_prefix}{name_pfx}mAP_50_95_gated"
             pl_module.log(log_key, gated, logger=True, on_step=False, on_epoch=True)
             trainer.callback_metrics[log_key] = torch.tensor(gated)
+            self._gated_applied_by_key[log_key] = applied[0]
+            all_applied = all_applied and applied[0]
             overall[f"gated {label} 50:95"] = gated
+        overall["gated applied"] = float(all_applied)
         return overall
 
     def _update_agnostic_metric(self, preds: list[dict[str, Tensor]], targets: list[dict[str, Tensor]]) -> None:
@@ -1612,10 +1666,15 @@ class COCOEvalCallback(Callback):
             overall_ema["segm mAP 50"] = float(ema_metrics["segm_map_50"])
         overall_ema.update(f1_overall)
         # Already logged by _compute_and_log_ema_metrics; read back so the fallback warning is not repeated.
+        ema_gated_applied = True
         for name_pfx, label in (("", "mAP"), ("segm_", "segm mAP")):
-            gated = trainer.callback_metrics.get(f"{split}/ema_{name_pfx}mAP_50_95_gated")
+            gated_key = f"{split}/ema_{name_pfx}mAP_50_95_gated"
+            gated = trainer.callback_metrics.get(gated_key)
             if self._min_class_support > 0 and gated is not None:
                 overall_ema[f"gated {label} 50:95"] = float(gated)
+                ema_gated_applied = ema_gated_applied and self._gated_applied_by_key.get(gated_key, True)
+        if "gated mAP 50:95" in overall_ema:
+            overall_ema["gated applied"] = float(ema_gated_applied)
 
         ar_pc_key = f"{pfx}mar_{self._max_dets}_per_class"
         ar_by_cid: dict[int, float] = {}
@@ -1900,6 +1959,12 @@ class COCOEvalCallback(Callback):
         callback as rows with one box and different scores. With the labels collapsed those rows are repeats of one
         detection, and all but the first would count as false positives. Rows keep their order; a score tie keeps
         the earlier row. Queries the repeats pushed out of the top-k are not recovered.
+
+        Agnostic rows are therefore a subset of the class-aware top-``num_select`` selection: ``PostProcess`` keeps
+        ``num_select`` flattened query x class pairs before this deduplication, and a query displaced by another query's
+        extra labels is never added back. When one query claims several of those pairs, fewer than ``num_select``
+        distinct boxes remain, so the agnostic recall, and with it the agnostic AP, can read lower than a selection
+        made directly over queries would give.
 
         Args:
             preds: Per-image prediction dicts with ``boxes`` and ``scores``; not mutated.

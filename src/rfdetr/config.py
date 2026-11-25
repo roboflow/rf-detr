@@ -1379,7 +1379,8 @@ class TrainConfig(BaseConfig):
         description=(
             "Minimum ground-truth instances a class needs in the evaluated split to count toward the gated "
             "'<split>/mAP_50_95_gated' (and its 'ema_' / 'segm_' variants) and toward the macro-F1 that the "
-            "confidence-threshold sweep maximises. Classes below the floor are still reported per class. When above "
+            "confidence-threshold sweep maximises. With log_per_class_metrics=True, classes below the floor are still "
+            "reported per class (table rows with a Support column, and AP keys). When above "
             "0 and best_model_metric='map', best-checkpoint selection and early stopping monitor the gated metric, "
             "so a class with a handful of instances cannot swing model selection. 0 disables gating."
         ),
@@ -1389,7 +1390,12 @@ class TrainConfig(BaseConfig):
         description=(
             "Also evaluate validation and test boxes with every label collapsed to one class, logged as "
             "'<split>/mAP_50_95_agnostic' and '<split>/mAP_50_agnostic'. Separates localisation quality from "
-            "classification quality. Adds a second box-metric accumulation to every evaluation."
+            "classification quality. Adds a second box-metric accumulation to every evaluation: one more host copy "
+            "of the boxes, scores and ground truth, and one more all_gather per list state under DDP. It is never "
+            "streamed, even with eval_backend='hotcoco_streaming'. The agnostic rows come from the class-aware "
+            "top-num_select query x class selection, de-duplicated per box afterwards; queries displaced by a "
+            "neighbour's extra labels are not recovered, so agnostic recall can read lower than a selection made "
+            "directly over queries."
         ),
     )
     eval_backend: CocoEvalBackend = Field(
