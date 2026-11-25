@@ -563,9 +563,9 @@ def _build_yolo_samples(
         skip_unreadable: When ``True`` a failed header read is retried, until the pauses of all retries in this build
             add up to ``_BUILD_RETRY_BUDGET_SECONDS``; each header read after that is read once, with no retry.  An
             image whose header stays unreadable is kept as a sample marked ``readable=False`` with no labels, instead of
-            raising.  Its label file is still parsed, so a malformed one raises.  More than ``_MAX_SUBSTITUTIONS`` such images in a row, counting on from
-            the last sample to the first as a read-time substitution does, or every image of a dataset too small to
-            have that many, raises :class:`RuntimeError` instead.
+            raising.  Its label file is still parsed, so a malformed one raises.  More than ``_MAX_SUBSTITUTIONS`` such
+            images in a row, counting on from the last sample to the first as a read-time substitution does, or every
+            image of a dataset too small to have that many, raises :class:`RuntimeError` instead.
 
     Returns:
         A ``(classes, samples)`` tuple where ``classes`` is the ordered list of class names and ``samples`` is a list of
@@ -1427,8 +1427,8 @@ class YoloDetection(VisionDataset):  # type: ignore[misc]  # torchvision ships n
             unreadable is kept at its index, to be substituted when requested, instead of raising from the
             constructor.  That sample stays substituted for the rest of the run, even if its file is repaired, because
             its labels were not kept; one warning at the end of the build counts such samples.  The constructor still
-            raises ``RuntimeError`` when more than 10 headers in a row are unreadable, counting on from the last image to
-            the first, or every header of a dataset with fewer images, since the dataset or its filesystem is then
+            raises ``RuntimeError`` when more than 10 headers in a row are unreadable, counting on from the last image
+            to the first, or every header of a dataset with fewer images, since the dataset or its filesystem is then
             broken.  Meant for training splits only: a substituted sample is a duplicate, which would distort
             evaluation.
     """

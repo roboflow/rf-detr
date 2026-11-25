@@ -280,14 +280,14 @@ class TestStorageStall:
             read_image_or_substitute(_stalled_reader(20, stalled_reads=2), 0, 20, _path_of)
 
     def test_reads_each_substitute_twice_before_raising(self) -> None:
-        """The requested sample is retried, then the substitutes are swept in order, and swept again after the pause."""
+        """Retries and a sweep, then after the pause one more read of the sample and a second sweep."""
         reader = _stalled_reader(20, stalled_reads=2)
 
         with pytest.raises(RuntimeError):
             read_image_or_substitute(reader, 0, 20, _path_of)
 
         substitutes = list(range(1, io_utils._MAX_SUBSTITUTIONS + 1))
-        assert reader.calls == [0] * io_utils._IMAGE_READ_ATTEMPTS + substitutes + substitutes
+        assert reader.calls == [0] * io_utils._IMAGE_READ_ATTEMPTS + substitutes + [0] + substitutes
 
     def test_error_names_a_sustained_storage_outage(self) -> None:
         with pytest.raises(RuntimeError, match="stayed unavailable through every retry, as in a sustained outage"):

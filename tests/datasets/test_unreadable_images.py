@@ -372,9 +372,10 @@ def _open_yolo(paths: tuple[Path, Path, Path], **kwargs: Any) -> YoloDetection:
     """Open a ``YoloDetection`` on ``(image_dir, label_dir, data_file)``; ``transforms`` defaults to ``None``.
 
     Examples:
-        >>> import tempfile
-        >>> with tempfile.TemporaryDirectory() as tmp:
-        ...     len(_open_yolo(_write_yolo_dataset(Path(tmp)), skip_unreadable=True))
+        >>> import contextlib, io, tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()):
+        ...     count = len(_open_yolo(_write_yolo_dataset(Path(tmp)), skip_unreadable=True))
+        >>> count
         3
     """
     image_dir, label_dir, data_file = paths
@@ -386,9 +387,10 @@ def _yolo_dataset(root: Path, **kwargs: Any) -> YoloDetection:
     """Write the dataset of :func:`_write_yolo_dataset` under ``root`` and open it with ``kwargs``.
 
     Examples:
-        >>> import tempfile
-        >>> with tempfile.TemporaryDirectory() as tmp:
-        ...     len(_yolo_dataset(Path(tmp)))
+        >>> import contextlib, io, tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()):
+        ...     count = len(_yolo_dataset(Path(tmp)))
+        >>> count
         3
     """
     return _open_yolo(_write_yolo_dataset(root), **kwargs)
@@ -509,9 +511,10 @@ class TestYoloSegmentationUnreadableFile:
         """Open a polygon dataset whose second image is truncated after the dataset was built.
 
         Examples:
-            >>> import tempfile
-            >>> with tempfile.TemporaryDirectory() as tmp:
-            ...     len(TestYoloSegmentationUnreadableFile()._dataset(Path(tmp)))
+            >>> import contextlib, io, tempfile
+            >>> with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()):
+            ...     count = len(TestYoloSegmentationUnreadableFile()._dataset(Path(tmp)))
+            >>> count
             3
         """
         image_dir, label_dir, data_file = _write_yolo_segmentation_dataset(root)
@@ -544,9 +547,10 @@ class TestYoloPoseUnreadableFile:
         """Open a pose dataset whose second image is truncated after the dataset was built.
 
         Examples:
-            >>> import tempfile
-            >>> with tempfile.TemporaryDirectory() as tmp:
-            ...     len(TestYoloPoseUnreadableFile()._dataset(Path(tmp)))
+            >>> import contextlib, io, tempfile
+            >>> with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()):
+            ...     count = len(TestYoloPoseUnreadableFile()._dataset(Path(tmp)))
+            >>> count
             3
         """
         image_dir, label_dir, data_file = _write_yolo_pose_dataset(root)
@@ -584,8 +588,13 @@ class TestYoloDetectionUnreadableHeader:
         """Write the YOLO dataset, corrupt the header of its second image, and open it with ``kwargs``.
 
         Examples:
-            >>> TestYoloDetectionUnreadableHeader()._dataset(root, skip_unreadable=True)  # doctest: +SKIP
-            # Retries the corrupt header with the real ``time.sleep``; the module's autouse fixture patches it.
+            >>> import contextlib, io, tempfile
+            >>> from unittest import mock
+            >>> with contextlib.redirect_stdout(io.StringIO()), mock.patch.object(io_utils.time, "sleep"):
+            ...     with tempfile.TemporaryDirectory() as tmp:
+            ...         count = len(TestYoloDetectionUnreadableHeader()._dataset(Path(tmp), skip_unreadable=True))
+            >>> count
+            3
         """
         image_dir, label_dir, data_file = _write_yolo_dataset(root)
         _corrupt_header(image_dir / "image1.png")
