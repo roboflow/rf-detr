@@ -1277,7 +1277,9 @@ class COCOEvalCallback(Callback):
     def _update_agnostic_metric(self, preds: list[dict[str, Tensor]], targets: list[dict[str, Tensor]]) -> None:
         """Feed one batch to the class-agnostic metric, when enabled."""
         if self.map_metric_agnostic is not None:
-            self.map_metric_agnostic.update(self._collapse_labels(preds), self._collapse_labels(targets))
+            # A query selected under several labels is one detection once the labels collapse.
+            collapsed_preds = self._keep_best_row_per_box(self._collapse_labels(preds))
+            self.map_metric_agnostic.update(collapsed_preds, self._collapse_labels(targets))
 
     def _reset_agnostic_metric(self) -> None:
         """Clear the class-agnostic metric's state, when enabled."""
@@ -1888,6 +1890,49 @@ class COCOEvalCallback(Callback):
             elif "iscrowd" in t:
                 entry["iscrowd"] = t["iscrowd"]
             out.append(entry)
+        return out
+
+    @staticmethod
+    def _keep_best_row_per_box(preds: list[dict[str, Tensor]]) -> list[dict[str, Tensor]]:
+        """Copy prediction dicts keeping, for every distinct box, only its highest-scoring row.
+
+        ``PostProcess`` ranks query/class pairs, so one query can be selected under several labels and reaches the
+        callback as rows with one box and different scores. With the labels collapsed those rows are repeats of one
+        detection, and all but the first would count as false positives. Rows keep their order; a score tie keeps
+        the earlier row. Queries the repeats pushed out of the top-k are not recovered.
+
+        Args:
+            preds: Per-image prediction dicts with ``boxes`` and ``scores``; not mutated.
+
+        Returns:
+            Per-image dicts with every per-detection tensor filtered to the kept rows.
+
+        Examples:
+            >>> import torch
+            >>> preds = [{"boxes": torch.tensor([[0.0, 0.0, 2.0, 2.0]] * 2), "scores": torch.tensor([0.9, 0.4])}]
+            >>> COCOEvalCallback._keep_best_row_per_box(preds)[0]["scores"].tolist()
+            [0.8999999761581421]
+        """
+        out = []
+        for pred in preds:
+            boxes, scores = pred["boxes"], pred["scores"]
+            count = boxes.shape[0]
+            if count < 2:
+                out.append(dict(pred))
+                continue
+            same_box = (boxes[:, None, :] == boxes[None, :, :]).all(dim=-1)
+            rows = torch.arange(count, device=boxes.device)
+            # outranks[i, j]: row j beats row i (higher score, or equal score and earlier).
+            outranks = (scores[None, :] > scores[:, None]) | (
+                (scores[None, :] == scores[:, None]) & (rows[None, :] < rows[:, None])
+            )
+            keep = ~(same_box & outranks).any(dim=1)
+            out.append(
+                {
+                    key: value[keep] if isinstance(value, Tensor) and value.shape[:1] == (count,) else value
+                    for key, value in pred.items()
+                }
+            )
         return out
 
     @staticmethod

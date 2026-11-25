@@ -3101,6 +3101,62 @@ class TestClassAgnosticEval:
         _, targets = cb.map_metric_agnostic.update.call_args.args
         assert targets[0]["labels"].tolist() == [0]
 
+    def test_query_scored_under_two_labels_counts_once(self) -> None:
+        """A query the top-k emits under two labels is one agnostic detection, not a hit plus a false positive."""
+        cb = COCOEvalCallback(class_agnostic=True, eval_backend="faster_coco_eval", in_notebook=False)
+        trainer = _make_trainer()
+        trainer.callback_metrics = {}
+        module = _cpu_module()
+        module.model_config.num_classes = 2
+        cb.setup(trainer, module, stage="fit")
+        cb.on_validation_epoch_start(trainer, module)
+        first, second = [90.0, 45.0, 110.0, 55.0], [30.0, 15.0, 50.0, 25.0]
+        outputs = {
+            # The first query's box is selected under both labels; its weaker row outranks the second query.
+            "results": [
+                {
+                    "boxes": torch.tensor([first, first, second]),
+                    "scores": torch.tensor([0.9, 0.8, 0.7]),
+                    "labels": torch.tensor([0, 1, 1]),
+                }
+            ],
+            "targets": [
+                {
+                    "boxes": torch.tensor([[0.5, 0.5, 0.1, 0.1], [0.2, 0.2, 0.1, 0.1]]),
+                    "labels": torch.tensor([0, 1]),
+                    "orig_size": torch.tensor([100, 200]),
+                }
+            ],
+        }
+        cb.on_validation_batch_end(trainer, module, outputs, None, 0)
+
+        with patch.object(cb, "_print_metrics_tables"):
+            cb.on_validation_epoch_end(trainer, module)
+
+        assert float(trainer.callback_metrics["val/mAP_50_95_agnostic"]) == pytest.approx(1.0, abs=1e-4)
+        # The class-aware metric still sees every row: class 0 AP 1, class 1 AP 0.5 (the repeat ranks above its hit).
+        assert float(trainer.callback_metrics["val/mAP_50_95"]) == pytest.approx(0.75, abs=1e-2)
+
+    def test_repeated_boxes_keep_their_best_row(self) -> None:
+        """Only a box's highest-scoring row survives, whatever order the rows arrive in; other rows are untouched."""
+        box, other = [1.0, 2.0, 3.0, 4.0], [5.0, 6.0, 7.0, 8.0]
+        preds = [
+            {
+                "boxes": torch.tensor([box, other, box, box]),
+                "scores": torch.tensor([0.3, 0.5, 0.9, 0.9]),
+                "labels": torch.tensor([0, 1, 2, 3]),
+            },
+            {"boxes": torch.zeros(0, 4), "scores": torch.zeros(0), "labels": torch.zeros(0, dtype=torch.long)},
+        ]
+
+        kept = COCOEvalCallback._keep_best_row_per_box(preds)
+
+        assert kept[0]["scores"].tolist() == pytest.approx([0.5, 0.9])
+        assert kept[0]["labels"].tolist() == [1, 2]
+        assert kept[0]["boxes"].tolist() == [other, box]
+        assert kept[1]["boxes"].shape == (0, 4)
+        assert preds[0]["boxes"].shape == (4, 4)
+
     def test_no_agnostic_key_logged_without_state(self) -> None:
         """An epoch that accumulated nothing must not log a -1 sentinel as a score."""
         cb = COCOEvalCallback(class_agnostic=True)
