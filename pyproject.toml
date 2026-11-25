@@ -5,10 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rfdetr"
 version = "1.13.0.dev"
-description = "RF-DETR"
+description = "RF-DETR: real-time transformer for object detection, instance segmentation and keypoint detection"
 readme = "README.md"
 authors = [
     {name = "Roboflow, Inc", email = "develop@roboflow.com"}
+]
+maintainers = [
+    {name = "Jiri Borovec", email = "jiri@roboflow.com"}
 ]
 license = {text = "Apache License 2.0"}
 requires-python = ">=3.10"
@@ -33,7 +36,11 @@ classifiers = [
     "Operating System :: Unix",
     "Operating System :: MacOS"
 ]
-keywords = ["machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DETR", "RF-DETR", "Roboflow"]
+keywords = [
+    "machine-learning", "deep-learning", "vision", "ML", "DL", "AI", "DETR", "RF-DETR", "Roboflow",
+    "computer-vision", "object-detection", "instance-segmentation", "keypoint-detection", "pose-estimation",
+    "real-time", "transformer", "pytorch", "fine-tuning", "ONNX", "TensorRT", "OpenVINO", "CoreML", "TFLite"
+]
 
 dependencies = [
     "requests",                        # weight download from remote URLs
@@ -162,6 +169,10 @@ tflite = [
     "flatbuffers>=23.5.26; python_version >= '3.12' and python_version < '3.13'",
     "tf-keras>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
     "tensorflow>=2.16.0; python_version >= '3.12' and python_version < '3.13'",
+    # <26: pyarrow 26 refuses to import under numpy 1.x, and onnx2tf 2.4.x pins numpy==1.26.4. vernier, the default
+    # eval backend of [train], imports pyarrow, so training failed at start with [train] and [tflite] together.
+    # pyarrow declares no numpy requirement, so the resolver cannot see this. Drop with the onnx2tf numpy pin.
+    "pyarrow<26; python_version >= '3.12' and python_version < '3.13'",
 ]
 executorch = [
     # torch.export -> .pte, XNNPACK CPU delegate; validated on 1.3.1. Capped below 1.4: 1.4.x needs

@@ -30,7 +30,7 @@ import shutil
 import subprocess
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
@@ -1180,6 +1180,20 @@ def evaluate_coco_ap(
             )
         task_zero = None if task == "detect" else 0.0
         return CocoApResult(0.0, 0.0, task_zero, task_zero, len(subset.image_ids))
+    return _accumulate_ap(evaluator, task_iou, len(subset.image_ids))
+
+
+def _accumulate_ap(evaluator: Any, task_iou: str | None, n_images: int) -> CocoApResult:
+    """Accumulate a filled COCO evaluator into a :class:`CocoApResult`.
+
+    Args:
+        evaluator: A ``CocoEvaluator`` that has seen every image.
+        task_iou: ``"segm"`` or ``"keypoints"`` for a task AP, ``None`` for detection.
+        n_images: Number of images the evaluator saw.
+
+    Returns:
+        Box AP and AP50, plus the task's, each clamped at 0 (COCO reports -1 for an undefined AP).
+    """
     evaluator.synchronize_between_processes()
     evaluator.accumulate()
     stats = evaluator.coco_eval["bbox"].stats
@@ -1189,8 +1203,62 @@ def evaluate_coco_ap(
         box_ap50=max(0.0, float(stats[1])),
         task_ap=max(0.0, float(task_stats[0])) if task_stats is not None else None,
         task_ap50=max(0.0, float(task_stats[1])) if task_stats is not None else None,
-        n_images=len(subset.image_ids),
+        n_images=n_images,
     )
+
+
+def evaluate_coco_predictions(
+    predictions: Mapping[int, sv.Detections | sv.KeyPoints],
+    subset: CocoValSubset,
+    task: Literal["detect", "segment", "keypoints"],
+    *,
+    image_ids: Sequence[int] | None = None,
+) -> CocoApResult:
+    """Score stored public predictions, without running a model or decoding an image.
+
+    :func:`evaluate_coco_ap` scores a run as it goes. This scores predictions kept from an earlier run, so one run can
+    be scored on the whole subset and on parts of it, for example to see how far AP moves between disjoint folds.
+
+    Args:
+        predictions: One prediction per image ID, as ``predict`` returned it.
+        subset: Annotations from :func:`fetch_coco_val2017`; its ``image_ids`` are the default images to score.
+        task: The predictor's ``runtime_info["task"]``: detect, segment or keypoints.
+        image_ids: The unique images to score, each with an entry in ``predictions``. Defaults to ``subset.image_ids``.
+
+    Returns:
+        The same fields as :func:`evaluate_coco_ap` for those images. An all-empty set scores zero.
+
+    Raises:
+        ImportError: If the optional ``train`` extra's COCO evaluation dependencies are unavailable.
+        KeyError: If an image to score has no entry in ``predictions``.
+        ValueError: If the task or a result type is invalid, or if image IDs repeat.
+
+    Examples:
+        Skipped because it needs a fetched COCO subset and stored predictions.
+
+        >>> evaluate_coco_predictions(stored, subset, "detect", image_ids=subset.image_ids[:1000])  # doctest: +SKIP
+        CocoApResult(box_ap=0.41, box_ap50=0.58, task_ap=None, task_ap50=None, n_images=1000)
+    """
+    from faster_coco_eval import COCO
+
+    from rfdetr.evaluation.coco_eval import CocoEvaluator
+
+    if task not in ("detect", "segment", "keypoints"):
+        raise ValueError(f"Unknown COCO task {task!r}.")
+    task_iou = {"segment": "segm", "keypoints": "keypoints"}.get(task)
+    annotations_path = subset.keypoints_annotations_path if task == "keypoints" else subset.annotations_path
+    ids = list(subset.image_ids if image_ids is None else image_ids)
+    if len(ids) != len(set(ids)):
+        raise ValueError("image_ids must be unique.")
+    converted = {image_id: _coco_ap_prediction(predictions[image_id], task) for image_id in ids}
+    if not any(converted.values()):
+        task_zero = None if task == "detect" else 0.0
+        return CocoApResult(0.0, 0.0, task_zero, task_zero, len(ids))
+    evaluator = CocoEvaluator(
+        COCO(str(annotations_path)), ["bbox"] if task_iou is None else ["bbox", task_iou], log_summary=False
+    )
+    evaluator.update(converted)
+    return _accumulate_ap(evaluator, task_iou, len(ids))
 
 
 def evaluate_coco_map(
