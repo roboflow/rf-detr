@@ -18,7 +18,7 @@ import supervision as sv
 import torch
 from pytest_mock import MockerFixture
 
-from rfdetr import ClassThresholds, RFDETRSegNano
+from rfdetr import ClassThresholds, RFDETRInference, RFDETRNano, RFDETRSegNano
 from rfdetr._prediction import core, pipelines
 from rfdetr._prediction.tta import (
     DEFAULT_ZOOM,
@@ -37,6 +37,7 @@ from rfdetr._prediction.tta import (
     vote_masks,
 )
 from rfdetr.models.postprocess import PostProcess
+from tests._markers import _requires_cuda
 from tests.inference.helpers import _DummyModel, _DummyRFDETR
 
 _PATCH = 16
@@ -643,6 +644,8 @@ class TestViews:
         [
             (TTAConfig(zoom=()), 1),
             (TTAConfig(), 4),
+            pytest.param(TTAConfig(shift=1), 4, id="explicit-default-shift"),
+            pytest.param(TTAConfig(flip=False), 4, id="explicit-default-flip"),
             (TTAConfig(shift=4), 4),
             (TTAConfig(flip=True), 2),
             (TTAConfig(zoom=(1.25,)), 2),
@@ -791,19 +794,119 @@ class TestGroupedForward:
         assert rows == [8]
         assert decode.call_count == 1
 
+    def test_short_chunk_keeps_distinct_images_in_order(self, mocker: MockerFixture) -> None:
+        """Restore view and image rows after chunking interleaved canvas groups."""
+        images = [_square_image(16), _square_image(26)[:, :56, :52]]
+        config = TTAConfig(shift=3, flip=True, zoom=(1.5,))
+        expected = _predict_tta(images, config)
+        run, rows = self._counting_run()
+        mocker.patch.object(core, "_views_per_forward", return_value=4)
+        actual = _predict_tta(images, config, run=run)
+        assert rows == [8, 4, 4]
+        assert [tuple(result.metadata["source_image"].shape[:2]) for result in actual] == [(64, 64), (56, 52)]
+        np.testing.assert_array_equal(actual[0].xyxy, expected[0].xyxy)
+        np.testing.assert_array_equal(actual[1].xyxy, expected[1].xyxy)
+        np.testing.assert_array_equal(actual[0].confidence, expected[0].confidence)
+        np.testing.assert_array_equal(actual[1].confidence, expected[1].confidence)
+        np.testing.assert_array_equal(actual[0].mask, expected[0].mask)
+        np.testing.assert_array_equal(actual[1].mask, expected[1].mask)
+
     def test_views_are_fused_in_their_original_order_whichever_group_runs_first(self, mocker: MockerFixture) -> None:
         """A zoom view that shares no canvas with the shifts still counts as the view it is in the config."""
-        seen: list[list[int]] = []
+        seen: list[list[sv.Detections]] = []
         original = core.group_passes
 
         def spy(passes: list[sv.Detections], *args: Any, **kwargs: Any) -> Any:
-            seen.append([len(p) for p in passes])
+            """Retain the per-view inputs to fusion."""
+            seen.append(passes)
             return original(passes, *args, **kwargs)
 
+        def tag_view(outputs: dict[str, torch.Tensor], view: _View, *_args: Any) -> dict[str, torch.Tensor]:
+            """Encode distinct view identities in the x coordinate independently of the model output."""
+            center_x = 0.2 + 0.1 * (view.scale - 1) + view.offset / 100 + 0.4 * view.flip
+            boxes = torch.tensor([center_x, 0.5, 0.1, 0.1]).expand_as(outputs["pred_boxes"])
+            return {"pred_boxes": boxes}
+
         mocker.patch.object(core, "group_passes", side_effect=spy)
-        mocker.patch.object(core, "_views_per_forward", side_effect=lambda _context, _rows, _canvas, views: views)
-        _predict_tta(_square_image(20), TTAConfig(shift=2, zoom=(1.5,)))
-        assert len(seen) == 1 and len(seen[0]) == 3
+        mocker.patch.object(core, "map_to_image", side_effect=tag_view)
+        mocker.patch.object(core, "_views_per_forward", return_value=3)
+        _predict_tta(_square_image(20), TTAConfig(shift=2, flip=True, zoom=(1.5,)))
+        (passes,) = seen
+        boxes = sv.Detections.merge(passes).xyxy
+        np.testing.assert_allclose((boxes[:, 0] + boxes[:, 2]) / (2 * _SIDE), [0.2, 0.28, 0.25, 0.6, 0.68, 0.65])
+
+    @pytest.mark.gpu
+    @_requires_cuda
+    @pytest.mark.parametrize(
+        ("model_class", "resolution"),
+        [pytest.param(RFDETRNano, 96, id="detection"), pytest.param(RFDETRSegNano, 72, id="segmentation")],
+    )
+    def test_public_cuda_batches_match_sequential_views(
+        self, model_class: type, resolution: int, mocker: MockerFixture
+    ) -> None:
+        """Compare a CUDA stream's grouped predictions against one forward per view."""
+        torch.manual_seed(0)
+        model = model_class(
+            pretrain_weights=None, device="cuda", resolution=resolution, num_queries=4, num_select=4, num_classes=2
+        )
+        predictor = RFDETRInference(model)
+        images = [_square_image(16), _square_image(26)[:, :56, :52]]
+        recipe = TTAConfig(shift=3, flip=True, zoom=(1.5,))
+        block = model.model_config.patch_size * model.model_config.num_windows
+        mocker.patch.object(core, "_MAX_PIXELS_PER_FORWARD", 8 * (resolution + block) ** 2)
+        forward = mocker.spy(model, "_run_inference_batch")
+        actual = list(predictor.predict(images, stream=True, batch=2, tta=recipe, threshold=0.0))
+        assert [call.args[0].shape[0] for call in forward.call_args_list] == [8, 4, 4]
+        assert forward.call_args_list[0].args[0].shape[-2:] != forward.call_args_list[-1].args[0].shape[-2:]
+        mocker.patch.object(core, "_views_per_forward", return_value=1)
+        expected = list(predictor.predict(images, stream=True, batch=2, tta=recipe, threshold=0.0))
+        assert len(actual) == len(expected) == 2
+        self._assert_cuda_result(actual[0], expected[0], masks=model.model_config.segmentation_head)
+        self._assert_cuda_result(actual[1], expected[1], masks=model.model_config.segmentation_head)
+
+    @staticmethod
+    def _assert_cuda_result(result: sv.Detections, reference: sv.Detections, *, masks: bool) -> None:
+        """Allow accelerator rounding without accepting missing detections or changed mask geometry."""
+        assert len(reference) > 0
+        np.testing.assert_array_equal(result.class_id, reference.class_id)
+        np.testing.assert_allclose(result.xyxy, reference.xyxy, rtol=1e-4, atol=5e-3)
+        np.testing.assert_allclose(result.confidence, reference.confidence, rtol=1e-4, atol=1e-6)
+        if masks:
+            assert reference.mask is not None and result.mask is not None
+            assert result.mask.shape == reference.mask.shape
+            assert (result.mask != reference.mask).mean() < 1e-3
+
+
+class TestZoomPadding:
+    """Predictions must overlap the part of the zoom canvas that contains the source image."""
+
+    def test_padding_only_box_is_dropped_but_clipped_box_survives(self) -> None:
+        """Clip partial overlap at the source boundary and discard the zero-width candidate."""
+
+        def run(batch: torch.Tensor) -> dict[str, torch.Tensor]:
+            """Return two high-confidence boxes in the smaller view and none in the other."""
+            scores = [-float("inf"), -float("inf")] if batch[0, 0, 50, 50] else [2.0, 2.0]
+            return {
+                "pred_logits": torch.tensor(scores).view(1, 2, 1),
+                "pred_boxes": torch.tensor([[[0.75, 0.3, 0.1, 0.2], [0.60, 0.3, 0.2, 0.2]]]),
+            }
+
+        actual = _predict_tta(torch.ones(3, 64, 64), TTAConfig(zoom=(0.75,)), threshold=0.1, run=run)
+        np.testing.assert_allclose(actual.xyxy, [[160 / 3, 64 / 3, 64, 128 / 3]], atol=1e-5)
+
+    def test_box_touching_padding_boundary_does_not_round_into_image(self) -> None:
+        """Reject a box whose exact left edge touches the content boundary on an 80-pixel canvas."""
+
+        def run(batch: torch.Tensor) -> dict[str, torch.Tensor]:
+            """Detect a box only in the 50-pixel zoom view."""
+            score = -float("inf") if batch[0, 0, 51, 51] else 2.0
+            return {
+                "pred_logits": torch.tensor([[[score]]]),
+                "pred_boxes": torch.tensor([[[0.626953125, 0.3, 0.00390625, 0.2]]]),
+            }
+
+        actual = _predict_tta(torch.ones(3, 64, 64), TTAConfig(zoom=(0.78125,)), threshold=0.1, run=run)
+        assert len(actual) == 0
 
 
 class TestEarlyRefusal:
@@ -870,8 +973,12 @@ class TestTTAConfigValidation:
         with pytest.raises(TypeError, match="zoom must be a list or tuple"):
             TTAConfig(zoom=zoom)
 
-    @pytest.mark.parametrize("zoom", [float("nan"), float("inf"), 1.0, 0.5, 2.0, -1.0])
+    @pytest.mark.parametrize(
+        "zoom",
+        [float("nan"), float("inf"), -float("inf"), 1.0, 0.5, 2.0, -1.0, pytest.param(10**400, id="large-integer")],
+    )
     def test_zoom_values_must_be_finite_not_one_and_in_range(self, zoom: float) -> None:
+        """Reject invalid values before converting accepted zooms to floats."""
         with pytest.raises(ValueError, match="TTAConfig.zoom values must be finite"):
             TTAConfig(zoom=(zoom,))
 

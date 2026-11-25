@@ -92,9 +92,9 @@ class TTAConfig:
     """The test-time augmentation views of one ``RFDETRInference.predict`` call.
 
     Passing ``tta`` at all is the opt-in; ``tta=None`` is the plain prediction. ``TTAConfig()`` is the recommended
-    recipe, the plain image plus three zoomed copies (``DEFAULT_ZOOM``), four views. Ask for another mix with explicit
-    fields: when ``shift`` or ``flip`` is given and ``zoom`` is not, the config holds exactly the views you named and no
-    zoom, so ``TTAConfig(shift=4)`` is four views. ``TTAConfig(zoom=())`` is one view, the plain prediction. Every view
+    recipe, the native-scale view plus three zoomed copies (``DEFAULT_ZOOM``), four views. With no explicit zoom
+    scales, ``shift > 1`` or ``flip=True`` suppresses the default zooms, so ``TTAConfig(shift=4)`` is four views.
+    ``TTAConfig(zoom=())`` with the default shift and flip values runs one plain prediction. Every view
     costs one forward pass over a canvas at least as large as the image, so the cost grows with the number of views
     (see :func:`view_count`) and, for zoom, with the canvas area. Mirroring assumes an object keeps its class when the
     image is flipped: a class that does not (arrows, turn signs) splits into two groups and loses score.
@@ -142,7 +142,7 @@ class TTAConfig:
         for value in requested:
             if isinstance(value, bool) or not isinstance(value, (int, float)):
                 raise TypeError(f"TTAConfig.zoom holds numbers only, got {type(value).__name__}.")
-            if not math.isfinite(value) or value == 1.0 or not ZOOM_MIN <= value <= ZOOM_MAX:
+            if not ZOOM_MIN <= value <= ZOOM_MAX or value == 1.0:
                 raise ValueError(
                     f"TTAConfig.zoom values must be finite, not 1 and in [{ZOOM_MIN}, {ZOOM_MAX}], got {value!r}."
                 )
@@ -345,7 +345,8 @@ def map_to_image(
     """Map raw model outputs for a canvas from :func:`place_view` back to the image it holds.
 
     Boxes are normalized ``cxcywh`` and become relative to the image instead of the canvas, mirrored back when the view
-    was. Mask logits are resampled from the image's region of the canvas to ``mask_size``, mirrored back as well. The
+    was. Boxes outside the image content have zero area. Mask logits are resampled from the image's region of the canvas
+    to ``mask_size``, mirrored back as well. The
     result reads as if the model had seen the image directly, so the usual post-processing applies unchanged.
 
     Args:
@@ -369,11 +370,16 @@ def map_to_image(
     ch, cw = placed_size(view, size)
     mapped = dict(outputs)
     cx, cy, w, h = outputs["pred_boxes"].unbind(-1)
+    # Test overlap in canvas coordinates before rescaling the center and size, which can round a touching edge inward.
+    outside_x = (cx + w / 2 <= view.offset / canvas_w) | (cx - w / 2 >= (view.offset + cw) / canvas_w)
+    outside_y = (cy + h / 2 <= view.offset / canvas_h) | (cy - h / 2 >= (view.offset + ch) / canvas_h)
     cx = (cx * canvas_w - view.offset) / cw
     cy = (cy * canvas_h - view.offset) / ch
     if view.flip:
         cx = 1 - cx
-    mapped["pred_boxes"] = torch.stack((cx, cy, w * canvas_w / cw, h * canvas_h / ch), dim=-1)
+    w = (w * canvas_w / cw).masked_fill(outside_x, 0)
+    h = (h * canvas_h / ch).masked_fill(outside_y, 0)
+    mapped["pred_boxes"] = torch.stack((cx, cy, w, h), dim=-1)
 
     masks = outputs.get("pred_masks")
     if masks is not None and mask_size is not None:

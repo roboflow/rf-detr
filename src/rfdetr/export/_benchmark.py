@@ -1223,7 +1223,7 @@ def evaluate_coco_predictions(
         predictions: One prediction per image ID, as ``predict`` returned it.
         subset: Annotations from :func:`fetch_coco_val2017`; its ``image_ids`` are the default images to score.
         task: The predictor's ``runtime_info["task"]``: detect, segment or keypoints.
-        image_ids: The images to score, each with an entry in ``predictions``. Defaults to ``subset.image_ids``.
+        image_ids: The unique images to score, each with an entry in ``predictions``. Defaults to ``subset.image_ids``.
 
     Returns:
         The same fields as :func:`evaluate_coco_ap` for those images. An all-empty set scores zero.
@@ -1231,7 +1231,7 @@ def evaluate_coco_predictions(
     Raises:
         ImportError: If the optional ``train`` extra's COCO evaluation dependencies are unavailable.
         KeyError: If an image to score has no entry in ``predictions``.
-        ValueError: If the task or a result type is invalid.
+        ValueError: If the task or a result type is invalid, or if image IDs repeat.
 
     Examples:
         Skipped because it needs a fetched COCO subset and stored predictions.
@@ -1248,6 +1248,8 @@ def evaluate_coco_predictions(
     task_iou = {"segment": "segm", "keypoints": "keypoints"}.get(task)
     annotations_path = subset.keypoints_annotations_path if task == "keypoints" else subset.annotations_path
     ids = list(subset.image_ids if image_ids is None else image_ids)
+    if len(ids) != len(set(ids)):
+        raise ValueError("image_ids must be unique.")
     converted = {image_id: _coco_ap_prediction(predictions[image_id], task) for image_id in ids}
     if not any(converted.values()):
         task_zero = None if task == "detect" else 0.0

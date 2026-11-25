@@ -18,33 +18,33 @@ predictor = RFDETRInference(RFDETRSmall())
 detections = predictor.predict("image.jpg", threshold=0.5, tta=TTAConfig())
 ```
 
-`TTAConfig()` is the recommended recipe: the plain image plus three zoomed copies, four views. Ask for another mix with explicit fields. Views add up, they do not multiply, and flip doubles the total.
+`TTAConfig()` is the recommended recipe: one native-scale view and three zooms on padded canvases. Ask for another mix with explicit fields. Views add up, they do not multiply, and flip doubles the total.
 
-| Config                                 | Views | What runs                                                    |
-| -------------------------------------- | ----- | ------------------------------------------------------------ |
-| `TTAConfig()`                          | 4     | the plain image and zooms of 0.85, 1.25 and 1.5              |
-| `TTAConfig(zoom=(1.25,))`              | 2     | the plain image and one 1.25 zoom, the cheapest zoom recipe  |
-| `TTAConfig(shift=4)`                   | 4     | the image moved by 0, 4, 8 and 12 pixels of a 16-pixel patch |
-| `TTAConfig(shift=2, zoom=(1.25, 1.5))` | 4     | two shifts and two zooms                                     |
-| `TTAConfig(shift=2, flip=True)`        | 4     | two shifts, each also mirrored left to right                 |
-| `TTAConfig(zoom=())`                   | 1     | the plain prediction                                         |
+| Config                                 | Views | What runs                                                       |
+| -------------------------------------- | ----- | --------------------------------------------------------------- |
+| `TTAConfig()`                          | 4     | the native-scale view and zooms of 0.85, 1.25 and 1.5           |
+| `TTAConfig(zoom=(1.25,))`              | 2     | the native-scale view and a 1.25 zoom, the cheapest zoom recipe |
+| `TTAConfig(shift=4)`                   | 4     | the image moved by 0, 4, 8 and 12 pixels of a 16-pixel patch    |
+| `TTAConfig(shift=2, zoom=(1.25, 1.5))` | 4     | two shifts and two zooms                                        |
+| `TTAConfig(shift=2, flip=True)`        | 4     | two shifts, each also mirrored left to right                    |
+| `TTAConfig(zoom=())`                   | 1     | the plain prediction                                            |
 
-Naming `shift` or `flip` without `zoom` gives exactly the views you named and no zoom, so `TTAConfig(shift=4)` is four views, not seven.
+With `zoom` omitted, `shift > 1` or `flip=True` suppresses the default zooms. Explicit `shift=1` or `flip=False` with the other default retains the three zooms. Pass `zoom=()` with the default shift and flip values for plain prediction.
 
-- **Cost:** every view is one more forward pass over a canvas at least as large as the image. A zoomed view needs a larger canvas, so it costs more than a shifted one.
-- **Batching:** on CUDA the views with the same canvas size run as one forward pass. On MPS and CPU each view is its own pass, so latency grows about linearly with the view count.
+- **Cost:** every view adds a row on a padded canvas. Larger zooms can increase canvas size and cost per row.
+- **Batching:** on CUDA, views with the same canvas size can share a forward pass. On MPS and CPU each view is its own pass, so latency grows about linearly with the view count.
 - **Fusion:** a detection of one view matches a detection of another when both have the same class and a box IoU above 0.6. The fused box is the mean box, and the fused score is the sum of the matched scores divided by the number of views, so a view that missed the object counts as 0. `threshold` applies only to the fused score. Fused scores sit a little lower than single-view ones, so choose the threshold with TTA on. Segmentation masks keep the pixels that at least half of the matched masks cover.
 - **Limits:** keypoint models, an `inference()` snapshot and exported runtimes refuse several views before any image is read, because they fix their resolution or batch size. Mirroring assumes an object keeps its class when the image is flipped; do not use `flip` for arrows or turn signs.
-- **Related:** `RFDETR.predict(..., shift_tta=N)` is the older option that averages `N` shifted passes. It is unchanged and described on the [Detection page](run/detection.md#steadier-scores-with-shift-test-time-augmentation).
+- **Related:** `RFDETR.predict(..., shift_tta=N)` is the older option that averages `N` shifted passes. It uses the same CUDA batching rules and is described on the [Detection page](run/detection.md#steadier-scores-with-shift-test-time-augmentation).
 
 ## How the Views Become a Batch
 
 A call to `predict` takes one image or a list of images, and every image gets its own views. On CUDA the views of one canvas size go through the network together, so the views are rows of a batch.
 
-![Animation in two rows. Top row, predict of one image: the input image is copied into four views, a plain one and zooms of 0.85, 1.25 and 1.5, each on its own canvas. The four views are four rows of one forward pass, which finds the objects in every view. The boxes of each view are mapped back to the image and the matching ones are averaged into one fused result. Bottom row, predict of eight images: eight input images with the same four views are a grid of 32 rows, one forward pass, split into chunks when it is over the pixel budget, fused back into eight results.](../assets/tta/tta-views-batch.svg){ loading=lazy }
+![CUDA grouping for the default zoom recipe on RF-DETR Small. The native-scale and 0.85 views share a 544-pixel canvas. The 1.25 and 1.5 views use 640- and 768-pixel canvases. One input produces groups of 2, 1 and 1 rows and one fused result. Eight inputs produce groups of 16, 8 and 8 rows before any splitting, and eight fused results.](../assets/tta/tta-views-batch.svg){ loading=lazy }
 
-- **One image per call:** the views are the whole batch. `V` views of one image run as a batch of `V` rows.
-- **Several images per call:** the batch is the number of images times the number of views. Eight images with four views are 32 rows. Above a pixel budget the rows are split into several forward passes, which keeps memory flat.
+- **One image per call:** the default four views of RF-DETR Small form three canvas groups. The 544-pixel group has two rows. The 640- and 768-pixel groups each have one row.
+- **Several images per call:** each group has the number of input images times its view count. The forward pixel budget limits how many whole views of a shape can run together. Every forward still carries at least one view of every input, so that view alone can exceed the budget. Segmentation also retains mapped mask logits until fusion.
 - **Not CUDA:** on MPS and CPU each view is its own forward pass, and a batch of images is processed view by view.
 - **Why two latency settings below:** a server may send one image at a time, where the views fill the batch, or collect several images, where the batch is already full before the views are added. The tables and figures show both, always as the time per image.
 
@@ -80,7 +80,7 @@ Box AP in percent for shift views, with the paired gain over one view and its fo
 
 - **Size:** the gain at eight views falls from +3.65 for Atto to +1.09 for 2XLarge. XLarge sits slightly above the trend.
 - **Saturation:** four views give 84 to 92 percent of the eight-view gain for every size. Going from 4 to 8 adds 0.1 to 0.4 points.
-- **Steadiness:** the score of a confident detection moves by a fraction of a point when the object shifts inside a patch. Eight views cut that spread about 4 times: from 0.097 to 0.023 for Atto, 0.071 to 0.018 for Nano and 0.044 to 0.012 for Large (mean standard deviation of the score across four sub-patch shifts, measured on 100 images).
+- **Steadiness:** the score of a confident detection moves by a fraction of a point when the object shifts inside a patch. For each recipe, the probe selected detections with an unshifted score of at least 0.3, then averaged their score standard deviation across four sub-patch shifts on 100 images. The plain and eight-view recipes measured 0.097 and 0.023 for Atto, 0.071 and 0.018 for Nano, and 0.044 and 0.012 for Large. For a shifted input, the probe used the highest score among boxes matching the reference class with IoU above 0.6, and used zero for a miss. Each recipe can select a different set of detections. The probe did not count threshold crossings.
 
 ## Cost: Latency and Memory
 
@@ -98,16 +98,16 @@ Views cost latency that grows with the model, because a small model is limited b
 | XLarge  | 10.04                    | 21.76   | 36.29   | 3.6x               | 4.38                      | 16.73   | 32.63   |
 | 2XLarge | 11.19                    | 29.96   | 51.77   | 4.6x               | 5.57                      | 25.36   | 49.91   |
 
-Latency per image in milliseconds for shift views on an eager PyTorch predictor. The first four columns are a call with one image, whose views are the batch. The last three are a call with eight images, an 8 x V batch, divided by 8.
+Latency per image in milliseconds for shift views on an eager PyTorch predictor. The first four columns are a call with one image, whose views are the batch. The last three are a call with eight images, totaling 8 × V view rows, with time divided by eight.
 
 - **One image in the call:** eight views of Atto cost 1.4 times one view, and eight views of 2XLarge cost 4.6 times. Small models have idle capacity that the extra rows fill.
 - **Eight images in the call:** the device is already busy, so the cost per image grows almost with the number of views, 3.7 times for Atto and 9.0 times for 2XLarge at eight views.
 - **Zoom costs more per view:** the canvas of a zoomed view is larger. At four views on Nano a call takes 8.6 ms with shifts and 17.1 ms with the default zooms.
-- **Optimized snapshot:** `model.inference()` runs the plain prediction in 1.9 to 7.7 ms, 1.5 to 3.1 times faster than the eager plain call, and cannot run views. It is the reference when no TTA is needed.
+- **Optimized snapshot:** the historical run measured `model.inference()` at 1.9 to 7.7 ms while repeating one image. Eager timing cycled through distinct images. The cookbook now uses the same image sequence for both.
 
-![Box AP against latency per image, one curve per model size. The left panel is predict with one image, whose V views are the batch. The right panel is predict with eight images, a batch of 8 x V views, divided by 8. Solid curves are 1, 2, 4, 6 and 8 shift views, labelled at 2 and 8. Dashed curves with square markers are the 2-view and 4-view zoom recipes, measured for Nano, Small and Large at one image per call. Every curve rises slowly while moving right, and the curve of a larger model starts above and to the left of the end of the curve of a smaller one.](../assets/tta/tta-ap-latency.svg){ loading=lazy }
+![Box AP against latency per image, one curve per model size. The left panel is predict with one image with V view rows. The right panel is predict with eight images and 8 × V total view rows, with time divided by eight. Solid curves are 1, 2, 4, 6 and 8 shift views, labelled at 2 and 8. Dashed curves with square markers are the 2-view and 4-view zoom recipes, measured for Nano, Small and Large at one image per call. Every curve rises slowly while moving right, and the curve of a larger model starts above and to the left of the end of the curve of a smaller one.](../assets/tta/tta-ap-latency.svg){ loading=lazy }
 
-**Memory.** The peak extra CUDA memory of one call grows with the rows in flight and stays small. For one image per call it rises from 7 MiB (Atto, 1 view) to 74 MiB at eight views, and from 146 MiB (2XLarge, 1 view) to 1364 MiB at eight views. For eight images per call it stops growing at 0.35 to 1.7 GiB once the pixel budget splits the views into several forwards.
+**Memory.** The peak extra CUDA memory of one call grows with the rows in flight and stays small. For one image per call it rises from 7 MiB (Atto, 1 view) to 74 MiB at eight views, and from 146 MiB (2XLarge, 1 view) to 1364 MiB at eight views. In the measured shift sweep with eight images per call, peak extra memory leveled off between 0.35 and 1.7 GiB as the scheduler split views across forwards.
 
 **Where the time goes.** At eight views the work around the network is about 2.1 ms per call whatever the model: placing the views 0.17 to 0.20 ms, mapping boxes back 0.47 to 0.50, decoding 0.48 to 0.52 and fusing 0.80 to 0.98. That is 26 percent of an Atto call and 4 percent of a 2XLarge call. The rest of the cost over plain batching is the larger canvas: V views of one image take 0.2 to 2.0 ms more than a batch of V images up to Medium, and 1.2 to 7.2 ms more for Large to 2XLarge.
 
@@ -151,7 +151,7 @@ TF32 matrix multiplies (`torch.set_float32_matmul_precision("high")`) sped the c
 
 - **Use TTA when the model size is fixed.** Offline labeling, evaluation, a model already at the largest size, or a case where a score that swings across the threshold is the problem. For a latency-limited service, a larger model gives more AP for the same time.
 - **Start with `TTAConfig()`.** It adds 2.0 to 4.0 points on Nano, Small and Large for 3 to 4 times the latency of one plain call. `TTAConfig(zoom=(1.25,))` is the cheaper step, +1.3 to +2.8 points for 2.1 to 2.3 times the latency.
-- **Use shift views when scores must be steady.** If the goal is that a score does not cross the threshold when an object moves, shift views are the ones aimed at that, and four of them cost about half of four zoom views. Eight shift views cut the score spread by about three quarters; the spread was not measured for zoom views.
+- **Measure steadiness at your threshold.** The study reports score spread for detections selected separately by each shift recipe. Measure threshold crossings on matched detections if those crossings affect your use case.
 - **Do not go past four views.** Four shift views give 84 to 92 percent of the eight-view gain, and eight shift + zoom views are worse than four.
 - **Re-tune the threshold.** Fused scores are lower than single-view ones. Pick `threshold` with TTA on.
 - **Check flip on your classes.** Skip it for anything with a left-right meaning.

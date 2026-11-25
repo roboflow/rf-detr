@@ -1167,8 +1167,9 @@ def _shift_candidates(
     ).cpu()
     candidates = []
     for image_rows in rows:
-        # Floor 0, the strict comparison of the plain path: a row whose score underflowed to 0 adds nothing to a mean.
-        kept_rows = image_rows[image_rows[:, 4] > 0.0].numpy()
+        # Mapping then clipping can collapse a padding-only box to the image boundary. Exclude it before fusion.
+        valid_boxes = (image_rows[:, 2] > image_rows[:, 0]) & (image_rows[:, 3] > image_rows[:, 1])
+        kept_rows = image_rows[(image_rows[:, 4] > 0.0) & valid_boxes].numpy()
         detections = Detections(
             xyxy=kept_rows[:, :4],
             confidence=kept_rows[:, 4],

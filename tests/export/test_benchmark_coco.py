@@ -497,7 +497,7 @@ class TestEvaluateCocoPredictions:
         whole = evaluate_coco_predictions(predictions, subset, "detect")
         part = evaluate_coco_predictions(predictions, subset, "detect", image_ids=[1, 2])
         assert (part.n_images, part.box_ap) == (2, pytest.approx(1.0))
-        assert (whole.n_images, whole.box_ap) == (3, pytest.approx(whole.box_ap)) and whole.box_ap < 1.0
+        assert (whole.n_images, whole.box_ap) == (3, pytest.approx(2 / 3))
 
     def test_all_empty_predictions_score_zero_without_an_evaluator(self, tmp_path: Path, mocker: MockerFixture) -> None:
         evaluator = mocker.patch("rfdetr.evaluation.coco_eval.CocoEvaluator", autospec=True)
@@ -509,6 +509,14 @@ class TestEvaluateCocoPredictions:
     def test_missing_prediction_is_refused(self, tmp_path: Path) -> None:
         with pytest.raises(KeyError):
             evaluate_coco_predictions({1: sv.Detections.empty()}, _write_coco(tmp_path), "detect")
+
+    @pytest.mark.parametrize("empty", [False, True])
+    def test_duplicate_image_ids_are_refused(self, tmp_path: Path, empty: bool) -> None:
+        """Reject repeated IDs before scoring so the reported count reflects the evaluated set."""
+        subset = _write_coco(tmp_path)
+        predictions = {1: sv.Detections.empty()} if empty else self._perfect_predictions()
+        with pytest.raises(ValueError, match="image_ids must be unique"):
+            evaluate_coco_predictions(predictions, subset, "detect", image_ids=[1, 1])
 
     def test_unknown_task_is_refused(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match="Unknown COCO task"):
