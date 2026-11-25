@@ -549,7 +549,8 @@ class TestSetup:
         train_config = _base_train_config(tmp_path, dataset_file="yolo", skip_unreadable_images=enabled)
         dm = _build_datamodule(train_config=train_config)
         build = mocker.patch(
-            "rfdetr.training.module_data.build_dataset", side_effect=lambda image_set, args, resolution: _fake_dataset(10)
+            "rfdetr.training.module_data.build_dataset",
+            side_effect=lambda image_set, args, resolution: _fake_dataset(10),
         )
 
         dm.setup(stage)

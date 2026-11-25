@@ -32,14 +32,13 @@ from rfdetr.datasets.yolo import YoloDetection
 from tests._markers import _requires_simplejpeg
 from tests.datasets.helpers import (
     _COCO_IMAGE_SIZES,
-    _Reader,
     _coco_box,
     _path_of,
+    _Reader,
     _write_coco_dataset,
     _write_yolo_dataset,
     patch_retry_sleep,
 )
-
 
 sleep = pytest.fixture(autouse=True)(patch_retry_sleep)
 

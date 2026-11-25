@@ -36,8 +36,7 @@ from rfdetr.datasets.io_utils import (
     read_image_with_retries,
 )
 from rfdetr.datasets.yolo import YoloDetection
-from tests.datasets.helpers import _Reader, _path_of, _write_coco_dataset, _write_yolo_dataset, patch_retry_sleep
-
+from tests.datasets.helpers import _path_of, _Reader, _write_coco_dataset, _write_yolo_dataset, patch_retry_sleep
 
 sleep = pytest.fixture(autouse=True)(patch_retry_sleep)
 
