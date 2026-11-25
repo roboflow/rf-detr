@@ -30,7 +30,13 @@ _BACKENDS = [
 
 
 def _sample() -> tuple[Image.Image, dict[str, Any]]:
-    """Return a 200x120 image with one box."""
+    """Return a 200x120 image with one box.
+
+    Examples:
+        >>> image, target = _sample()
+        >>> image.size, target["boxes"].tolist()
+        ((200, 120), [[20.0, 30.0, 80.0, 90.0]])
+    """
     target = {
         "boxes": torch.tensor([[20.0, 30.0, 80.0, 90.0]]),
         "labels": torch.tensor([1]),
@@ -81,6 +87,12 @@ def _box_aspects(image: torch.Tensor, target: dict[str, Any]) -> torch.Tensor:
 
 
 def _build(factory: Any, image_set: str, resolution: Any, **kwargs: Any) -> Any:
+    """Return ``factory(image_set, resolution, **kwargs)`` with its ``UserWarning`` messages silenced.
+
+    Examples:
+        >>> _build(lambda image_set, resolution, **kwargs: (image_set, resolution, kwargs), "val", (64, 96), p=1)
+        ('val', (64, 96), {'p': 1})
+    """
     with warnings.catch_warnings():
         warnings.simplefilter("ignore", UserWarning)
         return factory(image_set, resolution, **kwargs)
