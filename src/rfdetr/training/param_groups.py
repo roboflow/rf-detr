@@ -13,6 +13,7 @@ from bisect import bisect_right
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
 
+from deprecate import TargetMode, deprecated
 from torch import Tensor, nn
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import ChainedScheduler, LRScheduler, ReduceLROnPlateau, SequentialLR
@@ -26,6 +27,70 @@ logger = get_logger()
 #: ``TrainConfig`` settings that set a parameter group's learning rate or weight decay, read by
 #: :func:`_build_param_dicts` and the backbone's ``get_named_param_lr_pairs``.
 _PARAM_GROUP_SETTINGS = ("lr", "lr_encoder", "lr_vit_layer_decay", "lr_component_decay", "weight_decay")
+
+
+#: Call warning of the two unused ViT helpers below; pyDeprecate fills in the name and versions.
+_VIT_DECAY_HELPER_DEPRECATION = (
+    "`%(source_name)s` was deprecated in v%(deprecated_in)s and will be removed in v%(remove_in)s. RF-DETR does not"
+    " call it: its backbones use `get_dinov2_lr_decay_rate` and `get_dinov2_weight_decay_rate` from"
+    " `rfdetr.models.backbone.backbone`, which match DINOv2 parameter names."
+)
+
+
+@deprecated(  # type: ignore[untyped-decorator]  # pyDeprecate types its wrapper as Callable[..., Any]
+    target=TargetMode.NOTIFY,
+    deprecated_in="1.13.0",
+    remove_in="1.16.0",
+    template_mgs=_VIT_DECAY_HELPER_DEPRECATION,
+)
+def get_vit_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: int = 12) -> float:
+    """Calculate lr decay rate for different ViT blocks.
+
+    Deprecated in v1.13.0 and removed in v1.16.0.
+
+    Args:
+        name: parameter name.
+        lr_decay_rate: base lr decay rate.
+        num_layers: number of ViT blocks.
+
+    Returns:
+        lr decay rate for the given parameter.
+    """
+    # NOTE: near-duplicate of get_dinov2_lr_decay_rate in models/backbone/backbone.py (same formula,
+    # different layer-key pattern: this matches ".blocks.", that matches ".layer.").
+    # If updating this formula, update the sibling too.
+    layer_id = num_layers + 1
+    if name.startswith("backbone"):
+        if ".pos_embed" in name or ".patch_embed" in name:
+            layer_id = 0
+        elif ".blocks." in name and ".residual." not in name:
+            layer_id = int(name[name.find(".blocks.") :].split(".")[2]) + 1
+    logger.debug(f"name: {name}, lr_decay: {lr_decay_rate ** (num_layers + 1 - layer_id)}")
+    return lr_decay_rate ** (num_layers + 1 - layer_id)
+
+
+@deprecated(  # type: ignore[untyped-decorator]  # pyDeprecate types its wrapper as Callable[..., Any]
+    target=TargetMode.NOTIFY,
+    deprecated_in="1.13.0",
+    remove_in="1.16.0",
+    template_mgs=_VIT_DECAY_HELPER_DEPRECATION,
+)
+def get_vit_weight_decay_rate(name: str, weight_decay_rate: float = 1.0) -> float:
+    """Calculate weight decay rate for different ViT parameters.
+
+    Deprecated in v1.13.0 and removed in v1.16.0.
+
+    Args:
+        name: parameter name.
+        weight_decay_rate: base weight decay rate.
+
+    Returns:
+        weight decay rate for the given parameter.
+    """
+    if ("gamma" in name) or ("pos_embed" in name) or ("rel_pos" in name) or ("bias" in name) or ("norm" in name):
+        weight_decay_rate = 0.0
+    logger.debug(f"name: {name}, weight_decay rate: {weight_decay_rate}")
+    return weight_decay_rate
 
 
 def _hyperparameter_key(param_group: dict[str, Any]) -> tuple[tuple[str, str], ...]:

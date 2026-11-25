@@ -22,6 +22,8 @@ from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.training.param_groups import (
     _build_param_dicts,
     get_param_dict,
+    get_vit_lr_decay_rate,
+    get_vit_weight_decay_rate,
     regroup_unmerged_optimizer_state,
     regroup_unmerged_scheduler_kwargs,
 )
@@ -438,3 +440,24 @@ class TestUnmergedOptimizerStateMigration:
         regroup_unmerged_optimizer_state(checkpoint)
 
         assert checkpoint == before
+
+
+class TestDeprecatedVitDecayHelpers:
+    """The unused ViT decay helpers keep working and warn until they are removed."""
+
+    @pytest.mark.parametrize(
+        ("helper", "arguments", "expected"),
+        [
+            pytest.param(get_vit_lr_decay_rate, ("backbone.0.blocks.3.attn.weight", 0.5, 12), 0.5**9, id="lr"),
+            pytest.param(get_vit_weight_decay_rate, ("backbone.0.blocks.3.attn.bias", 0.1), 0.0, id="weight"),
+        ],
+    )
+    def test_helper_warns_and_returns_its_value(self, helper: Any, arguments: tuple[Any, ...], expected: float) -> None:
+        """A call warns with the removal version and still returns the decay rate."""
+        with pytest.warns(FutureWarning) as caught:
+            result = helper(*arguments)
+
+        message = str(caught[0].message)
+        assert "deprecated in v1.13.0" in message
+        assert "removed in v1.16.0" in message
+        assert result == pytest.approx(expected)
