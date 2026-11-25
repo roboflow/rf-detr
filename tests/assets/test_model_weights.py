@@ -6,25 +6,17 @@
 """Tests for the pretrained-weights registry and the model cache directory resolution."""
 
 import os
+import sys
 from pathlib import Path
 
 import pytest
 
 from rfdetr.assets import ModelWeightAsset, ModelWeights, ModelWeightsBase
-from rfdetr.assets.model_weights import get_model_cache_dir
+from rfdetr.assets.model_weights import _log_legacy_cache_hint, get_model_cache_dir
 
+_requires_windows = pytest.mark.skipif(sys.platform != "win32", reason="drive-less rooted paths are Windows-only")
 
-@pytest.fixture
-def isolated_home(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    """Provide an empty temporary home directory with all cache environment variables cleared."""
-    home = tmp_path / "home"
-    home.mkdir()
-    monkeypatch.setenv("HOME", str(home))
-    monkeypatch.setenv("USERPROFILE", str(home))
-    monkeypatch.delenv("RF_HOME", raising=False)
-    monkeypatch.delenv("ROBOFLOW_HOME", raising=False)
-    monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
-    return home
+_INVALID_XDG_CACHE_HOMES = [pytest.param("", id="empty"), "relative/cache", "./local_cache", "~/custom_xdg"]
 
 
 class TestGetModelCacheDir:
@@ -58,31 +50,89 @@ class TestGetModelCacheDir:
         expected = os.path.normpath(str(xdg_root / "roboflow" / "models"))
         assert get_model_cache_dir() == expected
 
-    def test_explicit_xdg_cache_home_wins_over_existing_legacy_dir(
+    def test_existing_legacy_dir_wins_while_xdg_target_is_absent(
         self, isolated_home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """An explicit valid XDG_CACHE_HOME takes precedence over an existing ~/.roboflow/models directory."""
+        """An existing ~/.roboflow/models is kept while the directory under a valid XDG_CACHE_HOME does not exist."""
+        legacy_dir = isolated_home / ".roboflow" / "models"
+        legacy_dir.mkdir(parents=True)
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg_cache"))
+        assert get_model_cache_dir() == os.path.normpath(str(legacy_dir))
+
+    def test_existing_xdg_target_wins_over_legacy_dir(
+        self, isolated_home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Once the directory under a valid XDG_CACHE_HOME exists it wins over an existing ~/.roboflow/models."""
         (isolated_home / ".roboflow" / "models").mkdir(parents=True)
-        xdg_root = tmp_path / "xdg_cache"
-        monkeypatch.setenv("XDG_CACHE_HOME", str(xdg_root))
-        expected = os.path.normpath(str(xdg_root / "roboflow" / "models"))
-        assert get_model_cache_dir() == expected
+        xdg_target = tmp_path / "xdg_cache" / "roboflow" / "models"
+        xdg_target.mkdir(parents=True)
+        monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "xdg_cache"))
+        assert get_model_cache_dir() == os.path.normpath(str(xdg_target))
 
-    def test_tilde_in_xdg_cache_home_is_expanded(self, isolated_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Tilde in XDG_CACHE_HOME expands to the user home before appending roboflow/models."""
-        monkeypatch.setenv("XDG_CACHE_HOME", "~/custom_xdg")
-        result = get_model_cache_dir()
-        assert result == os.path.normpath(str(isolated_home / "custom_xdg" / "roboflow" / "models"))
-        assert "~" not in result
+    def test_existing_default_target_wins_over_legacy_dir(self, isolated_home: Path) -> None:
+        """With XDG_CACHE_HOME unset, an existing ~/.cache/roboflow/models wins over ~/.roboflow/models."""
+        (isolated_home / ".roboflow" / "models").mkdir(parents=True)
+        default_target = isolated_home / ".cache" / "roboflow" / "models"
+        default_target.mkdir(parents=True)
+        assert get_model_cache_dir() == os.path.normpath(str(default_target))
 
-    @pytest.mark.parametrize("invalid_xdg", ["", "relative/cache", "./local_cache"])
-    def test_invalid_or_empty_xdg_cache_home_is_ignored(
+    @pytest.mark.parametrize("invalid_xdg", _INVALID_XDG_CACHE_HOMES)
+    def test_invalid_xdg_cache_home_is_ignored(
         self, isolated_home: Path, monkeypatch: pytest.MonkeyPatch, invalid_xdg: str
     ) -> None:
-        """Empty or relative XDG_CACHE_HOME values are ignored per the XDG Base Directory Specification."""
+        """Empty, relative or tilde-prefixed XDG_CACHE_HOME values are ignored as the XDG specification requires."""
         monkeypatch.setenv("XDG_CACHE_HOME", invalid_xdg)
         expected = os.path.normpath(str(isolated_home / ".cache" / "roboflow" / "models"))
         assert get_model_cache_dir() == expected
+
+    @pytest.mark.parametrize("invalid_xdg", _INVALID_XDG_CACHE_HOMES)
+    def test_invalid_xdg_cache_home_falls_back_to_legacy_dir(
+        self, isolated_home: Path, monkeypatch: pytest.MonkeyPatch, invalid_xdg: str
+    ) -> None:
+        """An ignored XDG_CACHE_HOME leaves an existing ~/.roboflow/models in use."""
+        legacy_dir = isolated_home / ".roboflow" / "models"
+        legacy_dir.mkdir(parents=True)
+        monkeypatch.setenv("XDG_CACHE_HOME", invalid_xdg)
+        assert get_model_cache_dir() == os.path.normpath(str(legacy_dir))
+
+    @_requires_windows
+    def test_drive_less_rooted_xdg_cache_home_is_ignored(
+        self, isolated_home: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A rooted value without a drive letter is not absolute on any Python version, so it is ignored."""
+        monkeypatch.setenv("XDG_CACHE_HOME", "/cache")
+        expected = os.path.normpath(str(isolated_home / ".cache" / "roboflow" / "models"))
+        assert get_model_cache_dir() == expected
+
+    @pytest.mark.parametrize("env_var", ["RF_HOME", "ROBOFLOW_HOME"])
+    def test_explicit_home_wins_over_existing_legacy_dir(
+        self, isolated_home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, env_var: str
+    ) -> None:
+        """RF_HOME and ROBOFLOW_HOME stay the exact directory even when ~/.roboflow/models exists."""
+        (isolated_home / ".roboflow" / "models").mkdir(parents=True)
+        explicit_dir = tmp_path / "explicit_home"
+        monkeypatch.setenv(env_var, str(explicit_dir))
+        assert get_model_cache_dir() == str(explicit_dir)
+
+    def test_legacy_hint_is_logged_once_per_directory_pair(self, isolated_home: Path, mocker) -> None:
+        """The legacy-cache hint is logged a single time however often the directory is resolved."""
+        _log_legacy_cache_hint.cache_clear()
+        logger = mocker.patch("rfdetr.assets.model_weights.logger")
+        (isolated_home / ".roboflow" / "models").mkdir(parents=True)
+
+        get_model_cache_dir()
+        get_model_cache_dir()
+
+        logger.info.assert_called_once()
+
+    def test_no_legacy_hint_without_legacy_dir(self, isolated_home: Path, mocker) -> None:
+        """Nothing is logged when ~/.roboflow/models does not exist."""
+        _log_legacy_cache_hint.cache_clear()
+        logger = mocker.patch("rfdetr.assets.model_weights.logger")
+
+        get_model_cache_dir()
+
+        logger.info.assert_not_called()
 
     def test_custom_rf_home_absolute_path(
         self, isolated_home: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

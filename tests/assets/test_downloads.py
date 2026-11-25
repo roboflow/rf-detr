@@ -319,6 +319,26 @@ class TestMaybeDownloadPretrainWeightsCacheDir:
 
         assert downloaded == [str(tmp_path / "rf-detr-base.pth")]
 
+    def test_bare_filename_resolved_to_xdg_default_without_rf_home(self, isolated_home, monkeypatch):
+        """With no RF_HOME, ROBOFLOW_HOME, XDG_CACHE_HOME or legacy directory, a bare filename lands in ~/.cache."""
+        downloaded = []
+        monkeypatch.setattr("rfdetr.detr.download_pretrain_weights", lambda p, **kw: downloaded.append(p))
+
+        self._make_rfdetr("rf-detr-nano.pth").maybe_download_pretrain_weights()
+
+        assert downloaded == [str(isolated_home / ".cache" / "roboflow" / "models" / "rf-detr-nano.pth")]
+
+    def test_bare_filename_resolved_to_existing_legacy_dir(self, isolated_home, monkeypatch):
+        """With an existing ~/.roboflow/models and no overrides, a bare filename keeps resolving there."""
+        legacy_dir = isolated_home / ".roboflow" / "models"
+        legacy_dir.mkdir(parents=True)
+        downloaded = []
+        monkeypatch.setattr("rfdetr.detr.download_pretrain_weights", lambda p, **kw: downloaded.append(p))
+
+        self._make_rfdetr("rf-detr-nano.pth").maybe_download_pretrain_weights()
+
+        assert downloaded == [str(legacy_dir / "rf-detr-nano.pth")]
+
     def test_path_with_directory_used_as_is(self, monkeypatch, tmp_path):
         """Path containing a directory separator is not modified by RF_HOME."""
         monkeypatch.setenv("RF_HOME", str(tmp_path / "should_not_be_used"))
