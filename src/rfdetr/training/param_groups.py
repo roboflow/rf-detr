@@ -13,6 +13,7 @@ from bisect import bisect_right
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any, cast
 
+from deprecate import TargetMode, deprecated
 from torch import Tensor, nn
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import ChainedScheduler, LRScheduler, ReduceLROnPlateau, SequentialLR
@@ -28,6 +29,22 @@ logger = get_logger()
 _PARAM_GROUP_SETTINGS = ("lr", "lr_encoder", "lr_vit_layer_decay", "lr_component_decay", "weight_decay")
 
 
+#: Call warning of the two unused ViT helpers below; pyDeprecate fills in the name and versions.
+_VIT_DECAY_HELPER_DEPRECATION = (
+    "`%(source_name)s` was deprecated in v%(deprecated_in)s and will be removed in v%(remove_in)s. RF-DETR does not"
+    " call it: its backbones use `get_dinov2_lr_decay_rate` and `get_dinov2_weight_decay_rate` from"
+    " `rfdetr.models.backbone.backbone`, which match DINOv2 parameter names."
+)
+
+
+@deprecated(  # type: ignore[untyped-decorator]  # pyDeprecate types its wrapper as Callable[..., Any]
+    target=TargetMode.NOTIFY,
+    deprecated_in="1.13.0",
+    remove_in="1.16.0",
+    template_mgs=_VIT_DECAY_HELPER_DEPRECATION,
+    update_docstring=True,
+    docstring_style="mkdocs",
+)
 def get_vit_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: int = 12) -> float:
     """Calculate lr decay rate for different ViT blocks.
 
@@ -52,6 +69,14 @@ def get_vit_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: int
     return lr_decay_rate ** (num_layers + 1 - layer_id)
 
 
+@deprecated(  # type: ignore[untyped-decorator]  # pyDeprecate types its wrapper as Callable[..., Any]
+    target=TargetMode.NOTIFY,
+    deprecated_in="1.13.0",
+    remove_in="1.16.0",
+    template_mgs=_VIT_DECAY_HELPER_DEPRECATION,
+    update_docstring=True,
+    docstring_style="mkdocs",
+)
 def get_vit_weight_decay_rate(name: str, weight_decay_rate: float = 1.0) -> float:
     """Calculate weight decay rate for different ViT parameters.
 

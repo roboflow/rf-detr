@@ -35,6 +35,7 @@ from rfdetr._prediction.core import (
     _resolve_patch_size,
     _validate_shape_dims,
 )
+from rfdetr._prediction.tta import shift_tta_config
 from rfdetr._prediction.types import _ImageInput, _ThresholdInput
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
@@ -3175,6 +3176,8 @@ class RFDETR:
             runtime_info={"backend": "pytorch", "device": str(self.model.device)},
             # A compiled snapshot runs only the batch size it was compiled for; eager models take any.
             batch_size=self._optimized_batch_size if self._optimized_has_been_compiled else None,
+            # An optimized snapshot enforces its square resolution on every batch, compiled or not.
+            fixed_resolution=self._optimized_resolution if self._is_optimized_for_inference else None,
         )
 
     def _run_inference_batch(self, batch_tensor: torch.Tensor) -> dict[str, torch.Tensor]:
@@ -3399,7 +3402,14 @@ class RFDETR:
         if isinstance(images, torch.Tensor) and images.ndim == 4:
             images = list(images.unbind(0))
         return _predict_batch(
-            self._prediction_context, images, threshold, shape, patch_size, include_source_image, antialias, shift_tta
+            self._prediction_context,
+            images,
+            threshold,
+            shape,
+            patch_size,
+            include_source_image,
+            antialias,
+            tta=shift_tta_config(shift_tta),
         )
 
     def deploy_to_roboflow(
