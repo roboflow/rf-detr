@@ -1402,7 +1402,9 @@ class TrainConfig(BaseConfig):
     # Opt-in, training split only. A failed image read (missing, truncated or I/O-failed file) is retried, and an
     # image that stays unreadable is replaced by the next readable sample and logged as an error, so one bad file
     # does not end the run. False (the default) raises on the first failed read. Validation and test splits always
-    # raise.
+    # raise. Applies to COCO-format and YOLO datasets only, not WebDataset shards. A YOLO dataset scans image headers
+    # once while it is built; a file that goes bad later is handled by the read-time substitution. See
+    # docs/learn/train/training-parameters.md for the retry behaviour.
     skip_unreadable_images: bool = False
     augmentation_backend: AugmentationBackend | Literal["cpu", "auto"] = "cpu"
     save_dataset_grids: bool = False
