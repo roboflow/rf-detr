@@ -42,11 +42,11 @@ _VIT_DECAY_HELPER_DEPRECATION = (
     deprecated_in="1.13.0",
     remove_in="1.16.0",
     template_mgs=_VIT_DECAY_HELPER_DEPRECATION,
+    update_docstring=True,
+    docstring_style="mkdocs",
 )
 def get_vit_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: int = 12) -> float:
     """Calculate lr decay rate for different ViT blocks.
-
-    Deprecated in v1.13.0 and removed in v1.16.0.
 
     Args:
         name: parameter name.
@@ -74,11 +74,11 @@ def get_vit_lr_decay_rate(name: str, lr_decay_rate: float = 1.0, num_layers: int
     deprecated_in="1.13.0",
     remove_in="1.16.0",
     template_mgs=_VIT_DECAY_HELPER_DEPRECATION,
+    update_docstring=True,
+    docstring_style="mkdocs",
 )
 def get_vit_weight_decay_rate(name: str, weight_decay_rate: float = 1.0) -> float:
     """Calculate weight decay rate for different ViT parameters.
-
-    Deprecated in v1.13.0 and removed in v1.16.0.
 
     Args:
         name: parameter name.
