@@ -46,6 +46,18 @@ Put the assignment at module level, not inside an `if __name__ == "__main__":` b
 
 ---
 
+## Unreleased: `get_vit_lr_decay_rate` and `get_vit_weight_decay_rate` are deprecated
+
+### Deprecated in v1.13 → Remove in v1.16
+
+!!! note "Deprecated: unused ViT decay helpers"
+
+    `get_vit_lr_decay_rate` and `get_vit_weight_decay_rate` in `rfdetr.training.param_groups` are deprecated in v1.13.0 and will be removed in v1.16.0, following the three-minor-release deprecation window. Both still return the same values until then and emit a `FutureWarning` on the first call.
+
+    RF-DETR itself never called them. Its optimizer groups use `get_dinov2_lr_decay_rate` and `get_dinov2_weight_decay_rate` from `rfdetr.models.backbone.backbone`, which match DINOv2 parameter names (`.layer.` and `embeddings`). The deprecated helpers match the `.blocks.`, `.pos_embed` and `.patch_embed` names of other ViT implementations, so they are not interchangeable: if your code needs that naming, copy the function into your project.
+
+---
+
 ## Upgrade 1.11 → 1.12
 
 For new image-prediction integrations, use the shared [`RFDETRInference`](../learn/inference.md) API with a live native model, checkpoint, or supported full export. It returns decoded Supervision results and handles preprocessing; keep format-specific session APIs for raw-runtime workflows.
