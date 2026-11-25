@@ -49,6 +49,7 @@ For newly added or updated notebooks, write markdown cells in plain, notebook-po
 
 | File                                    | Card title                                             | Version |
 | --------------------------------------- | ------------------------------------------------------ | ------- |
+| `tta-latency-accuracy.ipynb`            | TTA Views: Latency, Memory and Accuracy                | v1.13.0 |
 | `coco-accuracy.ipynb`                   | Reproduce the COCO Accuracy of Pretrained Models       | v1.13.0 |
 | `custom-augmentations.ipynb`            | Custom Augmentations and Live Training Progress        | v1.5.0  |
 | `custom-optimizer-scheduler.ipynb`      | Custom Optimizer and LR Scheduler                      | v1.9.0  |

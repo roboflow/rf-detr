@@ -47,6 +47,7 @@ nav:
           - Measuring Latency: learn/run/latency.md
           - Videos and Streams: learn/run/videos-and-streams.md
           - Inference: learn/inference.md
+          - Test-Time Augmentation: learn/tta.md
       - Train Model: learn/train/index.md
       - Export Model: exports/index.md
       - Deploy Model: learn/deploy.md
@@ -62,6 +63,7 @@ nav:
       - Custom Training API: learn/train/customization.md
   - Inference & Export:
       - Inference: learn/inference.md
+      - Test-Time Augmentation: learn/tta.md
       - Export Model: exports/index.md
       - Export Basics: exports/basics.md
       - Advanced Export: exports/advanced.md
