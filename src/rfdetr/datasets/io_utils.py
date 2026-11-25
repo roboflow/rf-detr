@@ -20,6 +20,7 @@ that :func:`decode_pil_image` avoids for its own callers, a scope call deferred 
 
 from __future__ import annotations
 
+import builtins
 import io
 import json
 import struct
@@ -316,14 +317,17 @@ def _decode_with_pillow(
             errors = {
                 "DecompressionBombError": Image.DecompressionBombError,
                 "UnidentifiedImageError": UnidentifiedImageError,
-                "FileNotFoundError": FileNotFoundError,
-                "PermissionError": PermissionError,
-                "OSError": OSError,
                 # A corrupt file Pillow reports while loading the pixels, raised as ``OSError`` as on the path below.
                 "SyntaxError": OSError,
                 "ValueError": ValueError,
             }
-            raise errors.get(header["error"], RuntimeError)(header["message"])
+            error_type = errors.get(header["error"])
+            if error_type is None:
+                # Built-in ``OSError`` subclasses keep their type, so callers that catch ``OSError`` see them.
+                builtin = getattr(builtins, header["error"], None)
+                is_os_error = isinstance(builtin, type) and issubclass(builtin, OSError)
+                error_type = builtin if is_os_error else RuntimeError
+            raise error_type(header["message"])
         warning_categories = {
             "DecompressionBombWarning": Image.DecompressionBombWarning,
             "RuntimeWarning": RuntimeWarning,

@@ -221,7 +221,16 @@ class TestBrokenPngChunk:
 
     @pytest.mark.parametrize(
         ("error_name", "expected"),
-        [("SyntaxError", OSError), ("FileNotFoundError", FileNotFoundError), ("PermissionError", PermissionError)],
+        [
+            ("SyntaxError", OSError),
+            ("OSError", OSError),
+            ("FileNotFoundError", FileNotFoundError),
+            ("PermissionError", PermissionError),
+            ("TimeoutError", TimeoutError),
+            ("IsADirectoryError", IsADirectoryError),
+            ("NotADirectoryError", NotADirectoryError),
+            ("ConnectionResetError", ConnectionResetError),
+        ],
     )
     def test_decoder_process_error_is_raised_as_an_os_error(
         self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, error_name: str, expected: type[OSError]
@@ -236,6 +245,35 @@ class TestBrokenPngChunk:
             decode_pil_image_bytes(_two_idat_png()[0], max_image_pixels=10_000)
 
         assert type(error.value) is expected
+
+    @pytest.mark.parametrize("error_name", ["KeyError", "MemoryError", "exit", "NoSuchError"])
+    def test_decoder_process_error_of_another_type_is_a_runtime_error(
+        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, error_name: str
+    ) -> None:
+        """Only ``OSError`` types are restored by name; any other name, built-in or not, stays a ``RuntimeError``."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1_000)
+        response = json.dumps({"error": error_name, "message": "worker failure"}).encode("utf-8") + b"\n"
+        mocker.patch.object(
+            io_utils.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout=response, stderr=b"")
+        )
+
+        with pytest.raises(RuntimeError, match="worker failure"):
+            decode_pil_image_bytes(_two_idat_png()[0], max_image_pixels=10_000)
+
+    def test_decoder_process_substitutes_a_directory_in_place_of_an_image(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The decoder process opens a non-RGB read itself, so its ``IsADirectoryError`` must reach the substitution."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1_000)
+        paths = [tmp_path / "directory.png", tmp_path / "image.png"]
+        paths[0].mkdir()
+        Image.new("L", (4, 4)).save(paths[1])
+
+        index, _ = read_image_or_substitute(
+            lambda i: decode_pil_image(paths[i], max_image_pixels=10_000, num_channels=1), 0, 2, lambda i: paths[i]
+        )
+
+        assert index == 1
 
     def test_coco_sample_with_a_broken_chunk_is_substituted(self, tmp_path: Path) -> None:
         annotation_file = _write_coco_dataset(tmp_path)
