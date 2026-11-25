@@ -125,6 +125,19 @@ class TestGetModelCacheDir:
 
         logger.info.assert_called_once()
 
+    def test_legacy_hint_names_the_ignored_legacy_dir_when_target_exists(self, isolated_home: Path, mocker) -> None:
+        """When the XDG default exists beside a legacy directory, the single hint says the legacy one is ignored."""
+        _log_legacy_cache_hint.cache_clear()
+        logger = mocker.patch("rfdetr.assets.model_weights.logger")
+        (isolated_home / ".roboflow" / "models").mkdir(parents=True)
+        (isolated_home / ".cache" / "roboflow" / "models").mkdir(parents=True)
+
+        get_model_cache_dir()
+        get_model_cache_dir()
+
+        logger.info.assert_called_once()
+        assert "ignored" in logger.info.call_args.args[0]
+
     def test_no_legacy_hint_without_legacy_dir(self, isolated_home: Path, mocker) -> None:
         """Nothing is logged when ~/.roboflow/models does not exist."""
         _log_legacy_cache_hint.cache_clear()
