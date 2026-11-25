@@ -18,18 +18,26 @@ import supervision as sv
 import torch
 from pytest_mock import MockerFixture
 
-from rfdetr import ClassThresholds, RFDETRSegNano
-from rfdetr._prediction import core
-from rfdetr._prediction.shift_tta import (
+from rfdetr import ClassThresholds, RFDETRInference, RFDETRNano, RFDETRSegNano
+from rfdetr._prediction import core, pipelines
+from rfdetr._prediction.tta import (
+    DEFAULT_ZOOM,
+    TTAConfig,
+    _View,
+    build_views,
+    canvas_shape,
     fuse_passes,
     group_passes,
     map_to_image,
-    place_on_canvas,
+    place_view,
     shift_offsets,
+    shift_tta_config,
     validate_shift_tta,
+    view_count,
     vote_masks,
 )
 from rfdetr.models.postprocess import PostProcess
+from tests._markers import _requires_cuda
 from tests.inference.helpers import _DummyModel, _DummyRFDETR
 
 _PATCH = 16
@@ -161,7 +169,8 @@ def _multi_query_run(batch: torch.Tensor) -> dict[str, torch.Tensor]:
     members of a group disagree on many pixels.
 
     Examples:
-        >>> canvas = place_on_canvas(torch.full((1, 3, _SIDE, _SIDE), 0.5), offset=_MISSING_OFFSET, margin=_PATCH)
+        >>> batch = torch.full((1, 3, _SIDE, _SIDE), 0.5)
+        >>> canvas = place_view(batch, _View(offset=_MISSING_OFFSET), (_SIDE + _PATCH, _SIDE + _PATCH))
         >>> outputs = _multi_query_run(canvas)
         >>> tuple(outputs["pred_masks"].shape), torch.sigmoid(outputs["pred_logits"]).flatten().gt(0).tolist()
         ((1, 4, 20, 20), [True, True, False, True])
@@ -225,7 +234,9 @@ def _predict(images: Any, threshold: Any = 0.0, shift_tta: int = 1) -> Any:
         >>> len(_predict(_square_image(16)))
         1
     """
-    return core._predict_batch(_grid_sensitive_context, images, threshold, None, None, True, False, shift_tta)
+    return core._predict_batch(
+        _grid_sensitive_context, images, threshold, None, None, True, False, tta=shift_tta_config(shift_tta)
+    )
 
 
 class TestShiftTTAHelpers:
@@ -249,7 +260,7 @@ class TestShiftTTAHelpers:
 
     def test_canvas_holds_the_whole_batch_at_the_offset(self) -> None:
         batch = torch.rand(2, 3, 8, 6)
-        canvas = place_on_canvas(batch, offset=3, margin=4)
+        canvas = place_view(batch, _View(offset=3), (12, 10))
         assert canvas.shape == (2, 3, 12, 10)
         torch.testing.assert_close(canvas[:, :, 3:11, 3:9], batch)
         assert canvas.sum() == pytest.approx(batch.sum().item())
@@ -262,7 +273,9 @@ class TestShiftTTAHelpers:
         canvas_box = [(x0 + x1) / 2 + offset, (y0 + y1) / 2 + offset, x1 - x0, y1 - y0]
         scale = torch.tensor([w + margin, h + margin, w + margin, h + margin])
         outputs = {"pred_boxes": (torch.tensor(canvas_box) / scale).view(1, 1, 4)}
-        mapped = map_to_image(outputs, offset, (h, w), margin)["pred_boxes"].view(4)
+        mapped = map_to_image(outputs, _View(offset=offset), (h, w), (h + margin, w + margin), None)["pred_boxes"].view(
+            4
+        )
         expected = torch.tensor([(x0 + x1) / 2 / w, (y0 + y1) / 2 / h, (x1 - x0) / w, (y1 - y0) / h])
         torch.testing.assert_close(mapped, expected)
 
@@ -270,7 +283,8 @@ class TestShiftTTAHelpers:
         """Mask logits are resampled from the image's part of the canvas, at the same resolution per pixel."""
         canvas_logits = torch.zeros(1, 1, 20, 20)
         canvas_logits[..., 2:18, 2:18] = 1.0  # the image's region, for offset 8 and image side 64 at 1/4 resolution
-        mapped = map_to_image({"pred_boxes": torch.zeros(1, 1, 4), "pred_masks": canvas_logits}, 8, (64, 64), 16)
+        outputs = {"pred_boxes": torch.zeros(1, 1, 4), "pred_masks": canvas_logits}
+        mapped = map_to_image(outputs, _View(offset=8), (64, 64), (80, 80), (16, 16))
         assert mapped["pred_masks"].shape == (1, 1, 16, 16)
         torch.testing.assert_close(mapped["pred_masks"], torch.ones(1, 1, 16, 16))
 
@@ -377,11 +391,17 @@ class TestShiftTTAMaskFusion:
         as the per-pass post-processing built them before fusion: bilinear resize to the image, ``> 0``, then
         ``mean >= 0.5`` over the members that found the object.
         """
-        decode = mocker.spy(core, "_shift_candidates")
+        # Each pass's outputs after `map_to_image`, recorded as returned: `spy_return_list` needs pytest-mock 3.13.
+        passes = []
+        real_map = core.map_to_image
+
+        def record(*args: object, **kwargs: object) -> dict[str, torch.Tensor]:
+            passes.append(real_map(*args, **kwargs))
+            return passes[-1]
+
+        mocker.patch.object(core, "map_to_image", side_effect=record)
         context, image = partial(_grid_sensitive_context, _multi_query_run), torch.full((3, _SIDE, _SIDE), 0.5)
-        detections = core._predict_batch(context, image, 0.0, None, None, False, False, 3)
-        # Each pass's outputs after `map_to_image`, read from call args: `spy_return_list` needs pytest-mock 3.13.
-        passes = [call.args[1] for call in decode.call_args_list]
+        detections = core._predict_batch(context, image, 0.0, None, None, False, False, tta=shift_tta_config(3))
         expected, strict = [], []
         for query in range(len(_OBJECTS)):
             members = [
@@ -409,7 +429,7 @@ class TestShiftTTAMaskFusion:
         """Each resize call takes one kept group's member planes at mask-head size, never more than the passes."""
         resize = mocker.spy(torch.nn.functional, "interpolate")
         context, image = partial(_grid_sensitive_context, _multi_query_run), torch.full((3, _SIDE, _SIDE), 0.5)
-        core._predict_batch(context, image, 0.0, None, None, False, False, 3)
+        core._predict_batch(context, image, 0.0, None, None, False, False, tta=shift_tta_config(3))
         mask_inputs = [tuple(call.args[0].shape) for call in resize.call_args_list if call.args[0].shape[1] == 1]
         # Kept groups by fused score: three of 3 members, then the one a pass missed, of 2; 11 planes in all.
         assert mask_inputs == [(3, 1, 16, 16), (3, 1, 16, 16), (3, 1, 16, 16), (2, 1, 16, 16)]
@@ -421,7 +441,7 @@ class TestShiftTTAMaskFusion:
         """The shifted path never builds per-pass source-size masks through ``PostProcess._postprocess_masks``."""
         postprocess_masks = mocker.spy(PostProcess, "_postprocess_masks")
         context, image = partial(_grid_sensitive_context, _multi_query_run), torch.full((3, _SIDE, _SIDE), 0.5)
-        core._predict_batch(context, image, 0.0, None, None, False, False, shift_tta)
+        core._predict_batch(context, image, 0.0, None, None, False, False, tta=shift_tta_config(shift_tta))
         assert postprocess_masks.called is called
 
 
@@ -459,7 +479,9 @@ class TestShiftTTAPredict:
         A bar at 0.5 passes although 0.2 is below 0.5 / 2, and one at 0.56 drops the object although a pass scored 0.9.
         """
         context = partial(_grid_sensitive_context, _half_patch_run)
-        detections = core._predict_batch(context, _square_image(16), threshold, None, None, False, False, 2)
+        detections = core._predict_batch(
+            context, _square_image(16), threshold, None, None, False, False, tta=shift_tta_config(2)
+        )
         np.testing.assert_allclose(detections.confidence, [0.55] if kept else [], rtol=1e-6)
 
     @pytest.mark.parametrize(("threshold", "kept"), [(0.4, 1), (0.6, 0)])
@@ -486,7 +508,7 @@ class TestShiftTTAPredict:
     def test_no_detection_keeps_the_plain_schema(self, run: Any, threshold: float) -> None:
         """An image with no kept detection still carries ``class_name``, ``source_shape`` and a ``(0, H, W)`` mask."""
         context, image = partial(_grid_sensitive_context, run), _square_image(16)
-        detections = core._predict_batch(context, image, threshold, None, None, False, False, 2)
+        detections = core._predict_batch(context, image, threshold, None, None, False, False, tta=shift_tta_config(2))
         plain = core._predict_batch(context, image, threshold, None, None, False, False)
         assert len(detections) == 0
         assert detections.data.keys() == plain.data.keys() == {"class_name", "source_shape"}
@@ -501,7 +523,7 @@ class TestShiftTTAPredict:
         shifted = mocker.spy(core, "_predict_shifted")
         run = mocker.Mock(wraps=_grid_sensitive_run)
         context = partial(_grid_sensitive_context, run)
-        core._predict_batch(context, _square_image(20), 0.0, None, None, False, False, shift_tta)
+        core._predict_batch(context, _square_image(20), 0.0, None, None, False, False, tta=shift_tta_config(shift_tta))
         assert run.call_count == passes
         assert shifted.called is (shift_tta != 1)
 
@@ -523,13 +545,17 @@ class TestShiftTTAClassThresholds:
     )
     def test_each_class_is_held_to_its_own_bar(self, thresholds: ClassThresholds, kept: list[str]) -> None:
         """Rows come back by fused score, ``a`` (0.55) before ``b`` (0.4); a class under its own bar is dropped."""
-        detections = core._predict_batch(_two_class_context, _square_image(16), thresholds, None, None, False, False, 2)
+        detections = core._predict_batch(
+            _two_class_context, _square_image(16), thresholds, None, None, False, False, tta=shift_tta_config(2)
+        )
         assert detections.data["class_name"].tolist() == kept
 
     def test_fused_scores_are_means_over_the_passes_below_the_lowest_bar(self) -> None:
         """A pass of ``a`` scoring 0.2 is under the lowest bar, 0.3, and still counts toward the 0.55 mean."""
         thresholds = ClassThresholds({"a": 0.5, "b": 0.3})
-        detections = core._predict_batch(_two_class_context, _square_image(16), thresholds, None, None, False, False, 2)
+        detections = core._predict_batch(
+            _two_class_context, _square_image(16), thresholds, None, None, False, False, tta=shift_tta_config(2)
+        )
         np.testing.assert_allclose(detections.confidence, [0.55, 0.4], rtol=1e-6)
         assert detections.class_id.tolist() == [0, 1]
 
@@ -537,18 +563,36 @@ class TestShiftTTAClassThresholds:
 class TestShiftTTAValidation:
     """``shift_tta`` is refused before any image is read, whatever the value compares equal to."""
 
-    @pytest.mark.parametrize("value", [True, 1.0, 0, _PATCH + 1])
-    def test_rejects_before_any_image_is_read(self, value: object, mocker: MockerFixture) -> None:
+    @pytest.mark.parametrize("value", [True, 1.0, 0, -1, "2", None])
+    def test_config_rejects_values_that_are_not_an_integer_from_one(self, value: object) -> None:
+        with pytest.raises(ValueError, match="shift_tta must be an integer from 1 to the patch size"):
+            shift_tta_config(value)
+
+    @pytest.mark.parametrize(("value", "views"), [(1, None), (2, 2), (4, 4)])
+    def test_config_is_the_plain_path_for_one_and_shift_only_views_above(self, value: int, views: int | None) -> None:
+        config = shift_tta_config(value)
+        assert config is None if views is None else view_count(config) == views and config.zoom == ()
+
+    def test_rejects_a_shift_above_the_patch_size_before_any_image_is_read(self, mocker: MockerFixture) -> None:
         decode = mocker.spy(core, "_decode_prefetched_jpegs")
         with pytest.raises(ValueError, match="shift_tta must be an integer from 1 to the patch size"):
-            core._predict_batch(_grid_sensitive_context, _square_image(16), 0.5, None, None, False, False, value)
+            core._predict_batch(
+                _grid_sensitive_context,
+                _square_image(16),
+                0.5,
+                None,
+                None,
+                False,
+                False,
+                tta=TTAConfig(shift=_PATCH + 1),
+            )
         decode.assert_not_called()
 
     def test_refuses_keypoint_models_before_any_image_is_read(self, mocker: MockerFixture) -> None:
         context = partial(replace, _grid_sensitive_context(), num_keypoints_per_class=[17])
         decode = mocker.spy(core, "_decode_prefetched_jpegs")
         with pytest.raises(ValueError, match="does not support keypoint models"):
-            core._predict_batch(context, _square_image(16), 0.5, None, None, False, False, 2)
+            core._predict_batch(context, _square_image(16), 0.5, None, None, False, False, tta=TTAConfig(shift=2))
         decode.assert_not_called()
 
 
@@ -578,3 +622,375 @@ class TestShiftTTAPublicAPI:
         assert detections.mask.dtype == np.bool_
         assert len(detections.mask) == len(detections) == len(detections.data["class_name"])
         assert detections.mask.any(axis=(1, 2)).any()
+
+
+def _predict_tta(images: Any, tta: TTAConfig, threshold: Any = 0.0, run: Any = _grid_sensitive_run) -> Any:
+    """Predict with the grid-sensitive model through ``tta=``, one image per call.
+
+    Examples:
+        >>> len(_predict_tta(_square_image(16), TTAConfig(shift=2)))
+        1
+    """
+    return core._predict_batch(
+        partial(_grid_sensitive_context, run), images, threshold, None, None, True, False, tta=tta
+    )
+
+
+class TestViews:
+    """The views a ``TTAConfig`` expands to."""
+
+    @pytest.mark.parametrize(
+        ("config", "count"),
+        [
+            (TTAConfig(zoom=()), 1),
+            (TTAConfig(), 4),
+            pytest.param(TTAConfig(shift=1), 4, id="explicit-default-shift"),
+            pytest.param(TTAConfig(flip=False), 4, id="explicit-default-flip"),
+            (TTAConfig(shift=4), 4),
+            (TTAConfig(flip=True), 2),
+            (TTAConfig(zoom=(1.25,)), 2),
+            (TTAConfig(shift=4, zoom=(0.75, 1.5)), 6),
+            (TTAConfig(shift=2, flip=True, zoom=(1.5,)), 6),
+        ],
+    )
+    def test_view_count_adds_shifts_and_zooms_then_doubles_for_flip(self, config: TTAConfig, count: int) -> None:
+        assert view_count(config) == count
+        assert len(build_views(config, _PATCH, (_SIDE, _SIDE))) == count
+
+    def test_shift_only_views_are_todays_offsets(self) -> None:
+        views = build_views(TTAConfig(shift=4), _PATCH, (_SIDE, _SIDE))
+        assert [(v.scale, v.offset, v.flip) for v in views] == [(1.0, o, False) for o in shift_offsets(_PATCH, 4)]
+
+    def test_flip_repeats_every_view_mirrored_after_the_plain_ones(self) -> None:
+        views = build_views(TTAConfig(shift=2, flip=True, zoom=(1.5,)), _PATCH, (_SIDE, _SIDE))
+        assert [v.flip for v in views] == [False] * 3 + [True] * 3
+        assert [(v.scale, v.offset) for v in views[:3]] == [(v.scale, v.offset) for v in views[3:]]
+
+    def test_empty_zoom_without_shift_or_flip_is_the_plain_path(self) -> None:
+        assert len(build_views(TTAConfig(zoom=()), _PATCH, (_SIDE, _SIDE))) == 1
+
+    def test_default_config_is_the_plain_image_and_the_default_zooms(self) -> None:
+        config = TTAConfig()
+        assert config.zoom == DEFAULT_ZOOM
+        views = build_views(config, _PATCH, (_SIDE, _SIDE))
+        assert [(v.scale, v.offset, v.flip) for v in views] == [(1.0, 0, False)] + [(z, 0, False) for z in DEFAULT_ZOOM]
+
+    @pytest.mark.parametrize("config", [TTAConfig(shift=2), TTAConfig(flip=True), TTAConfig(shift=2, flip=True)])
+    def test_naming_shift_or_flip_holds_no_default_zoom(self, config: TTAConfig) -> None:
+        assert config.zoom == ()
+
+    def test_explicit_zoom_replaces_the_default_next_to_shift_and_flip(self) -> None:
+        assert TTAConfig(shift=2, flip=True, zoom=(1.25,)).zoom == (1.25,)
+
+    def test_zoom_that_places_the_image_at_the_base_size_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="the size of another view"):
+            build_views(TTAConfig(zoom=(0.999,)), _PATCH, (_SIDE, _SIDE))
+
+    def test_shift_above_the_patch_size_is_refused_with_the_shift_message(self) -> None:
+        with pytest.raises(ValueError, match="shift_tta must be an integer from 1 to the patch size"):
+            build_views(TTAConfig(shift=_PATCH + 1), _PATCH, (_SIDE, _SIDE))
+
+    def test_canvas_is_one_block_larger_while_the_content_fits_else_the_block_multiple_it_needs(self) -> None:
+        assert canvas_shape(_View(offset=5), (_SIDE, _SIDE), _PATCH) == (_SIDE + _PATCH, _SIDE + _PATCH)
+        assert canvas_shape(_View(scale=1.25), (_SIDE, _SIDE), _PATCH) == (_SIDE + _PATCH, _SIDE + _PATCH)
+        assert canvas_shape(_View(scale=1.5), (_SIDE, _SIDE), _PATCH) == (96, 96)
+
+
+class TestPlaceAndMapRoundTrip:
+    """``map_to_image`` undoes ``place_view`` for every combination of scale, offset and mirroring."""
+
+    @pytest.mark.parametrize("flip", [False, True])
+    @pytest.mark.parametrize("offset", [0, 5])
+    @pytest.mark.parametrize("scale", [0.75, 1.0, 1.25, 1.5])
+    def test_boxes_map_back_to_the_image(self, scale: float, offset: int, flip: bool) -> None:
+        """A box at a known place in the image, moved forward by hand, maps back to that place."""
+        h, w = 48, 64
+        view = _View(scale=scale, offset=offset, flip=flip)
+        canvas = canvas_shape(view, (h, w), _PATCH)
+        ch, cw = round(scale * h), round(scale * w)
+        x0, y0, x1, y1 = 10.0, 5.0, 30.0, 25.0
+        # Mirror in the image, scale to the placed content, then shift by the offset.
+        fx0, fx1 = (w - x1, w - x0) if flip else (x0, x1)
+        px0, px1, py0, py1 = fx0 * cw / w + offset, fx1 * cw / w + offset, y0 * ch / h + offset, y1 * ch / h + offset
+        canvas_box = torch.tensor(
+            [(px0 + px1) / 2 / canvas[1], (py0 + py1) / 2 / canvas[0], (px1 - px0) / canvas[1], (py1 - py0) / canvas[0]]
+        )
+        mapped = map_to_image({"pred_boxes": canvas_box.view(1, 1, 4)}, view, (h, w), canvas, None)["pred_boxes"]
+        expected = torch.tensor([(x0 + x1) / 2 / w, (y0 + y1) / 2 / h, (x1 - x0) / w, (y1 - y0) / h])
+        torch.testing.assert_close(mapped.view(4), expected, rtol=0, atol=1e-5)
+
+    @pytest.mark.parametrize("flip", [False, True])
+    @pytest.mark.parametrize("offset", [0, 5])
+    @pytest.mark.parametrize("scale", [1.0, 1.5])
+    def test_an_asymmetric_mask_comes_back_in_place(self, scale: float, offset: int, flip: bool) -> None:
+        """A blob in one corner of the image stays in that corner after placing, mask-head pooling and mapping back."""
+        batch = torch.zeros(1, 1, _SIDE, _SIDE)
+        batch[:, :, 8:24, 4:20] = 1.0
+        view = _View(scale=scale, offset=offset, flip=flip)
+        canvas = canvas_shape(view, (_SIDE, _SIDE), _PATCH)
+        placed = place_view(batch, view, canvas)
+        logits = torch.nn.functional.avg_pool2d(placed, 4) * 8 - 4
+        mapped = map_to_image(
+            {"pred_boxes": torch.zeros(1, 1, 4), "pred_masks": logits}, view, (_SIDE, _SIDE), canvas, (16, 16)
+        )
+        expected = torch.nn.functional.avg_pool2d(batch, 4) * 8 - 4
+
+        def centroid(logit: torch.Tensor) -> torch.Tensor:
+            rows, cols = (logit[0, 0] > 0).nonzero(as_tuple=True)
+            return torch.stack([rows.float().mean(), cols.float().mean()])
+
+        torch.testing.assert_close(centroid(mapped["pred_masks"]), centroid(expected), rtol=0, atol=0.75)
+
+
+class TestGroupedForward:
+    """Views of one canvas shape run as one forward pass, and fusion sees them in their original order."""
+
+    @staticmethod
+    def _counting_run() -> tuple[Any, list[int]]:
+        """A grid-sensitive run that records the number of rows of each call.
+
+        Examples:
+            >>> run, rows = TestGroupedForward._counting_run()
+            >>> _ = run(_square_image(16).unsqueeze(0))
+            >>> rows
+            [1]
+        """
+        rows: list[int] = []
+
+        def run(batch: torch.Tensor) -> dict[str, torch.Tensor]:
+            rows.append(batch.shape[0])
+            return _grid_sensitive_run(batch)
+
+        return run, rows
+
+    @pytest.mark.parametrize(
+        ("config", "groups"),
+        [
+            (TTAConfig(shift=2, flip=True), 1),
+            (TTAConfig(shift=2, zoom=(1.5,)), 2),
+            (TTAConfig(shift=2, flip=True, zoom=(1.25, 1.5)), 2),
+        ],
+    )
+    def test_one_forward_per_canvas_group_equals_the_per_view_loop(
+        self, config: TTAConfig, groups: int, mocker: MockerFixture
+    ) -> None:
+        image = _square_image(20)
+        loop = _predict_tta(image, config)  # CPU runs one view per forward
+        run, rows = self._counting_run()
+        mocker.patch.object(core, "_views_per_forward", side_effect=lambda _context, _rows, _canvas, views: views)
+        batched = _predict_tta(image, config, run=run)
+        assert len(rows) == groups
+        assert sum(rows) == view_count(config)
+        np.testing.assert_array_equal(batched.xyxy, loop.xyxy)
+        np.testing.assert_array_equal(batched.confidence, loop.confidence)
+        np.testing.assert_array_equal(batched.mask, loop.mask)
+
+    def test_detections_are_decoded_once_per_forward_not_once_per_view(self, mocker: MockerFixture) -> None:
+        """One top-k and one host copy serve every view of a forward, so the host sync count does not grow with V."""
+        decode = mocker.spy(core, "_shift_candidates")
+        run, rows = self._counting_run()
+        mocker.patch.object(core, "_views_per_forward", side_effect=lambda _context, _rows, _canvas, views: views)
+        _predict_tta(_square_image(20), TTAConfig(shift=4, flip=True), run=run)
+        assert rows == [8]
+        assert decode.call_count == 1
+
+    def test_short_chunk_keeps_distinct_images_in_order(self, mocker: MockerFixture) -> None:
+        """Restore view and image rows after chunking interleaved canvas groups."""
+        images = [_square_image(16), _square_image(26)[:, :56, :52]]
+        config = TTAConfig(shift=3, flip=True, zoom=(1.5,))
+        expected = _predict_tta(images, config)
+        run, rows = self._counting_run()
+        mocker.patch.object(core, "_views_per_forward", return_value=4)
+        actual = _predict_tta(images, config, run=run)
+        assert rows == [8, 4, 4]
+        assert [tuple(result.metadata["source_image"].shape[:2]) for result in actual] == [(64, 64), (56, 52)]
+        np.testing.assert_array_equal(actual[0].xyxy, expected[0].xyxy)
+        np.testing.assert_array_equal(actual[1].xyxy, expected[1].xyxy)
+        np.testing.assert_array_equal(actual[0].confidence, expected[0].confidence)
+        np.testing.assert_array_equal(actual[1].confidence, expected[1].confidence)
+        np.testing.assert_array_equal(actual[0].mask, expected[0].mask)
+        np.testing.assert_array_equal(actual[1].mask, expected[1].mask)
+
+    def test_views_are_fused_in_their_original_order_whichever_group_runs_first(self, mocker: MockerFixture) -> None:
+        """A zoom view that shares no canvas with the shifts still counts as the view it is in the config."""
+        seen: list[list[sv.Detections]] = []
+        original = core.group_passes
+
+        def spy(passes: list[sv.Detections], *args: Any, **kwargs: Any) -> Any:
+            """Retain the per-view inputs to fusion."""
+            seen.append(passes)
+            return original(passes, *args, **kwargs)
+
+        def tag_view(outputs: dict[str, torch.Tensor], view: _View, *_args: Any) -> dict[str, torch.Tensor]:
+            """Encode distinct view identities in the x coordinate independently of the model output."""
+            center_x = 0.2 + 0.1 * (view.scale - 1) + view.offset / 100 + 0.4 * view.flip
+            boxes = torch.tensor([center_x, 0.5, 0.1, 0.1]).expand_as(outputs["pred_boxes"])
+            return {"pred_boxes": boxes}
+
+        mocker.patch.object(core, "group_passes", side_effect=spy)
+        mocker.patch.object(core, "map_to_image", side_effect=tag_view)
+        mocker.patch.object(core, "_views_per_forward", return_value=3)
+        _predict_tta(_square_image(20), TTAConfig(shift=2, flip=True, zoom=(1.5,)))
+        (passes,) = seen
+        boxes = sv.Detections.merge(passes).xyxy
+        np.testing.assert_allclose((boxes[:, 0] + boxes[:, 2]) / (2 * _SIDE), [0.2, 0.28, 0.25, 0.6, 0.68, 0.65])
+
+    @pytest.mark.gpu
+    @_requires_cuda
+    @pytest.mark.parametrize(
+        ("model_class", "resolution"),
+        [pytest.param(RFDETRNano, 96, id="detection"), pytest.param(RFDETRSegNano, 72, id="segmentation")],
+    )
+    def test_public_cuda_batches_match_sequential_views(
+        self, model_class: type, resolution: int, mocker: MockerFixture
+    ) -> None:
+        """Compare a CUDA stream's grouped predictions against one forward per view."""
+        torch.manual_seed(0)
+        model = model_class(
+            pretrain_weights=None, device="cuda", resolution=resolution, num_queries=4, num_select=4, num_classes=2
+        )
+        predictor = RFDETRInference(model)
+        images = [_square_image(16), _square_image(26)[:, :56, :52]]
+        recipe = TTAConfig(shift=3, flip=True, zoom=(1.5,))
+        block = model.model_config.patch_size * model.model_config.num_windows
+        mocker.patch.object(core, "_MAX_PIXELS_PER_FORWARD", 8 * (resolution + block) ** 2)
+        forward = mocker.spy(model, "_run_inference_batch")
+        actual = list(predictor.predict(images, stream=True, batch=2, tta=recipe, threshold=0.0))
+        assert [call.args[0].shape[0] for call in forward.call_args_list] == [8, 4, 4]
+        assert forward.call_args_list[0].args[0].shape[-2:] != forward.call_args_list[-1].args[0].shape[-2:]
+        mocker.patch.object(core, "_views_per_forward", return_value=1)
+        expected = list(predictor.predict(images, stream=True, batch=2, tta=recipe, threshold=0.0))
+        assert len(actual) == len(expected) == 2
+        self._assert_cuda_result(actual[0], expected[0], masks=model.model_config.segmentation_head)
+        self._assert_cuda_result(actual[1], expected[1], masks=model.model_config.segmentation_head)
+
+    @staticmethod
+    def _assert_cuda_result(result: sv.Detections, reference: sv.Detections, *, masks: bool) -> None:
+        """Allow accelerator rounding without accepting missing detections or changed mask geometry."""
+        assert len(reference) > 0
+        np.testing.assert_array_equal(result.class_id, reference.class_id)
+        np.testing.assert_allclose(result.xyxy, reference.xyxy, rtol=1e-4, atol=5e-3)
+        np.testing.assert_allclose(result.confidence, reference.confidence, rtol=1e-4, atol=1e-6)
+        if masks:
+            assert reference.mask is not None and result.mask is not None
+            assert result.mask.shape == reference.mask.shape
+            assert (result.mask != reference.mask).mean() < 1e-3
+
+
+class TestZoomPadding:
+    """Predictions must overlap the part of the zoom canvas that contains the source image."""
+
+    def test_padding_only_box_is_dropped_but_clipped_box_survives(self) -> None:
+        """Clip partial overlap at the source boundary and discard the zero-width candidate."""
+
+        def run(batch: torch.Tensor) -> dict[str, torch.Tensor]:
+            """Return two high-confidence boxes in the smaller view and none in the other."""
+            scores = [-float("inf"), -float("inf")] if batch[0, 0, 50, 50] else [2.0, 2.0]
+            return {
+                "pred_logits": torch.tensor(scores).view(1, 2, 1),
+                "pred_boxes": torch.tensor([[[0.75, 0.3, 0.1, 0.2], [0.60, 0.3, 0.2, 0.2]]]),
+            }
+
+        actual = _predict_tta(torch.ones(3, 64, 64), TTAConfig(zoom=(0.75,)), threshold=0.1, run=run)
+        np.testing.assert_allclose(actual.xyxy, [[160 / 3, 64 / 3, 64, 128 / 3]], atol=1e-5)
+
+    def test_box_touching_padding_boundary_does_not_round_into_image(self) -> None:
+        """Reject a box whose exact left edge touches the content boundary on an 80-pixel canvas."""
+
+        def run(batch: torch.Tensor) -> dict[str, torch.Tensor]:
+            """Detect a box only in the 50-pixel zoom view."""
+            score = -float("inf") if batch[0, 0, 51, 51] else 2.0
+            return {
+                "pred_logits": torch.tensor([[[score]]]),
+                "pred_boxes": torch.tensor([[[0.626953125, 0.3, 0.00390625, 0.2]]]),
+            }
+
+        actual = _predict_tta(torch.ones(3, 64, 64), TTAConfig(zoom=(0.78125,)), threshold=0.1, run=run)
+        assert len(actual) == 0
+
+
+class TestEarlyRefusal:
+    """A request with several views is refused before any image is read when the runtime cannot take it."""
+
+    @pytest.mark.parametrize(
+        ("field", "value"),
+        [("fixed_shape", True), ("batch_size", 1), ("max_batch_size", 4), ("fixed_resolution", _SIDE)],
+    )
+    def test_stream_is_refused_when_predict_is_called_and_its_source_is_never_opened(
+        self, field: str, value: Any, tmp_path: Any
+    ) -> None:
+        factory = partial(replace, _grid_sensitive_context(), **{field: value})
+        with pytest.raises(ValueError, match="cannot run"):
+            core.predict(factory, str(tmp_path / "missing.jpg"), stream=True, tta=TTAConfig(shift=2))
+
+    @pytest.mark.parametrize("field", ["fixed_shape", "batch_size", "fixed_resolution"])
+    def test_plain_request_is_not_refused(self, field: str) -> None:
+        value = {"fixed_shape": True, "batch_size": 1, "fixed_resolution": _SIDE}[field]
+        context = replace(_grid_sensitive_context(), **{field: value})
+        for tta in (None, TTAConfig(zoom=())):
+            _, _, views = core._plan_views(context, tta, None, None)
+            assert len(views) == 1
+
+    def test_live_model_context_accepts_several_views(self) -> None:
+        _, _, views = core._plan_views(_grid_sensitive_context(), TTAConfig(shift=2, flip=True), None, None)
+        assert len(views) == 4
+
+    def test_keypoint_model_is_refused_for_several_views_and_not_for_the_default(self) -> None:
+        context = replace(_grid_sensitive_context(), num_keypoints_per_class=[17])
+        with pytest.raises(ValueError, match="tta does not support keypoint models"):
+            core._plan_views(context, TTAConfig(flip=True), None, None)
+        for tta in (None, TTAConfig(zoom=())):
+            assert len(core._plan_views(context, tta, None, None)[2]) == 1
+        with pytest.raises(ValueError, match="tta does not support keypoint models"):
+            core._plan_views(context, TTAConfig(), None, None)
+
+    def test_several_views_skip_prepare_ahead(self) -> None:
+        assert pipelines._may_prepare_ahead(True, "cuda", True, 1)
+        assert not pipelines._may_prepare_ahead(True, "cuda", True, 4)
+        assert not pipelines._may_prepare_ahead(False, "cuda", True, 1)
+
+    def test_a_stream_runs_the_views_on_a_live_model_context(self) -> None:
+        images = [_square_image(20), _square_image(20)]
+        results = core.predict(_grid_sensitive_context, images, 0.0, batch=1, tta=TTAConfig(shift=2, flip=True))
+        assert [len(r) for r in results] == [len(_predict_tta(images[0], TTAConfig(shift=2, flip=True)))] * 2
+
+
+class TestTTAConfigValidation:
+    """``TTAConfig`` rejects a value it cannot run, when it is built."""
+
+    @pytest.mark.parametrize("shift", [0, -1, True, 2.0, "2"])
+    def test_shift_must_be_a_positive_int(self, shift: Any) -> None:
+        with pytest.raises((TypeError, ValueError)):
+            TTAConfig(shift=shift)
+
+    @pytest.mark.parametrize("flip", [1, "yes", None])
+    def test_flip_must_be_a_bool(self, flip: Any) -> None:
+        with pytest.raises(TypeError, match="flip must be a bool"):
+            TTAConfig(flip=flip)
+
+    @pytest.mark.parametrize("zoom", ["1.25", {1.25}, {"z": 1.25}, 1.25])
+    def test_zoom_must_be_a_list_or_tuple(self, zoom: Any) -> None:
+        with pytest.raises(TypeError, match="zoom must be a list or tuple"):
+            TTAConfig(zoom=zoom)
+
+    @pytest.mark.parametrize(
+        "zoom",
+        [float("nan"), float("inf"), -float("inf"), 1.0, 0.5, 2.0, -1.0, pytest.param(10**400, id="large-integer")],
+    )
+    def test_zoom_values_must_be_finite_not_one_and_in_range(self, zoom: float) -> None:
+        """Reject invalid values before converting accepted zooms to floats."""
+        with pytest.raises(ValueError, match="TTAConfig.zoom values must be finite"):
+            TTAConfig(zoom=(zoom,))
+
+    def test_zoom_values_must_not_repeat(self) -> None:
+        with pytest.raises(ValueError, match="must not repeat"):
+            TTAConfig(zoom=(1.25, 1.25))
+
+    def test_zoom_list_is_stored_as_a_tuple(self) -> None:
+        assert TTAConfig(zoom=[1.25, 0.75]).zoom == (1.25, 0.75)
+
+    def test_a_plain_dict_is_rejected_with_a_type_error(self) -> None:
+        with pytest.raises(TypeError, match="tta must be a TTAConfig or None"):
+            core._predict_batch(
+                _grid_sensitive_context, _square_image(16), 0.5, None, None, False, False, tta={"shift": 2}
+            )

@@ -178,22 +178,20 @@ class TestImportPaths:
         cls = getattr(variants_mod, class_name, None)
         assert cls is not None, f"{class_name} not found in rfdetr.variants"
 
-    def test_top_level_import_sets_numpy_complex_alias(self) -> None:
-        """Verify rfdetr shim sets np.complex_ in a fresh interpreter with complex_ absent.
+    def test_top_level_import_leaves_numpy_complex_alias_unset(self) -> None:
+        """Importing rfdetr must not add the removed ``np.complex_`` alias back to NumPy.
 
-        Runs in a subprocess so the shim code path is actually executed — importing rfdetr inside pytest is a no-op
-        because rfdetr is already cached in sys.modules.
+        Runs in a subprocess because rfdetr is already cached in ``sys.modules`` inside pytest.
         """
         code = (
             "import numpy\n"
             "if hasattr(numpy, 'complex_'):\n"
             "    del numpy.complex_\n"
             "import rfdetr\n"
-            "assert hasattr(numpy, 'complex_'), 'shim did not set numpy.complex_'\n"
-            "assert numpy.complex_ is numpy.complex128, 'complex_ must alias complex128'\n"
+            "assert not hasattr(numpy, 'complex_'), 'importing rfdetr set numpy.complex_'\n"
         )
 
-        _assert_subprocess_succeeds([sys.executable, "-c", code], "NumPy complex_ shim")
+        _assert_subprocess_succeeds([sys.executable, "-c", code], "NumPy namespace left alone")
 
     @_requires_python_314
     def test_top_level_import_avoids_unsupported_torchscript(self) -> None:
