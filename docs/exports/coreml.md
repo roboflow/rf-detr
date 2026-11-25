@@ -160,10 +160,10 @@ Core ML decides at **load time** which of the CPU, GPU and Apple Neural Engine (
 
 Single-image latency, pretrained `RFDETRNano` at 384x384, Apple M3 Pro (macOS 27.0.1, coremltools 9.0), batch 1, p50 in ms over 3 runs of 100 iterations after 10 warm-ups, 200 ms between timed passes:
 
-| Precision | `CPU_ONLY` | `CPU_AND_NE` | `CPU_AND_GPU` | `ALL`    |
-| --------- | ---------- | ------------ | ------------- | -------- |
-| fp32      | 75.1       | 76.3         | **26.1**      | 27.0     |
-| fp16      | 50.7       | 24.9         | 25.5          | **22.7** |
+| Precision | `CPU_ONLY` [ms] | `CPU_AND_NE` [ms] | `CPU_AND_GPU` [ms] | `ALL` [ms] |
+| --------- | --------------- | ----------------- | ------------------ | ---------- |
+| fp32      | 75.1            | 76.3              | **26.1**           | 27.0       |
+| fp16      | 50.7            | 24.9              | 25.5               | **22.7**   |
 
 On this M3 Pro, with this one model: **fp32 belongs on the GPU, fp16 on the ANE or `ALL`.** The ranking depends on the chip and the model, so measure on your target device. Loading an fp16 bundle with `CPU_AND_NE` is about 2.0x faster than CPU and about as fast as the GPU here (back to back, with no sleep between passes: 12.7 ms on the ANE, 12.1 ms on the GPU). Single-image latency is therefore no longer a reason to prefer the ANE over the GPU.
 
@@ -216,14 +216,14 @@ The bundle name has `-ane` after the precision, `{variant}_fp16-ane.mlpackage`, 
 
 **Use it only with `CPU_AND_NE` or `ALL` compute units.** On the CPU and the GPU, this graph is slower than the default graph. Single-image latency, pretrained models at their default resolutions, Apple M4 Max (16-core CPU, 40-core GPU; macOS 27.0.1, coremltools 9.0), fp16, batch 1, p50 in ms over 3 runs of 100 iterations after 10 warm-ups, 200 ms between timed passes:
 
-| Model          | Export                      | `CPU_ONLY` | `CPU_AND_NE` | `CPU_AND_GPU` | `ALL`    |
-| -------------- | --------------------------- | ---------- | ------------ | ------------- | -------- |
-| `RFDETRNano`   | default                     | 31.3       | 22.4         | **20.1**      | 22.9     |
-| `RFDETRNano`   | `coreml_neural_engine=True` | 36.1       | **17.7**     | 24.0          | 18.7     |
-| `RFDETRSmall`  | default                     | 45.6       | 34.5         | **23.3**      | 39.3     |
-| `RFDETRSmall`  | `coreml_neural_engine=True` | 55.4       | 30.4         | 31.5          | **30.2** |
-| `RFDETRMedium` | default                     | 47.2       | 44.7         | **24.0**      | 49.2     |
-| `RFDETRMedium` | `coreml_neural_engine=True` | 65.5       | 36.6         | **33.0**      | 44.2     |
+| Model          | Export                      | `CPU_ONLY` [ms] | `CPU_AND_NE` [ms] | `CPU_AND_GPU` [ms] | `ALL` [ms] |
+| -------------- | --------------------------- | --------------- | ----------------- | ------------------ | ---------- |
+| `RFDETRNano`   | default                     | 31.3            | 22.4              | **20.1**           | 22.9       |
+| `RFDETRNano`   | `coreml_neural_engine=True` | 36.1            | **17.7**          | 24.0               | 18.7       |
+| `RFDETRSmall`  | default                     | 45.6            | 34.5              | **23.3**           | 39.3       |
+| `RFDETRSmall`  | `coreml_neural_engine=True` | 55.4            | 30.4              | 31.5               | **30.2**   |
+| `RFDETRMedium` | default                     | 47.2            | 44.7              | **24.0**           | 49.2       |
+| `RFDETRMedium` | `coreml_neural_engine=True` | 65.5            | 36.6              | **33.0**           | 44.2       |
 
 On this M4 Max, the Neural Engine graph on the ANE is the fastest choice for `RFDETRNano`, and the default graph on the GPU for `RFDETRSmall` and `RFDETRMedium`. Measure both exports on your target device.
 
