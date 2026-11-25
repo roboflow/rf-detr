@@ -292,7 +292,8 @@ def _log_legacy_cache_hint(legacy_dir: str, target_dir: str, legacy_in_use: bool
             the existing target wins and the legacy directory is ignored.
 
     Examples:
-        >>> _log_legacy_cache_hint("/old/models", "/new/models", True) is None
+        >>> _log_legacy_cache_hint("/old/models", "/new/models", True) is None  # doctest: +ELLIPSIS
+        [...] [INFO] rf-detr - Using the legacy model cache /old/models. Move it to /new/models ...
         True
     """
     if legacy_in_use:
