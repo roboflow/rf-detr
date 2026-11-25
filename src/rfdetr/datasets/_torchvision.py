@@ -437,7 +437,7 @@ class Resize:
 
 
 class RandomSizedCrop:
-    """Crop a random square-ish region and resize it to a fixed output size.
+    """Crop a random region with the output's aspect ratio and resize it to a fixed output size.
 
     Note:
         Not a reimplementation of an existing torchvision transform. The closest analog,
@@ -448,11 +448,15 @@ class RandomSizedCrop:
         rather than a different implementation of the same one.
 
     Args:
-        min_max_height: Inclusive candidate range for the crop height.
+        min_max_height: Inclusive candidate range for the crop's shorter side: its height and width for a square
+            output. The longer side follows the output's aspect ratio, and both shrink together to fit the image.
         size: Output ``(height, width)`` after crop resizing.
 
     Examples:
         >>> cropper = RandomSizedCrop((384, 600), (640, 640))
+        >>> image, _ = RandomSizedCrop((100, 100), (64, 112))(Image.new("RGB", (350, 200)))
+        >>> image.size
+        (112, 64)
     """
 
     def __init__(self, min_max_height: tuple[int, int], size: tuple[int, int]) -> None:
@@ -470,12 +474,16 @@ class RandomSizedCrop:
             Cropped and resized image and target.
         """
         height, width = _image_size(image)
+        short_out, long_out = sorted(self.size)
+        wide = self.size[0] <= self.size[1]
+        short_side, long_side = (height, width) if wide else (width, height)
         min_crop, max_crop = self.min_max_height
-        max_crop = min(max_crop, height, width)
+        # The crop keeps the output's aspect ratio, so its shorter side is also bounded by what the longer one allows.
+        max_crop = min(max_crop, short_side, max(1, long_side * short_out // long_out))
         min_crop = min(min_crop, max_crop)
         crop_size = int(torch.randint(min_crop, max_crop + 1, ()).item()) if max_crop > min_crop else max_crop
-        crop_height = min(crop_size, height)
-        crop_width = min(crop_size, width)
+        crop_long = min(round(crop_size * long_out / short_out), long_side)
+        crop_height, crop_width = (crop_size, crop_long) if wide else (crop_long, crop_size)
         top = int(torch.randint(0, height - crop_height + 1, ()).item()) if height > crop_height else 0
         left = int(torch.randint(0, width - crop_width + 1, ()).item()) if width > crop_width else 0
         image, target = crop(image, target, top, left, crop_height, crop_width)

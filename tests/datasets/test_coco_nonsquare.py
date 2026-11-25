@@ -12,6 +12,8 @@ import pytest
 import torch
 from PIL import Image
 
+from rfdetr.datasets import _torchvision
+from rfdetr.datasets._torchvision import RandomSizedCrop
 from rfdetr.datasets.coco import (
     _build_train_resize_config,
     compute_multi_scale_scales,
@@ -36,6 +38,46 @@ def _sample() -> tuple[Image.Image, dict[str, Any]]:
         "orig_size": torch.tensor([120, 200]),
     }
     return Image.new("RGB", (200, 120)), target
+
+
+def _grid_sample(width: int, height: int) -> tuple[Image.Image, dict[str, Any]]:
+    """Return a ``width`` x ``height`` image covered by a grid of 40x40 boxes.
+
+    Examples:
+        >>> image, target = _grid_sample(200, 120)
+        >>> image.size, target["boxes"].tolist()
+        ((200, 120), [[10.0, 10.0, 50.0, 50.0], [70.0, 10.0, 110.0, 50.0], [130.0, 10.0, 170.0, 50.0]])
+    """
+    lefts, tops = torch.meshgrid(torch.arange(10.0, width - 50, 60), torch.arange(10.0, height - 50, 60), indexing="xy")
+    lefts, tops = lefts.flatten(), tops.flatten()
+    count = len(lefts)
+    target = {
+        "boxes": torch.stack([lefts, tops, lefts + 40, tops + 40], dim=1),
+        "labels": torch.ones(count, dtype=torch.int64),
+        "area": torch.full((count,), 1600.0),
+        "iscrowd": torch.zeros(count, dtype=torch.int64),
+        "size": torch.tensor([height, width]),
+        "orig_size": torch.tensor([height, width]),
+    }
+    return Image.new("RGB", (width, height)), target
+
+
+def _box_aspects(image: torch.Tensor, target: dict[str, Any]) -> torch.Tensor:
+    """Return the pixel width / height of each normalized ``cxcywh`` box that lies clear of the image border.
+
+    Examples:
+        >>> _box_aspects(torch.zeros(3, 64, 128), {"boxes": torch.tensor([[0.5, 0.5, 0.25, 0.25], [0.5, 0.1, 1, 0.2]])})
+        tensor([2.])
+    """
+    height, width = image.shape[-2:]
+    center_x, center_y, box_width, box_height = (target["boxes"] * torch.tensor([width, height, width, height])).T
+    inside = (
+        (center_x - box_width / 2 > 1)
+        & (center_y - box_height / 2 > 1)
+        & (center_x + box_width / 2 < width - 1)
+        & (center_y + box_height / 2 < height - 1)
+    )
+    return (box_width / box_height)[inside]
 
 
 def _build(factory: Any, image_set: str, resolution: Any, **kwargs: Any) -> Any:
@@ -111,6 +153,30 @@ class TestTrainResizeConfig:
 
         assert from_pairs == from_short_sides
 
+    @pytest.mark.parametrize(
+        ("pair", "min_max_height", "w2h_ratio"),
+        [
+            pytest.param((384, 672), [384, 600], 1.75, id="wide"),
+            pytest.param((672, 384), [672, 1050], 384 / 672, id="tall"),
+        ],
+    )
+    def test_exact_resize_crop_has_the_aspect_ratio_of_the_pair(
+        self, pair: tuple[int, int], min_max_height: list[int], w2h_ratio: float
+    ) -> None:
+        """The scale-jitter crop of a pair has the pair's aspect ratio, its shorter side within 384-600."""
+        (entry,) = _build_train_resize_config([pair], square=True)
+
+        (crop,) = entry["OneOf"]["transforms"][1]["Sequential"]["transforms"][1]["OneOf"]["transforms"]
+
+        assert crop == {
+            "RandomSizedCrop": {
+                "min_max_height": min_max_height,
+                "height": pair[0],
+                "width": pair[1],
+                "w2h_ratio": pytest.approx(w2h_ratio),
+            }
+        }
+
     def test_int_scales_build_the_same_config_as_square_pairs(self) -> None:
         """A side length and the square pair of that side build one config."""
         from_ints = _build_train_resize_config([64, 128], square=True)
@@ -136,6 +202,72 @@ class TestNonSquareTransforms:
 
         assert image.shape == (3, 64, 96)
         assert target["size"].tolist() == [64, 96]
+
+    @pytest.mark.parametrize("aug_config", _BACKENDS)
+    @pytest.mark.parametrize(
+        ("resolution", "source"),
+        [
+            pytest.param((64, 112), (1050, 600), id="wide"),
+            pytest.param((112, 64), (600, 1050), id="tall"),
+            pytest.param(64, (600, 600), id="square"),
+        ],
+    )
+    def test_scale_jitter_keeps_object_aspect_when_source_matches_resolution(
+        self, aug_config: Any, resolution: Any, source: tuple[int, int]
+    ) -> None:
+        """Neither branch stretches a source that has the resolution's aspect ratio: square boxes stay square."""
+        transforms = _build(
+            make_coco_transforms_square_div_64, "train", resolution, aug_config=aug_config, scale_jitter=True
+        )
+        torch.manual_seed(0)
+
+        aspects = torch.cat([_box_aspects(*transforms(*_grid_sample(*source))) for _ in range(40)])
+
+        assert len(aspects) > 40
+        assert aspects.min() > 0.97 and aspects.max() < 1.03
+
+    @pytest.mark.parametrize("output_size", [(64, 112), (112, 64)])
+    @pytest.mark.parametrize("source", [(800, 600), (600, 800), (300, 280)])
+    def test_torchvision_crop_shrinks_both_sides_to_fit_the_image(
+        self, output_size: tuple[int, int], source: tuple[int, int]
+    ) -> None:
+        """A crop that does not fit the image shrinks on both sides, so it keeps the output's aspect ratio."""
+        cropper = RandomSizedCrop((384, 600), output_size)
+        torch.manual_seed(0)
+
+        for _ in range(20):
+            image, target = cropper(*_grid_sample(*source))
+            boxes = target["boxes"]
+            inside = (boxes[:, :2] > 1).all(dim=1) & (boxes[:, 2] < image.width - 1) & (boxes[:, 3] < image.height - 1)
+            aspects = ((boxes[:, 2] - boxes[:, 0]) / (boxes[:, 3] - boxes[:, 1]))[inside]
+
+            assert image.size == (output_size[1], output_size[0])
+            assert len(aspects) > 0
+            assert aspects.min() > 0.97 and aspects.max() < 1.03
+
+    @pytest.mark.parametrize("source", [(800, 600), (450, 700), (300, 280)])
+    def test_torchvision_square_crop_draws_as_before(
+        self, source: tuple[int, int], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A square output keeps the historical crop box and random draws, so seeded runs do not change."""
+        width, height = source
+        boxes: list[tuple[int, ...]] = []
+        monkeypatch.setattr(
+            _torchvision, "crop", lambda image, target, *box: boxes.append(box) or (image, target), raising=True
+        )
+
+        torch.manual_seed(0)
+        RandomSizedCrop((384, 600), (64, 64))(Image.new("RGB", source))
+        next_draw = torch.rand(1)
+
+        torch.manual_seed(0)
+        max_side = min(600, height, width)
+        min_side = min(384, max_side)
+        side = int(torch.randint(min_side, max_side + 1, ()).item()) if max_side > min_side else max_side
+        top = int(torch.randint(0, height - side + 1, ()).item()) if height > side else 0
+        left = int(torch.randint(0, width - side + 1, ()).item()) if width > side else 0
+        assert boxes == [(top, left, side, side)]
+        assert torch.equal(next_draw, torch.rand(1))
 
     @pytest.mark.parametrize("aug_config", _BACKENDS)
     def test_multi_scale_square_div_64_draws_from_pair_scales(self, aug_config: Any) -> None:

@@ -1003,6 +1003,34 @@ class ConvertCoco:
         return image, target
 
 
+def _random_sized_crop_config(height: int, width: int) -> dict[str, Any]:
+    """Return the ``RandomSizedCrop`` entry whose crop has the aspect ratio of its ``(height, width)`` output.
+
+    The 384-600 range bounds the crop's shorter side, so a square output keeps the historical entry and a pair is
+    not stretched from a square crop.
+
+    Args:
+        height: Output height in pixels.
+        width: Output width in pixels.
+
+    Returns:
+        A single-key Albumentations config entry.
+
+    Examples:
+        >>> _random_sized_crop_config(640, 640)
+        {'RandomSizedCrop': {'min_max_height': [384, 600], 'height': 640, 'width': 640}}
+        >>> _random_sized_crop_config(768, 384)["RandomSizedCrop"]["min_max_height"]
+        [768, 1200]
+    """
+    params: dict[str, Any] = {"min_max_height": [384, 600], "height": height, "width": width}
+    if height != width:
+        # Albumentations samples the crop height; scale the range so it bounds the shorter side of a tall crop.
+        scale = max(height / width, 1.0)
+        params["min_max_height"] = [round(384 * scale), round(600 * scale)]
+        params["w2h_ratio"] = width / height
+    return {"RandomSizedCrop": params}
+
+
 def _build_train_resize_config(
     scales: Sequence[_Resolution],
     *,
@@ -1052,10 +1080,7 @@ def _build_train_resize_config(
                     {"SmallestMaxSize": {"max_size": [400, 500, 600]}},
                     {
                         "OneOf": {
-                            "transforms": [
-                                {"RandomSizedCrop": {"min_max_height": [384, 600], "height": h, "width": w}}
-                                for h, w in pairs
-                            ],
+                            "transforms": [_random_sized_crop_config(h, w) for h, w in pairs],
                         }
                     },
                 ]
