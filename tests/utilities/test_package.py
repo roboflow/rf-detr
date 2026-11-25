@@ -178,6 +178,21 @@ class TestImportPaths:
         cls = getattr(variants_mod, class_name, None)
         assert cls is not None, f"{class_name} not found in rfdetr.variants"
 
+    def test_top_level_import_leaves_numpy_complex_alias_unset(self) -> None:
+        """Importing rfdetr must not add the removed ``np.complex_`` alias back to NumPy.
+
+        Runs in a subprocess because rfdetr is already cached in ``sys.modules`` inside pytest.
+        """
+        code = (
+            "import numpy\n"
+            "if hasattr(numpy, 'complex_'):\n"
+            "    del numpy.complex_\n"
+            "import rfdetr\n"
+            "assert not hasattr(numpy, 'complex_'), 'importing rfdetr set numpy.complex_'\n"
+        )
+
+        _assert_subprocess_succeeds([sys.executable, "-c", code], "NumPy namespace left alone")
+
     @_requires_python_314
     def test_top_level_import_avoids_unsupported_torchscript(self) -> None:
         """Python 3.14+ imports must not invoke unsupported TorchScript compilation.
