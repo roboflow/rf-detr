@@ -35,6 +35,7 @@ from rfdetr._prediction.core import (
     _resolve_patch_size,
     _validate_shape_dims,
 )
+from rfdetr._prediction.tta import shift_tta_config
 from rfdetr._prediction.types import _ImageInput, _ThresholdInput
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
@@ -3383,7 +3384,14 @@ class RFDETR:
         if isinstance(images, torch.Tensor) and images.ndim == 4:
             images = list(images.unbind(0))
         return _predict_batch(
-            self._prediction_context, images, threshold, shape, patch_size, include_source_image, antialias, shift_tta
+            self._prediction_context,
+            images,
+            threshold,
+            shape,
+            patch_size,
+            include_source_image,
+            antialias,
+            tta=shift_tta_config(shift_tta),
         )
 
     def deploy_to_roboflow(

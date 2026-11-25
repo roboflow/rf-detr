@@ -172,6 +172,30 @@ def view_count(config: TTAConfig) -> int:
     return (config.shift + len(config.zoom or ())) * (2 if config.flip else 1)
 
 
+def shift_tta_config(shift_tta: object) -> TTAConfig | None:
+    """Turn the ``shift_tta`` argument of ``RFDETR.predict`` into the views it stands for.
+
+    Args:
+        shift_tta: Number of shifted passes; 1 is the plain prediction. The upper bound, the patch size, is checked
+            with the views, where the patch size is known.
+
+    Returns:
+        ``None`` for the plain prediction, else a shift-only ``TTAConfig``.
+
+    Raises:
+        ValueError: If ``shift_tta`` is not an integer of at least 1 (``True`` and ``1.0`` included).
+
+    Examples:
+        >>> shift_tta_config(1) is None
+        True
+        >>> shift_tta_config(4)
+        TTAConfig(shift=4, flip=False, zoom=())
+    """
+    if isinstance(shift_tta, bool) or not isinstance(shift_tta, int) or shift_tta < 1:
+        raise ValueError(f"shift_tta must be an integer from 1 to the patch size, got {shift_tta!r}.")
+    return None if shift_tta == 1 else TTAConfig(shift=shift_tta, zoom=())
+
+
 @dataclass(frozen=True)
 class _View:
     """One pass: the image is mirrored, scaled by ``scale`` and placed at ``(offset, offset)`` on a canvas.

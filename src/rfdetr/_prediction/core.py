@@ -45,7 +45,6 @@ from rfdetr._prediction.tta import (
     group_passes,
     map_to_image,
     place_view,
-    validate_shift_tta,
     view_count,
     vote_masks,
 )
@@ -790,7 +789,7 @@ def predict(
     """
     if tta is not None:
         # Refused here, before a stream opens its source: nothing below needs an image to know the request cannot run.
-        _plan_views(context_factory(), 1, tta, shape, patch_size)
+        _plan_views(context_factory(), tta, shape, patch_size)
     for name, value in (("batch", 1 if batch is None else batch), ("vid_stride", vid_stride)):
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ValueError(f"{name} must be a positive integer.")
@@ -928,7 +927,6 @@ def _predict_batch(
     patch_size: int | None,
     include_source_image: bool,
     antialias: bool | None,
-    shift_tta: int = 1,
     *,
     tta: TTAConfig | None = None,
 ) -> _PredictionOutput:
@@ -947,10 +945,7 @@ def _predict_batch(
         patch_size: Backbone patch size for shape validation.
         include_source_image: Store the source image in result metadata.
         antialias: Use antialiasing during image resize. Match the checkpoint training resize.
-        shift_tta: Number of sub-patch shifted passes to average; 1 runs a single plain pass. See
-            :func:`_predict_shifted`.
-        tta: The views to fuse instead of ``shift_tta``; ``None`` leaves ``shift_tta`` in charge. Passing both a
-            ``shift_tta`` above 1 and a ``tta`` raises ``ValueError``.
+        tta: The views to fuse (see :func:`_predict_shifted`); ``None`` runs the plain prediction.
 
     Returns:
         One Supervision result or a list matching the input container.
@@ -960,8 +955,8 @@ def _predict_batch(
             ``tta`` is not a ``TTAConfig``.
         ValueError: If a list or tuple is empty, the batch violates an export's fixed or maximum batch size, the shape
             or patch size is invalid or conflicts with an export's fixed shape, an input fails range or channel
-            validation, ``threshold`` is NaN, ``shift_tta`` is not an integer from 1 to the patch size (``True`` and
-            ``1.0`` included) or is above 1 for a keypoint model, the views need a larger canvas or more rows than a
+            validation, ``threshold`` is NaN, ``tta`` asks for a shift above the patch size or for several views of a
+            keypoint model, the views need a larger canvas or more rows than a
             fixed-shape, fixed-batch or resolution-enforcing runtime accepts, or a ``ClassThresholds`` does not fit the
             model: it
             names a class that ``class_names`` does not hold, has a different number of entries than ``class_names``,
@@ -977,10 +972,8 @@ def _predict_batch(
         patch_size,
         include_source_image,
         antialias,
-        shift_tta=shift_tta,
         tta=tta,
     )
-    # `_prepare_batch` has checked `shift_tta` is an int, not a bool, so `True` and `1.0` cannot pass as one view.
     if len(prepared.views) > 1:
         return _predict_shifted(prepared, patch_size)
     return _decode_batch(prepared, prepared.context.run(prepared.batch_tensor))
@@ -1224,7 +1217,7 @@ def _fuse_shifted_image(
 ) -> Detections:
     """Fuse one image's shifted passes, keep the fused detections above threshold, and build their masks.
 
-    Only rows above their own threshold may seed a group (see :func:`~rfdetr._prediction.shift_tta.group_passes`):
+    Only rows above their own threshold may seed a group (see :func:`~rfdetr._prediction.tta.group_passes`):
     every group that can be kept stays the same, and the many low-score rows of every pass still join groups as members.
 
     Args:
@@ -1331,7 +1324,6 @@ def _refuse_unsupported_views(context: PredictionContext, views: Sequence[_View]
 
 def _plan_views(
     context: PredictionContext,
-    shift_tta: int,
     tta: TTAConfig | None,
     shape: tuple[int, int] | None,
     patch_size: int | None,
@@ -1340,8 +1332,7 @@ def _plan_views(
 
     Args:
         context: The prediction rules for this batch.
-        shift_tta: Number of shifted passes; 1 runs none beyond the plain pass.
-        tta: The views to run instead of ``shift_tta``, or ``None``.
+        tta: The views to run, or ``None`` for the plain prediction.
         shape: Input height and width, or ``None`` for the model's default.
         patch_size: Backbone patch size, or ``None`` for the model's own.
 
@@ -1356,14 +1347,9 @@ def _plan_views(
     patch_size = _resolve_patch_size(patch_size, context.config, "predict")
     if tta is not None and not isinstance(tta, TTAConfig):
         raise TypeError(f"tta must be a TTAConfig or None, got {type(tta).__name__}.")
-    # Every value, 1 included, is checked before any image is read, so `True` and `1.0` cannot pass as 1.
-    validate_shift_tta(shift_tta, patch_size)
-    if tta is not None and shift_tta != 1:
-        raise ValueError("Pass either shift_tta or tta, not both.")
-    # `shift_tta` means shifted passes only, so the zoom that a bare `TTAConfig` defaults to must not join them.
-    config = TTAConfig(shift=shift_tta, zoom=()) if tta is None else tta
+    config = TTAConfig(zoom=()) if tta is None else tta
     if view_count(config) > 1 and any(context.num_keypoints_per_class):
-        raise ValueError(f"{'shift_tta' if tta is None else 'tta'} does not support keypoint models.")
+        raise ValueError("tta does not support keypoint models.")
     num_windows = getattr(context.config, "num_windows", 1)
     if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
         raise ValueError(f"model_config.num_windows must be a positive integer, got {num_windows!r}")
@@ -1395,7 +1381,6 @@ def _prepare_batch(
     patch_size: int | None,
     include_source_image: bool,
     antialias: bool | None,
-    shift_tta: int = 1,
     *,
     tta: TTAConfig | None = None,
 ) -> _PreparedBatch:
@@ -1412,8 +1397,7 @@ def _prepare_batch(
         patch_size: Backbone patch size for shape validation.
         include_source_image: Store the source image in result metadata.
         antialias: Use antialiasing during image resize.
-        shift_tta: Number of shifted passes the caller will run; checked here, before any image is read.
-        tta: The views to run instead of ``shift_tta``; checked here too.
+        tta: The views to run; checked here, before any image is read.
 
     Returns:
         The model input and the data :func:`_decode_batch` needs.
@@ -1434,7 +1418,7 @@ def _prepare_batch(
         if context.max_batch_size is not None and batch_size > context.max_batch_size:
             raise ValueError(f"Batch size {batch_size} exceeds export maximum {context.max_batch_size}.")
 
-    patch_size, shape, views = _plan_views(context, shift_tta, tta, shape, patch_size)
+    patch_size, shape, views = _plan_views(context, tta, shape, patch_size)
 
     # Built before the forward pass, where a class-id map that does not match `class_names` can still be refused.
     score_floor, threshold_by_class_id = _class_thresholds(threshold, context)

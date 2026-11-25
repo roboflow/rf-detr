@@ -37,13 +37,24 @@ Naming `shift` or `flip` without `zoom` gives exactly the views you named and no
 - **Limits:** keypoint models, an `inference()` snapshot and exported runtimes refuse several views before any image is read, because they fix their resolution or batch size. Mirroring assumes an object keeps its class when the image is flipped; do not use `flip` for arrows or turn signs.
 - **Related:** `RFDETR.predict(..., shift_tta=N)` is the older option that averages `N` shifted passes. It is unchanged and described on the [Detection page](run/detection.md#steadier-scores-with-shift-test-time-augmentation).
 
+## How the Views Become a Batch
+
+A call to `predict` takes one image or a list of images, and every image gets its own views. On CUDA the views of one canvas size go through the network together, so the views are rows of a batch.
+
+![Animation in two rows. Top row, predict of one image: the input image is copied into four views, a plain one and zooms of 0.85, 1.25 and 1.5, each on its own canvas. The four views are four rows of one forward pass, which finds the objects in every view. The boxes of each view are mapped back to the image and the matching ones are averaged into one fused result. Bottom row, predict of eight images: eight input images with the same four views are a grid of 32 rows, one forward pass, split into chunks when it is over the pixel budget, fused back into eight results.](../assets/tta/tta-views-batch.svg){ loading=lazy }
+
+- **One image per call:** the views are the whole batch. `V` views of one image run as a batch of `V` rows.
+- **Several images per call:** the batch is the number of images times the number of views. Eight images with four views are 32 rows. Above a pixel budget the rows are split into several forward passes, which keeps memory flat.
+- **Not CUDA:** on MPS and CPU each view is its own forward pass, and a batch of images is processed view by view.
+- **Why two latency settings below:** a server may send one image at a time, where the views fill the batch, or collect several images, where the batch is already full before the views are added. The tables and figures show both, always as the time per image.
+
 ## What Was Measured
 
 A sweep over every released detection size, from Atto to 2XLarge, on all 5000 COCO val2017 images, with the plain prediction as the baseline.
 
 - **Accuracy:** box AP at confidence threshold 0.001, scored through `RFDETRInference.predict` and the stored predictions. The images are also split into 5 interleaved folds. The gain of a recipe over the plain prediction is paired, scored on the same images, and its error is the fold-to-fold standard error, so a gain well inside it is not a gain.
-- **Latency:** the median of 50 calls after 10 warm-up calls at threshold 0.5, for one image per call and for eight images per call, in milliseconds. A call covers preprocessing, the forward pass, mapping back and fusing. The eight-image figure is divided by 8, so both settings are per image.
-- **Recipes:** the shift sweep covers all nine sizes with 1, 2, 4, 6 and 8 views. The flip and zoom recipes, the cost breakdown, memory and runtime switches were measured for Nano, Small and Large, and for Nano to 2XLarge in the case of the breakdown and memory.
+- **Latency:** the median of 50 calls after 10 warm-up calls at threshold 0.5, in milliseconds, for two call shapes: `predict` with one image, and `predict` with a list of eight images. A call covers preprocessing, the forward pass, mapping back and fusing. The eight-image time is divided by 8, so both settings are the time per image.
+- **Recipes:** the shift sweep covers all nine sizes with 1, 2, 4, 6 and 8 views. The flip, zoom and shift + zoom recipes and the runtime switches were measured for Nano, Small and Large, and the cost breakdown and memory for Atto to 2XLarge.
 
 The [cookbook](../../cookbooks/tta-latency-accuracy/) reruns the shift sweep, the two zoom recipes and both figures on your hardware. The flip and shift plus zoom recipes, the stage timers, memory and the runtime switches come from the extended version of the same notebook at commit `e0131796`.
 
@@ -75,26 +86,26 @@ Box AP in percent for shift views, with the paired gain over one view and its fo
 
 Views cost latency that grows with the model, because a small model is limited by launching its kernels and a large one by its arithmetic. The extra work around the network is small.
 
-| Model   | 1 image: 1 view | 4 views | 8 views | 8 views, vs 1 view | 8 images: 1 view | 4 views | 8 views |
-| ------- | --------------- | ------- | ------- | ------------------ | ---------------- | ------- | ------- |
-| Atto    | 5.15            | 7.76    | 7.39    | 1.4x               | 0.90             | 2.00    | 3.30    |
-| Femto   | 6.51            | 8.24    | 9.28    | 1.4x               | 1.11             | 2.47    | 4.37    |
-| Pico    | 6.89            | 8.73    | 10.48   | 1.5x               | 1.26             | 3.56    | 6.30    |
-| Nano    | 5.66            | 8.63    | 10.59   | 1.9x               | 1.27             | 3.66    | 6.55    |
-| Small   | 6.19            | 10.74   | 14.84   | 2.4x               | 1.80             | 5.97    | 10.73   |
-| Medium  | 6.80            | 11.82   | 17.25   | 2.5x               | 2.02             | 7.13    | 13.53   |
-| Large   | 7.86            | 15.98   | 25.23   | 3.2x               | 2.66             | 11.99   | 23.19   |
-| XLarge  | 10.04           | 21.76   | 36.29   | 3.6x               | 4.38             | 16.73   | 32.63   |
-| 2XLarge | 11.19           | 29.96   | 51.77   | 4.6x               | 5.57             | 25.36   | 49.91   |
+| Model   | predict(1 image): 1 view | 4 views | 8 views | 8 views, vs 1 view | predict(8 images): 1 view | 4 views | 8 views |
+| ------- | ------------------------ | ------- | ------- | ------------------ | ------------------------- | ------- | ------- |
+| Atto    | 5.15                     | 7.76    | 7.39    | 1.4x               | 0.90                      | 2.00    | 3.30    |
+| Femto   | 6.51                     | 8.24    | 9.28    | 1.4x               | 1.11                      | 2.47    | 4.37    |
+| Pico    | 6.89                     | 8.73    | 10.48   | 1.5x               | 1.26                      | 3.56    | 6.30    |
+| Nano    | 5.66                     | 8.63    | 10.59   | 1.9x               | 1.27                      | 3.66    | 6.55    |
+| Small   | 6.19                     | 10.74   | 14.84   | 2.4x               | 1.80                      | 5.97    | 10.73   |
+| Medium  | 6.80                     | 11.82   | 17.25   | 2.5x               | 2.02                      | 7.13    | 13.53   |
+| Large   | 7.86                     | 15.98   | 25.23   | 3.2x               | 2.66                      | 11.99   | 23.19   |
+| XLarge  | 10.04                    | 21.76   | 36.29   | 3.6x               | 4.38                      | 16.73   | 32.63   |
+| 2XLarge | 11.19                    | 29.96   | 51.77   | 4.6x               | 5.57                      | 25.36   | 49.91   |
 
-Latency per image in milliseconds for shift views on an eager PyTorch predictor, for one image per call and for eight images per call divided by eight.
+Latency per image in milliseconds for shift views on an eager PyTorch predictor. The first four columns are a call with one image, whose views are the batch. The last three are a call with eight images, an 8 x V batch, divided by 8.
 
-- **One image per call:** eight views of Atto cost 1.4 times one view, and eight views of 2XLarge cost 4.6 times. Small models have idle capacity that the extra rows fill.
-- **Eight images per call:** the device is already busy, so the cost per image grows almost with the number of views, 3.7 times for Atto and 9.0 times for 2XLarge at eight views.
+- **One image in the call:** eight views of Atto cost 1.4 times one view, and eight views of 2XLarge cost 4.6 times. Small models have idle capacity that the extra rows fill.
+- **Eight images in the call:** the device is already busy, so the cost per image grows almost with the number of views, 3.7 times for Atto and 9.0 times for 2XLarge at eight views.
 - **Zoom costs more per view:** the canvas of a zoomed view is larger. At four views on Nano a call takes 8.6 ms with shifts and 17.1 ms with the default zooms.
 - **Optimized snapshot:** `model.inference()` runs the plain prediction in 1.9 to 7.7 ms, 1.5 to 3.1 times faster than the eager plain call, and cannot run views. It is the reference when no TTA is needed.
 
-![Box AP against latency per image, one curve per model size, for one image per call on the left and eight images per call on the right. Solid curves are 1, 2, 4, 6 and 8 shift views, labelled at 2 and 8. Dashed curves with square markers are the 2-view and 4-view zoom recipes, measured for Nano, Small and Large at one image per call. Every curve rises slowly while moving right, and the curve of a larger model starts above and to the left of the end of the curve of a smaller one.](../assets/tta/tta-ap-latency.svg){ loading=lazy }
+![Box AP against latency per image, one curve per model size. The left panel is predict with one image, whose V views are the batch. The right panel is predict with eight images, a batch of 8 x V views, divided by 8. Solid curves are 1, 2, 4, 6 and 8 shift views, labelled at 2 and 8. Dashed curves with square markers are the 2-view and 4-view zoom recipes, measured for Nano, Small and Large at one image per call. Every curve rises slowly while moving right, and the curve of a larger model starts above and to the left of the end of the curve of a smaller one.](../assets/tta/tta-ap-latency.svg){ loading=lazy }
 
 **Memory.** The peak extra CUDA memory of one call grows with the rows in flight and stays small. For one image per call it rises from 7 MiB (Atto, 1 view) to 74 MiB at eight views, and from 146 MiB (2XLarge, 1 view) to 1364 MiB at eight views. For eight images per call it stops growing at 0.35 to 1.7 GiB once the pixel budget splits the views into several forwards.
 
@@ -104,21 +115,21 @@ Latency per image in milliseconds for shift views on an eager PyTorch predictor,
 
 The same number of views can be shifts, mirrored copies, zoomed copies or a mix. Gain over the plain prediction in box AP points, with latency of one image per call in brackets.
 
-| Views | Recipe            | Nano              | Small             | Large             |
-| ----- | ----------------- | ----------------- | ----------------- | ----------------- |
-| 1     | plain             | 48.02 AP (5.7 ms) | 52.82 AP (6.2 ms) | 56.56 AP (7.9 ms) |
-| 2     | flip              | +0.75 (8.2 ms)    | +0.85 (9.1 ms)    | +0.48 (11.8 ms)   |
-| 2     | shift             | +1.33 (7.2 ms)    | +1.35 (8.8 ms)    | +0.86 (11.8 ms)   |
-| 2     | zoom `(1.25,)`    | +2.83 (11.7 ms)   | +2.41 (14.0 ms)   | +1.30 (17.5 ms)   |
-| 4     | shift             | +2.20 (8.6 ms)    | +1.87 (10.7 ms)   | +1.21 (16.0 ms)   |
-| 4     | shift + flip      | +2.21 (8.5 ms)    | +2.05 (10.8 ms)   | +1.37 (16.1 ms)   |
-| 4     | zoom, the default | +4.02 (17.1 ms)   | +3.11 (21.6 ms)   | +1.96 (30.9 ms)   |
-| 4     | shift + zoom      | +4.28 (16.8 ms)   | +3.46 (21.4 ms)   | +2.05 (30.9 ms)   |
-| 8     | shift             | +2.43 (10.6 ms)   | +2.12 (14.8 ms)   | +1.31 (25.2 ms)   |
-| 8     | shift + flip      | +2.77 (10.6 ms)   | +2.51 (15.0 ms)   | +1.59 (25.3 ms)   |
-| 8     | shift + zoom      | +3.97 (23.4 ms)   | +3.15 (29.4 ms)   | +1.95 (44.0 ms)   |
+| Views | Recipe            | Nano              | Small             | Medium            | Large             |
+| ----- | ----------------- | ----------------- | ----------------- | ----------------- | ----------------- |
+| 1     | plain             | 48.02 AP (5.7 ms) | 52.82 AP (6.2 ms) | 54.69 AP (6.8 ms) | 56.56 AP (7.9 ms) |
+| 2     | flip              | +0.75 (8.2 ms)    | +0.85 (9.1 ms)    | not measured      | +0.48 (11.8 ms)   |
+| 2     | shift             | +1.33 (7.2 ms)    | +1.35 (8.8 ms)    | +0.94 (9.8 ms)    | +0.86 (11.8 ms)   |
+| 2     | zoom `(1.25,)`    | +2.83 (11.7 ms)   | +2.41 (14.0 ms)   | not measured      | +1.30 (17.5 ms)   |
+| 4     | shift             | +2.20 (8.6 ms)    | +1.87 (10.7 ms)   | +1.43 (11.8 ms)   | +1.21 (16.0 ms)   |
+| 4     | shift + flip      | +2.21 (8.5 ms)    | +2.05 (10.8 ms)   | not measured      | +1.37 (16.1 ms)   |
+| 4     | zoom, the default | +4.02 (17.1 ms)   | +3.11 (21.6 ms)   | not measured      | +1.96 (30.9 ms)   |
+| 4     | shift + zoom      | +4.28 (16.8 ms)   | +3.46 (21.4 ms)   | not measured      | +2.05 (30.9 ms)   |
+| 8     | shift             | +2.43 (10.6 ms)   | +2.12 (14.8 ms)   | +1.65 (17.3 ms)   | +1.31 (25.2 ms)   |
+| 8     | shift + flip      | +2.77 (10.6 ms)   | +2.51 (15.0 ms)   | not measured      | +1.59 (25.3 ms)   |
+| 8     | shift + zoom      | +3.97 (23.4 ms)   | +3.15 (29.4 ms)   | not measured      | +1.95 (44.0 ms)   |
 
-Standard errors of the paired gains are 0.05 to 0.18 points. The recipes are `shift=2, flip=True` and `shift=4, flip=True` for shift + flip, `zoom=(0.85, 1.25, 1.5)` for the default, `shift=2, zoom=(1.25, 1.5)` and `shift=4, zoom=(0.85, 1.15, 1.3, 1.5)` for shift + zoom.
+Medium was swept with shift views only in the extended run, so its flip and zoom cells are empty; the cookbook measures its zoom recipes. Standard errors of the paired gains are 0.05 to 0.18 points. The recipes are `shift=2, flip=True` and `shift=4, flip=True` for shift + flip, `zoom=(0.85, 1.25, 1.5)` for the default, `shift=2, zoom=(1.25, 1.5)` and `shift=4, zoom=(0.85, 1.15, 1.3, 1.5)` for shift + zoom.
 
 - **Zoom beats shift per view.** At the same view count zoom adds about twice the AP of shifts, +4.02 against +2.20 on Nano at four views. A plausible reason is that a zoomed view shows objects at another scale, while a shift only changes where an object falls inside a patch; this was not tested separately. It is why zoom is the default.
 - **Zoom costs about twice as much.** Four zoom views take 17.1 ms on Nano against 8.6 ms for four shifts, because the canvas is larger. Per millisecond added, shifts buy more AP. At a similar latency zoom is still ahead by 0.05 to 0.4 points: two zoom views on Nano take 11.7 ms for +2.83, and eight shift views take 10.6 ms for +2.43.
