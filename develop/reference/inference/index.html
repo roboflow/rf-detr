@@ -1048,6 +1048,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../learn/tta/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test-Time Augmentation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1545,6 +1573,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
+      <a href="../../learn/tta/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test-Time Augmentation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../exports/" class="md-nav__link">
         
   
@@ -1642,10 +1698,10 @@ APIs described here may change or may never ship in a release, so use the <a hre
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_5" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_6" >
         
           
-          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="0">
             
   
   
@@ -1663,8 +1719,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -1926,10 +1982,10 @@ APIs described here may change or may never ship in a release, so use the <a hre
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_6" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_7" >
         
           
-          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_7" id="__nav_4_7_label" tabindex="0">
             
   
   
@@ -1947,8 +2003,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_6">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_7">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -2427,6 +2483,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;stream_buffer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#rfdetr.inference.RFDETRInference.predict(tta)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;tta
       
     </span>
   </a>
@@ -3744,6 +3811,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#rfdetr.inference.RFDETRInference.predict(tta)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;tta
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -4112,7 +4190,7 @@ refuses a device or runtime option.</p>
 
 
 <h3 id="rfdetr.inference.RFDETRInference.predict" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">predict</span><span class="p">(</span><span class="n">images</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">patch_size</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">antialias</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">stream</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">batch</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">vid_stride</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">stream_buffer</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span></code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="n">predict</span><span class="p">(</span><span class="n">images</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">shape</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">patch_size</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="o">*</span><span class="p">,</span> <span class="n">antialias</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">stream</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">batch</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">vid_stride</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">stream_buffer</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">tta</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span></code>
 
 <a href="#rfdetr.inference.RFDETRInference.predict" class="headerlink" title="Permanent link">&para;</a></h3>
 
@@ -4311,6 +4389,30 @@ runtimes for individual live sources.</p>
             </td>
             <td>
                   <code>False</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h4 id="rfdetr.inference.RFDETRInference.predict(tta)" class="doc doc-heading doc-heading-parameter">                  <code>tta</code>
+<a href="#rfdetr.inference.RFDETRInference.predict(tta)" class="headerlink" title="Permanent link">&para;</a></h4>            </td>
+            <td>
+                  <code><span title="rfdetr._prediction.tta.TTAConfig">TTAConfig</span> | None</code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Test-time augmentation views to fuse, a :class:<code>~rfdetr._prediction.tta.TTAConfig</code> with sub-patch
+<code>shift</code> views, mirrored (<code>flip</code>) views and <code>zoom</code> views. <code>None</code>, the default, runs the plain
+prediction, and <code>TTAConfig()</code> runs the plain image and three zoomed copies. Each view is one more
+forward pass, on a canvas at least as large as the image, so the cost grows with the number of views
+and, for zoom, with the canvas area; the views are batched on CUDA and run one at a time elsewhere. Only
+a predictor built from a live model or a checkpoint path accepts it: a snapshot from <code>inference()</code> and
+an exported runtime fix their resolution or batch size and refuse it before any image is read. A model
+with classes that change under mirroring (arrows, turn signs) should not use <code>flip</code>. Keypoint models
+are refused.</p>
+              </div>
+            </td>
+            <td>
+                  <code>None</code>
             </td>
           </tr>
       </tbody>

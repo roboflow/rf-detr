@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-25T10:28:58">
+  <meta property="article:modified_time" content="2026-11-25T14:12:27">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-25T10:28:58",
+    "dateModified": "2026-11-25T14:12:27",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1188,6 +1188,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tta/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test-Time Augmentation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1685,6 +1713,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
   
     <li class="md-nav__item">
+      <a href="../../tta/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Test-Time Augmentation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../exports/" class="md-nav__link">
         
   
@@ -1782,10 +1838,10 @@ APIs described here may change or may never ship in a release, so use the <a hre
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_5" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_6" >
         
           
-          <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="0">
             
   
   
@@ -1803,8 +1859,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_6">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -2066,10 +2122,10 @@ APIs described here may change or may never ship in a release, so use the <a hre
         
           
         
-        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_6" >
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4_7" >
         
           
-          <label class="md-nav__link" for="__nav_4_6" id="__nav_4_6_label" tabindex="0">
+          <label class="md-nav__link" for="__nav_4_7" id="__nav_4_7_label" tabindex="0">
             
   
   
@@ -2087,8 +2143,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_6_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_6">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_7">
             <span class="md-nav__icon md-icon"></span>
             
   
@@ -4190,11 +4246,13 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>The backbone reads the image in square patches (16 pixels for most models, 12 for the segmentation models). When an object moves by a fraction of a patch, its box barely changes, but its confidence score can swing enough to cross the threshold (<a href="https://github.com/roboflow/rf-detr/issues/1599">#1599</a>). <code>shift_tta=N</code> predicts the image <code>N</code> times, each time moved by another <code>1/N</code> of a patch, and averages the matching detections:</p>
 <div class="language-python highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">model</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">shift_tta</span><span class="o">=</span><span class="mi">4</span><span class="p">)</span>
 </span></code></pre></div>
-<p><img alt="Two pages that flip. Page 1: a plain predict() runs the network once on the whole input image, which holds a person and a small dog, and returns a bounding box with a score for each: person 0.91 and dog 0.70, both kept. Page 2: with shift_tta=4 the same input is moved down and right by 0, a quarter, a half and three quarters of a patch on a canvas one patch larger, so nothing is cropped. Each snapshot goes through the same network once and returns its own boxes and scores. The network finds the person in every pass but misses the dog in one. The combine panel then plays the steps in order: the boxes of each pass slide back by subtracting their offset, boxes that share a class and have an IoU above 0.6 are grouped, each group is averaged into one box, and its score is built from one quarter of every pass score, so a missed pass adds nothing and counts as 0. The person gets 0.91 and the dog 0.54, and both are kept. Scores are illustrative." loading="lazy" src="../../../assets/shift-tta.svg" /></p>
+<p>The animation shows sequential execution on CPU and MPS.</p>
+<p><img alt="Two pages showing sequential shift views. Page 1: a plain predict() runs the network once on the whole input image, which holds a person and a small dog, and returns a bounding box with a score for each: person 0.91 and dog 0.70, both kept. Page 2: with shift_tta=4 the same input is moved down and right by 0, a quarter, a half and three quarters of a patch on a canvas one patch larger, so nothing is cropped. Each snapshot goes through the same network once and returns its own boxes and scores. The network finds the person in every pass but misses the dog in one. The combine panel then plays the steps in order: the boxes of each pass slide back by subtracting their offset, boxes that share a class and have an IoU above 0.6 are grouped, each group is averaged into one box, and its score is built from one quarter of every pass score, so a missed pass adds nothing and counts as 0. The person gets 0.91 and the dog 0.54, and both are kept. Scores are illustrative." loading="lazy" src="../../../assets/shift-tta.svg" /></p>
 <ul>
-<li>Each pass costs one forward pass, so <code>shift_tta=4</code> takes about 4 times as long. <code>2</code> is the cheaper middle ground.</li>
+<li>On CPU and MPS, each shift runs its own forward pass. CUDA can batch shifts on the same canvas and split them when the forward pixel budget limits how many views fit together. Two shifts require less work than four.</li>
 <li>Detections match across passes when they have the same class and a box IoU above 0.6. The fused box is the mean box, and the fused score is the mean score over all passes, with a pass that missed the object counting as 0. No pass is held to <code>threshold</code> on its own: a pass that scores the object low still counts at its own score, and <code>threshold</code> applies only to the averaged score. Averaged scores can sit a little lower than single-pass ones; pick the threshold with <code>shift_tta</code> on.</li>
 <li>Segmentation masks keep the pixels that at least half of the matched masks cover. Keypoint models do not support <code>shift_tta</code>, and the value is checked before any image is read.</li>
+<li><code>RFDETRInference.predict(..., tta=TTAConfig())</code> opts into zoomed views. Set <code>flip=True</code> to request mirroring and supply <code>zoom</code> explicitly to combine it with zoomed views. <a href="../../tta/">Test-Time Augmentation</a> measures what each recipe adds and costs on COCO val2017.</li>
 </ul>
 <p>On RF-DETR-N fine-tuned on the <code>deeppcb</code> dataset of RF100-VL, moving each test image by 0 to 16 pixels changed the keep-or-drop decision for 21.0% of the defects with one pass, 7.4% with <code>shift_tta=2</code> and 3.7% with <code>shift_tta=4</code>, each at its own best-F1 threshold. Test mAP50-95 was 0.702, 0.699 and 0.708.</p>
 <h2 id="run-on-video-webcam-or-rtsp-stream">Run on video, webcam, or RTSP stream<a class="headerlink" href="#run-on-video-webcam-or-rtsp-stream" title="Permanent link">&para;</a></h2>
@@ -4327,7 +4385,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 25, 2026 10:28:58 UTC">2026-11-25 10:28:58</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 25, 2026 14:12:27 UTC">2026-11-25 14:12:27</span>
   </span>
 
     

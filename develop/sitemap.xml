@@ -81,6 +81,10 @@
          <lastmod>2026-11-25</lastmod>
     </url>
     <url>
+         <loc>https://rfdetr.roboflow.com/develop/cookbooks/tta-latency-accuracy/</loc>
+         <lastmod>2026-11-25</lastmod>
+    </url>
+    <url>
          <loc>https://rfdetr.roboflow.com/develop/exports/</loc>
          <lastmod>2026-11-25</lastmod>
     </url>
@@ -154,6 +158,10 @@
     </url>
     <url>
          <loc>https://rfdetr.roboflow.com/develop/learn/pretrained/</loc>
+         <lastmod>2026-11-25</lastmod>
+    </url>
+    <url>
+         <loc>https://rfdetr.roboflow.com/develop/learn/tta/</loc>
          <lastmod>2026-11-25</lastmod>
     </url>
     <url>
