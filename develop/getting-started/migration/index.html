@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-20T09:33:09">
+  <meta property="article:modified_time" content="2026-11-25T14:13:16">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-20T09:33:09",
+    "dateModified": "2026-11-25T14:13:16",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -882,6 +882,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
       
     </span>
   </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unreleased-get_vit_lr_decay_rate-and-get_vit_weight_decay_rate-are-deprecated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unreleased: get_vit_lr_decay_rate and get_vit_weight_decay_rate are deprecated
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Unreleased: get_vit_lr_decay_rate and get_vit_weight_decay_rate are deprecated">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#deprecated-in-v113-remove-in-v116" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deprecated in v1.13 → Remove in v1.16
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
       
@@ -3692,6 +3720,34 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#unreleased-get_vit_lr_decay_rate-and-get_vit_weight_decay_rate-are-deprecated" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unreleased: get_vit_lr_decay_rate and get_vit_weight_decay_rate are deprecated
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Unreleased: get_vit_lr_decay_rate and get_vit_weight_decay_rate are deprecated">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#deprecated-in-v113-remove-in-v116" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Deprecated in v1.13 → Remove in v1.16
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#upgrade-111-112" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4103,6 +4159,14 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-1-3"><a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="n">PIL</span><span class="o">.</span><span class="n">Image</span><span class="o">.</span><span class="n">MAX_IMAGE_PIXELS</span> <span class="o">=</span> <span class="mi">2_000_000_000</span>
 </span></code></pre></div>
 <p>Put the assignment at module level, not inside an <code>if __name__ == "__main__":</code> block. DataLoader workers that are spawned, not forked (the default on macOS and Windows, and on Linux from Python 3.14), import your script again without running that block, so a limit set there does not reach them.</p>
+<hr />
+<h2 id="unreleased-get_vit_lr_decay_rate-and-get_vit_weight_decay_rate-are-deprecated">Unreleased: <code>get_vit_lr_decay_rate</code> and <code>get_vit_weight_decay_rate</code> are deprecated<a class="headerlink" href="#unreleased-get_vit_lr_decay_rate-and-get_vit_weight_decay_rate-are-deprecated" title="Permanent link">&para;</a></h2>
+<h3 id="deprecated-in-v113-remove-in-v116">Deprecated in v1.13 → Remove in v1.16<a class="headerlink" href="#deprecated-in-v113-remove-in-v116" title="Permanent link">&para;</a></h3>
+<div class="admonition note">
+<p class="admonition-title">Deprecated: unused ViT decay helpers</p>
+<p><code>get_vit_lr_decay_rate</code> and <code>get_vit_weight_decay_rate</code> in <code>rfdetr.training.param_groups</code> are deprecated in v1.13.0 and will be removed in v1.16.0, following the three-minor-release deprecation window. Both still return the same values until then and emit a <code>FutureWarning</code> on the first call.</p>
+<p>RF-DETR itself never called them. Its optimizer groups use <code>get_dinov2_lr_decay_rate</code> and <code>get_dinov2_weight_decay_rate</code> from <code>rfdetr.models.backbone.backbone</code>, which match DINOv2 parameter names (<code>.layer.</code> and <code>embeddings</code>). The deprecated helpers match the <code>.blocks.</code>, <code>.pos_embed</code> and <code>.patch_embed</code> names of other ViT implementations, so they are not interchangeable: if your code needs that naming, copy the function into your project.</p>
+</div>
 <hr />
 <h2 id="upgrade-111-112">Upgrade 1.11 → 1.12<a class="headerlink" href="#upgrade-111-112" title="Permanent link">&para;</a></h2>
 <p>For new image-prediction integrations, use the shared <a href="../../learn/inference/"><code>RFDETRInference</code></a> API with a live native model, checkpoint, or supported full export. It returns decoded Supervision results and handles preprocessing; keep format-specific session APIs for raw-runtime workflows.</p>
@@ -4907,7 +4971,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 20, 2026 09:33:09 UTC">2026-11-20 09:33:09</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 25, 2026 14:13:16 UTC">2026-11-25 14:13:16</span>
   </span>
 
     
