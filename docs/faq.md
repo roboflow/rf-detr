@@ -65,7 +65,9 @@ Resolution rules:
 
 ## Where does RF-DETR store downloaded weights, and how do I change it?
 
-Published checkpoints are cached in `~/.roboflow/models` by default. Override the location for all models by setting an environment variable — `RF_HOME` (canonical) or its alias `ROBOFLOW_HOME`:
+Published checkpoints follow the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/latest/): by default they are cached in `$XDG_CACHE_HOME/roboflow/models` when `XDG_CACHE_HOME` is set to an absolute path, or `~/.cache/roboflow/models` otherwise. For backwards compatibility, if `~/.roboflow/models` already exists on disk (and `RF_HOME`, `ROBOFLOW_HOME`, and `XDG_CACHE_HOME` are unset), RF-DETR continues using `~/.roboflow/models` so existing checkpoints are not downloaded again.
+
+Override the exact model cache directory for all models by setting `RF_HOME` (canonical) or its alias `ROBOFLOW_HOME`:
 
 ```bash
 export RF_HOME=/mnt/shared/models
@@ -73,7 +75,7 @@ export RF_HOME=/mnt/shared/models
 export ROBOFLOW_HOME=/mnt/shared/models
 ```
 
-If both are set, `RF_HOME` wins. This only affects where **bare-filename** weights are cached; an explicit path in `pretrain_weights=` is always honored as given.
+If both are set, `RF_HOME` wins, and both take precedence over `XDG_CACHE_HOME`. This only affects where **bare-filename** weights are cached; an explicit path in `pretrain_weights=` is always honored as given.
 
 Published checkpoints download from `https://repo.roboflow.com/rfdetr`. On a network that only allows listed hosts, allow `repo.roboflow.com`, or copy the files into the cache directory ahead of time: a cached file whose MD5 matches is never downloaded again.
 

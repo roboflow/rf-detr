@@ -33,9 +33,16 @@ from rfdetr.utilities.logger import get_logger
 
 logger = get_logger()
 
+#: Canonical environment variable overriding the model weights cache directory.
 _RF_HOME_ENV_VAR = "RF_HOME"
+#: Accepted alias for :data:`_RF_HOME_ENV_VAR` when ``RF_HOME`` is unset or empty.
 _ROBOFLOW_HOME_ENV_VAR = "ROBOFLOW_HOME"
-_DEFAULT_CACHE_DIR = "~/.roboflow/models"
+#: XDG Base Directory Specification cache root environment variable.
+_XDG_CACHE_HOME_ENV_VAR = "XDG_CACHE_HOME"
+#: Legacy pre-XDG cache directory preserved when already present on disk.
+_LEGACY_CACHE_DIR = "~/.roboflow/models"
+#: Default XDG cache directory used when no override or existing legacy directory applies.
+_DEFAULT_CACHE_DIR = "~/.cache/roboflow/models"
 
 
 @dataclass(frozen=True)
@@ -275,45 +282,68 @@ class ModelWeights(ModelWeightsBase):
 def get_model_cache_dir() -> str:
     """Return the directory where RF-DETR caches downloaded model weights.
 
-    Reads the ``RF_HOME`` environment variable, falling back to its alias ``ROBOFLOW_HOME``; defaults to
-    ``~/.roboflow/models`` when neither is set.  ``RF_HOME`` is canonical — when both variables are set it wins, so
-    existing configurations keep their behavior.  An empty value is treated as unset.
+    Resolves the cache location in priority order:
 
-    Set either variable to override the cache location for all RF-DETR models:
+    1. ``RF_HOME`` environment variable (canonical override).
+    2. ``ROBOFLOW_HOME`` environment variable (accepted alias).
+    3. ``XDG_CACHE_HOME`` environment variable (with ``roboflow/models`` appended) when set to an absolute path per the
+       XDG Base Directory Specification; empty or relative values are ignored.
+    4. Existing ``~/.roboflow/models`` directory on disk, preserving backwards compatibility so upgraded installations
+       reuse previously downloaded checkpoints without re-downloading.
+    5. ``~/.cache/roboflow/models`` (the XDG default when ``XDG_CACHE_HOME`` is unset).
+
+    Set ``RF_HOME`` (or ``ROBOFLOW_HOME``) to override the exact model directory, or ``XDG_CACHE_HOME`` to relocate the
+    shared XDG cache root:
 
     .. code-block:: bash
 
-        export RF_HOME=/mnt/shared/models       # canonical
-        export ROBOFLOW_HOME=/mnt/shared/models  # accepted alias
-
-    Args: None
+        export RF_HOME=/mnt/shared/models        # canonical exact directory
+        export ROBOFLOW_HOME=/mnt/shared/models   # accepted alias
+        export XDG_CACHE_HOME=/mnt/shared/cache   # resolves to /mnt/shared/cache/roboflow/models
 
     Returns:
-        Absolute, user-expanded path to the model cache directory.  The directory is *not* created by this function —
+        Absolute, user-expanded path to the model cache directory. The directory is *not* created by this function —
         callers that need it to exist should call ``os.makedirs(get_model_cache_dir(), exist_ok=True)`` themselves.
 
     Examples:
-        >>> import os
-        >>> _ = os.environ.pop("RF_HOME", None)  # ensure default
-        >>> _ = os.environ.pop("ROBOFLOW_HOME", None)
-        >>> expected = os.path.normpath(os.path.expanduser("~/.roboflow/models"))
-        >>> get_model_cache_dir() == expected
-        True
-        >>> os.environ["RF_HOME"] = "~/rfdetr_cache"
-        >>> expected = os.path.normpath(os.path.expanduser("~/rfdetr_cache"))
-        >>> get_model_cache_dir() == expected
-        True
-        >>> del os.environ["RF_HOME"]
-        >>> os.environ["ROBOFLOW_HOME"] = "~/roboflow_cache"
-        >>> expected = os.path.normpath(os.path.expanduser("~/roboflow_cache"))
-        >>> get_model_cache_dir() == expected
-        True
-        >>> del os.environ["ROBOFLOW_HOME"]
+        >>> import os, tempfile
+        >>> with tempfile.TemporaryDirectory() as home:
+        ...     old_env = os.environ.copy()
+        ...     try:
+        ...         os.environ["HOME"] = home
+        ...         os.environ["USERPROFILE"] = home
+        ...         _ = os.environ.pop("RF_HOME", None)
+        ...         _ = os.environ.pop("ROBOFLOW_HOME", None)
+        ...         _ = os.environ.pop("XDG_CACHE_HOME", None)
+        ...         assert get_model_cache_dir() == os.path.join(home, ".cache", "roboflow", "models")
+        ...         os.environ["XDG_CACHE_HOME"] = os.path.join(home, "xdg")
+        ...         assert get_model_cache_dir() == os.path.join(home, "xdg", "roboflow", "models")
+        ...         os.environ["RF_HOME"] = os.path.join(home, "rf_models")
+        ...         assert get_model_cache_dir() == os.path.join(home, "rf_models")
+        ...     finally:
+        ...         os.environ.clear()
+        ...         os.environ.update(old_env)
     """
     # `RF_HOME` is canonical; `ROBOFLOW_HOME` is an accepted alias. An empty value is
-    # treated as unset so it falls through to the alias and then the default.
-    cache_dir = os.environ.get(_RF_HOME_ENV_VAR) or os.environ.get(_ROBOFLOW_HOME_ENV_VAR) or _DEFAULT_CACHE_DIR
-    return os.path.abspath(os.path.expanduser(cache_dir))
+    # treated as unset so resolution falls through to XDG / legacy defaults.
+    explicit_dir = os.environ.get(_RF_HOME_ENV_VAR) or os.environ.get(_ROBOFLOW_HOME_ENV_VAR)
+    if explicit_dir:
+        return os.path.abspath(os.path.expanduser(explicit_dir))
+
+    # Per the XDG Base Directory Specification, relative paths in XDG_CACHE_HOME are invalid and must be ignored.
+    xdg_cache_home = os.environ.get(_XDG_CACHE_HOME_ENV_VAR)
+    if xdg_cache_home:
+        expanded_xdg = os.path.expanduser(xdg_cache_home)
+        if os.path.isabs(expanded_xdg):
+            return os.path.abspath(os.path.join(expanded_xdg, "roboflow", "models"))
+
+    # Backwards compatibility: keep using ~/.roboflow/models when already populated on disk so upgrading
+    # users do not re-download checkpoints or split caches across two directories.
+    legacy_dir = os.path.abspath(os.path.expanduser(_LEGACY_CACHE_DIR))
+    if os.path.isdir(legacy_dir):
+        return legacy_dir
+
+    return os.path.abspath(os.path.expanduser(_DEFAULT_CACHE_DIR))
 
 
 def download_pretrain_weights(

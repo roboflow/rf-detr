@@ -946,7 +946,8 @@ class ModelConfig(BaseConfig):
         """Expand and resolve the pretrain_weights path.
 
         Bare filenames (no directory component, e.g. ``rf-detr-base.pth``) are resolved to the model cache directory so
-        weights land in a stable, user-configurable location (``~/.roboflow/models`` by default, or the path set via the
+        weights land in a stable, user-configurable location (``$XDG_CACHE_HOME/roboflow/models`` or
+        ``~/.cache/roboflow/models`` by default, an existing ``~/.roboflow/models`` directory, or the path set via the
         ``RF_HOME`` environment variable) instead of CWD.
 
         Paths that already contain a directory separator (e.g. ``~/models/x.pth``, ``/abs/path/x.pth``,
