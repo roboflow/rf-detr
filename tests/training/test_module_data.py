@@ -35,7 +35,7 @@ from rfdetr.utilities.tensors import (
     pack_targets,
 )
 from tests._markers import _cuda_marks, _requires_kornia
-from tests.datasets.test_unreadable_images_substitution import _write_coco_dataset, _write_yolo_dataset
+from tests.datasets.helpers import _write_coco_dataset, _write_yolo_dataset
 
 _CUDA_DEVICE = pytest.param("cuda", marks=_cuda_marks)
 _EVAL_LOADERS = ["val_dataloader", "test_dataloader", "predict_dataloader"]
@@ -487,7 +487,7 @@ class TestPrivateShowSamples:
     def test_source_image_path_names_the_substitute_of_an_unreadable_coco_image(self, tmp_path, mocker):
         """The path comes from the id ``CocoDetection`` returns, which names the substitute of an unreadable file."""
         mocker.patch.object(io_utils.time, "sleep")
-        annotation_file = _write_coco_dataset(tmp_path)
+        annotation_file = _write_coco_dataset(tmp_path, "png")
         (tmp_path / "image1.png").write_bytes(b"not an image")
         dataset = CocoDetection(tmp_path, annotation_file, transforms=None, skip_unreadable=True)
         _, target = dataset[1]
@@ -538,6 +538,25 @@ class TestSetup:
         assert dm._dataset_train is None
         assert dm._dataset_val is fake_val
         assert dm._dataset_test is None
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    @pytest.mark.parametrize(
+        ("stage", "splits"),
+        [("fit", ["train", "val"]), ("validate", ["val"]), ("test", ["test"]), ("predict", ["val"])],
+    )
+    def test_skip_unreadable_images_reaches_the_builder_of_every_split(self, mocker, tmp_path, stage, splits, enabled):
+        """``setup(stage)`` hands every split builder a namespace that carries ``skip_unreadable_images``."""
+        train_config = _base_train_config(tmp_path, dataset_file="yolo", skip_unreadable_images=enabled)
+        dm = _build_datamodule(train_config=train_config)
+        build = mocker.patch(
+            "rfdetr.training.module_data.build_dataset", side_effect=lambda image_set, args, resolution: _fake_dataset(10)
+        )
+
+        dm.setup(stage)
+
+        assert [(call.args[0], call.args[1].skip_unreadable_images) for call in build.call_args_list] == [
+            (split, enabled) for split in splits
+        ]
 
     @pytest.mark.parametrize("dataset_file", ["roboflow", "yolo"])
     def test_test_stage_uses_test_split(self, tmp_path, dataset_file):

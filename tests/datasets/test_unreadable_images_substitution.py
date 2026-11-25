@@ -11,11 +11,13 @@ the reads it must not retry, the pause before it gives up, and the detail its er
 
 from __future__ import annotations
 
+import errno
 import json
 import struct
 import subprocess
 import zlib
-from collections.abc import Callable, Mapping
+from collections.abc import Callable
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -34,56 +36,13 @@ from rfdetr.datasets.io_utils import (
     read_image_with_retries,
 )
 from rfdetr.datasets.yolo import YoloDetection
+from tests.datasets.helpers import _Reader, _path_of, _write_coco_dataset, _write_yolo_dataset, patch_retry_sleep
 
 
-@pytest.fixture(autouse=True)
-def sleep(mocker: MockerFixture) -> Any:
-    """Replace the retry pause so the tests do not wait, and expose the mock to tests that check the pauses."""
-    return mocker.patch.object(io_utils.time, "sleep")
+sleep = pytest.fixture(autouse=True)(patch_retry_sleep)
 
-
-class _Reader:
-    """Stands in for a dataset's image read: raises a chosen error per index and records every index it is asked for.
-
-    Args:
-        errors: Error raised by the read of each failing index.
-        failures: Number of leading reads of an index that raise its error; an index left out always raises.
-
-    Examples:
-        >>> reader = _Reader({1: OSError("short read")}, failures={1: 1})
-        >>> try:
-        ...     reader(1)
-        ... except OSError as exc:
-        ...     print(exc)
-        short read
-        >>> reader(1), reader(2), reader.calls
-        ('image-1', 'image-2', [1, 1, 2])
-    """
-
-    def __init__(self, errors: Mapping[int, OSError] | None = None, failures: Mapping[int, int] | None = None) -> None:
-        self._errors = dict(errors or {})
-        self._failures = dict(failures or {})
-        self.calls: list[int] = []
-
-    def __call__(self, index: int) -> str:
-        """Return a stand-in image for ``index``, or raise its error while it still has failures left."""
-        self.calls.append(index)
-        error = self._errors.get(index)
-        if error is not None and self._failures.get(index, 1) > 0:
-            if index in self._failures:
-                self._failures[index] -= 1
-            raise error
-        return f"image-{index}"
-
-
-def _path_of(index: int) -> str:
-    """Return the stand-in image path of a dataset index.
-
-    Examples:
-        >>> _path_of(3)
-        '/data/frame000003.png'
-    """
-    return f"/data/frame{index:06d}.png"
+# The datasets of this module hold three PNG images, which its tests overwrite by file name.
+_write_coco_dataset = partial(_write_coco_dataset, extension="png", num_images=3)
 
 
 def _png_chunk(kind: bytes, data: bytes) -> bytes:
@@ -158,33 +117,6 @@ _DECODERS = [
     pytest.param(decode_pil_image, id="pil"),
     pytest.param(decode_image, id="array"),
 ]
-
-
-def _write_coco_dataset(root: Path, num_images: int = 3) -> Path:
-    """Write ``num_images`` 8 x 8 PNG images, image ``i`` with COCO id ``i + 1`` and one box; return the annotations.
-
-    Examples:
-        >>> import tempfile
-        >>> with tempfile.TemporaryDirectory() as tmp:
-        ...     annotation_file = _write_coco_dataset(Path(tmp))
-        ...     sorted(path.name for path in Path(tmp).iterdir())
-        ['_annotations.coco.json', 'image0.png', 'image1.png', 'image2.png']
-    """
-    root.mkdir(parents=True, exist_ok=True)
-    images, annotations = [], []
-    for index in range(num_images):
-        file_name = f"image{index}.png"
-        Image.new("RGB", (8, 8), color=(40 * (index + 1),) * 3).save(root / file_name)
-        images.append({"id": index + 1, "file_name": file_name, "width": 8, "height": 8})
-        annotations.append(
-            {"id": index + 1, "image_id": index + 1, "category_id": 1, "bbox": [2, 2, 4, 4], "area": 16, "iscrowd": 0}
-        )
-    annotation_file = root / "_annotations.coco.json"
-    annotation_file.write_text(
-        json.dumps({"images": images, "annotations": annotations, "categories": [{"id": 1, "name": "object"}]}),
-        encoding="utf-8",
-    )
-    return annotation_file
 
 
 class TestBrokenPngChunk:
@@ -348,12 +280,14 @@ class TestStorageStall:
             read_image_or_substitute(_stalled_reader(20, stalled_reads=2), 0, 20, _path_of)
 
     def test_reads_each_substitute_twice_before_raising(self) -> None:
+        """The requested sample is retried, then the substitutes are swept in order, and swept again after the pause."""
         reader = _stalled_reader(20, stalled_reads=2)
 
         with pytest.raises(RuntimeError):
             read_image_or_substitute(reader, 0, 20, _path_of)
 
-        assert max(reader.calls.count(index) for index in range(1, 20)) == 2
+        substitutes = list(range(1, io_utils._MAX_SUBSTITUTIONS + 1))
+        assert reader.calls == [0] * io_utils._IMAGE_READ_ATTEMPTS + substitutes + substitutes
 
     def test_error_names_a_sustained_storage_outage(self) -> None:
         with pytest.raises(RuntimeError, match="stayed unavailable through every retry, as in a sustained outage"):
@@ -366,6 +300,37 @@ class TestStorageStall:
             read_image_or_substitute(reader, 0, 20, _path_of)
 
         assert (sleep.called, len(reader.calls)) == (False, io_utils._MAX_SUBSTITUTIONS + 1)
+
+    def test_requested_sample_that_recovers_during_the_pause_is_returned(self) -> None:
+        """The stall fails the requested sample's three reads and every substitute's first; the sample itself wins."""
+        errors = {index: OSError("Input/output error") for index in range(20)}
+        reader = _Reader(errors, failures={index: 3 if index == 0 else 1 for index in range(20)})
+
+        assert read_image_or_substitute(reader, 0, 20, _path_of) == (0, "image-0")
+
+    def test_requested_sample_that_recovers_during_the_pause_is_not_logged_unreadable(
+        self, mocker: MockerFixture
+    ) -> None:
+        errors = {index: OSError("Input/output error") for index in range(20)}
+        reader = _Reader(errors, failures={index: 3 if index == 0 else 1 for index in range(20)})
+        log = mocker.patch.object(io_utils, "logger")
+
+        read_image_or_substitute(reader, 0, 20, _path_of)
+
+        assert log.error.called is False
+
+    def test_pauses_for_the_requested_sample_when_every_substitute_is_known_unreadable(self) -> None:
+        errors: dict[int, OSError] = {
+            index: _KnownUnreadableImageError("unreadable at build") for index in range(1, 20)
+        }
+        reader = _Reader({0: OSError("Input/output error"), **errors}, failures={0: 3})
+
+        assert read_image_or_substitute(reader, 0, 20, _path_of) == (0, "image-0")
+
+    def test_single_sample_that_recovers_during_the_pause_is_returned(self) -> None:
+        reader = _Reader({0: OSError("Input/output error")}, failures={0: 3})
+
+        assert read_image_or_substitute(reader, 0, 1, _path_of) == (0, "image-0")
 
 
 class TestSubstituteErrors:
@@ -400,27 +365,6 @@ class TestSubstituteErrors:
         assert "tried in its place" not in str(error.value)
 
 
-def _write_yolo_dataset(root: Path, num_images: int = 3) -> tuple[Path, Path, Path]:
-    """Write ``num_images`` 8 x 8 PNG images, image ``i`` with ``i + 1`` boxes; return the image, label and data paths.
-
-    Examples:
-        >>> import tempfile
-        >>> with tempfile.TemporaryDirectory() as tmp:
-        ...     image_dir, label_dir, data_file = _write_yolo_dataset(Path(tmp))
-        ...     sorted(path.name for path in image_dir.iterdir()), (label_dir / "image2.txt").read_text().count("\\n")
-        (['image0.png', 'image1.png', 'image2.png'], 3)
-    """
-    image_dir, label_dir = root / "images", root / "labels"
-    image_dir.mkdir(parents=True)
-    label_dir.mkdir()
-    for index in range(num_images):
-        Image.new("RGB", (8, 8), color=(40 * (index + 1),) * 3).save(image_dir / f"image{index}.png")
-        (label_dir / f"image{index}.txt").write_text("0 0.5 0.5 0.25 0.25\n" * (index + 1), encoding="utf-8")
-    data_file = root / "data.yaml"
-    data_file.write_text("names:\n  - object\n", encoding="utf-8")
-    return image_dir, label_dir, data_file
-
-
 class TestYoloSampleUnreadableAtBuild:
     """A YOLO sample whose header was unreadable when the dataset was built is known to stay unreadable."""
 
@@ -434,3 +378,191 @@ class TestYoloSampleUnreadableAtBuild:
         dataset[1]
 
         assert (sleep.call_count, log.warning.call_count) == (0, 0)
+
+
+def _short_phys_png(after_idat: bool) -> bytes:
+    """Return a 4 x 4 RGB PNG whose ``pHYs`` chunk holds 4 bytes instead of 9, placed before or after its IDAT chunk.
+
+    Pillow raises ``ValueError`` for the short chunk: while opening the file when the chunk comes before the pixel data,
+    as PNG requires, and only while loading the pixels when it comes after.
+
+    Examples:
+        >>> import io
+        >>> Image.open(io.BytesIO(_short_phys_png(after_idat=True))).size
+        (4, 4)
+    """
+    width = height = 4
+    rows = b"".join(b"\x00" + bytes(width * 3) for _ in range(height))
+    header = b"\x89PNG\r\n\x1a\n" + _png_chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+    phys = _png_chunk(b"pHYs", b"\x00\x00\x00\x01")
+    idat = _png_chunk(b"IDAT", zlib.compress(rows))
+    chunks = idat + phys if after_idat else phys + idat
+    return header + chunks + _png_chunk(b"IEND", b"")
+
+
+_PHYS_PLACEMENTS = [
+    pytest.param(False, id="raised-on-open"),
+    pytest.param(True, id="raised-on-load"),
+]
+
+
+class TestShortPhysChunk:
+    """Pillow raises ``ValueError`` for a ``pHYs`` chunk shorter than 9 bytes; the decoders raise ``OSError``."""
+
+    @pytest.mark.parametrize("after_idat", _PHYS_PLACEMENTS)
+    @pytest.mark.parametrize("decoder", _DECODERS)
+    def test_decoder_raises_os_error(self, tmp_path: Path, decoder: Callable[[Path], Any], after_idat: bool) -> None:
+        path = tmp_path / "short-phys.png"
+        path.write_bytes(_short_phys_png(after_idat))
+
+        with pytest.raises(OSError, match="Truncated pHYs chunk"):
+            decoder(path)
+
+    @pytest.mark.parametrize("after_idat", _PHYS_PLACEMENTS)
+    def test_decoder_with_a_per_decode_limit_raises_os_error(self, tmp_path: Path, after_idat: bool) -> None:
+        """A per-decode limit below Pillow's own calls the format plugins directly instead of ``Image.open``."""
+        path = tmp_path / "short-phys.png"
+        path.write_bytes(_short_phys_png(after_idat))
+
+        with pytest.raises(OSError, match="Truncated pHYs chunk"):
+            decode_pil_image(path, max_image_pixels=10_000)
+
+    @pytest.mark.parametrize("after_idat", _PHYS_PLACEMENTS)
+    def test_decoder_process_raises_os_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, after_idat: bool
+    ) -> None:
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1_000)
+        path = tmp_path / "short-phys.png"
+        path.write_bytes(_short_phys_png(after_idat))
+
+        with pytest.raises(OSError, match="Truncated pHYs chunk"):
+            decode_pil_image(path, max_image_pixels=10_000)
+
+    @pytest.mark.parametrize("after_idat", _PHYS_PLACEMENTS)
+    def test_coco_sample_is_substituted(self, tmp_path: Path, after_idat: bool) -> None:
+        annotation_file = _write_coco_dataset(tmp_path)
+        (tmp_path / "image1.png").write_bytes(_short_phys_png(after_idat))
+        dataset = CocoDetection(tmp_path, annotation_file, transforms=None, skip_unreadable=True)
+
+        _, target = dataset[1]
+
+        assert int(target["image_id"]) == 3
+
+    @pytest.mark.parametrize("after_idat", _PHYS_PLACEMENTS)
+    def test_decoder_process_sample_is_substituted(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, after_idat: bool
+    ) -> None:
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1_000)
+        paths = [tmp_path / "short-phys.png", tmp_path / "image.png"]
+        paths[0].write_bytes(_short_phys_png(after_idat))
+        Image.new("RGB", (4, 4)).save(paths[1])
+
+        index, _ = read_image_or_substitute(
+            lambda i: decode_pil_image(paths[i], max_image_pixels=10_000), 0, 2, lambda i: paths[i]
+        )
+
+        assert index == 1
+
+
+_PROCESS_RESOURCE_ERRNOS = [
+    pytest.param(errno.EMFILE, id="EMFILE"),
+    pytest.param(errno.ENFILE, id="ENFILE"),
+    pytest.param(errno.ENOMEM, id="ENOMEM"),
+    pytest.param(errno.EAGAIN, id="EAGAIN"),
+]
+
+
+class TestProcessResourceError:
+    """A read that fails because the process is out of a resource is retried, but the healthy file is never replaced."""
+
+    @pytest.mark.parametrize("error_number", _PROCESS_RESOURCE_ERRNOS)
+    def test_requested_sample_error_is_raised_after_the_retries(self, error_number: int) -> None:
+        error = OSError(error_number, "resource exhausted")
+
+        with pytest.raises(OSError) as raised:
+            read_image_or_substitute(_Reader({3: error}), 3, 10, _path_of)
+
+        assert raised.value is error
+
+    def test_requested_sample_is_retried(self) -> None:
+        reader = _Reader({3: OSError(errno.EMFILE, "Too many open files")})
+
+        with pytest.raises(OSError):
+            read_image_or_substitute(reader, 3, 10, _path_of)
+
+        assert reader.calls == [3, 3, 3]
+
+    def test_requested_sample_is_not_logged_unreadable(self, mocker: MockerFixture) -> None:
+        log = mocker.patch.object(io_utils, "logger")
+
+        with pytest.raises(OSError):
+            read_image_or_substitute(_Reader({3: OSError(errno.EMFILE, "Too many open files")}), 3, 10, _path_of)
+
+        assert log.error.called is False
+
+    def test_substitute_error_is_raised_at_once(self) -> None:
+        """The requested file is unreadable, but the read of its substitute runs out of descriptors."""
+        error = OSError(errno.EMFILE, "Too many open files")
+        reader = _Reader({3: OSError("image file is truncated"), 4: error})
+
+        with pytest.raises(OSError) as raised:
+            read_image_or_substitute(reader, 3, 10, _path_of)
+
+        assert (raised.value, reader.calls) == (error, [3, 3, 3, 4])
+
+    def test_requested_sample_error_after_the_pause_is_raised(self) -> None:
+        """The stall ends, but the read of the requested sample after the pause runs out of descriptors."""
+        error = OSError(errno.EMFILE, "Too many open files")
+        errors = {index: OSError("Input/output error") for index in range(20)}
+        reader = _Reader(errors, failures={index: 3 if index == 0 else 1 for index in range(20)})
+
+        def read(index: int) -> str:
+            if index == 0 and reader.calls.count(0) == 3:
+                raise error
+            return reader(index)
+
+        with pytest.raises(OSError) as raised:
+            read_image_or_substitute(read, 0, 20, _path_of)
+
+        assert raised.value is error
+
+    def test_decoder_process_that_cannot_start_raises(
+        self, tmp_path: Path, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1_000)
+        error = OSError(errno.EMFILE, "Too many open files")
+        mocker.patch.object(io_utils.subprocess, "run", side_effect=error)
+        paths = [tmp_path / "image0.png", tmp_path / "image1.png"]
+        for path in paths:
+            Image.new("RGB", (4, 4)).save(path)
+
+        with pytest.raises(OSError) as raised:
+            read_image_or_substitute(
+                lambda i: decode_pil_image(paths[i], max_image_pixels=10_000), 0, 2, lambda i: paths[i]
+            )
+
+        assert raised.value is error
+
+    def test_decoder_process_error_keeps_its_errno(
+        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1_000)
+        header = {"error": "OSError", "message": "Too many open files in system", "errno": errno.ENFILE}
+        response = json.dumps(header).encode("utf-8") + b"\n"
+        mocker.patch.object(
+            io_utils.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout=response, stderr=b"")
+        )
+
+        with pytest.raises(OSError) as raised:
+            decode_pil_image_bytes(_two_idat_png()[0], max_image_pixels=10_000)
+
+        assert raised.value.errno == errno.ENFILE
+
+    def test_decoder_process_reports_the_errno(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The worker sends the errno of its own error, here from opening a missing file, back with the message."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1_000)
+
+        with pytest.raises(OSError) as raised:
+            decode_pil_image(tmp_path / "missing.png", max_image_pixels=10_000, num_channels=1)
+
+        assert raised.value.errno == errno.ENOENT

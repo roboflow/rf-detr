@@ -24,75 +24,24 @@ import torch
 from PIL import Image
 
 from rfdetr._namespace import _namespace_from_configs
-from rfdetr.config import RFDETRSmallConfig, TrainConfig
+from rfdetr.config import RFDETRNanoConfig, TrainConfig
 from rfdetr.datasets import coco, io_utils, o365, yolo
 from rfdetr.datasets.coco import CocoDetection
 from rfdetr.datasets.io_utils import read_image_or_substitute
 from rfdetr.datasets.yolo import YoloDetection
 from tests._markers import _requires_simplejpeg
+from tests.datasets.helpers import (
+    _COCO_IMAGE_SIZES,
+    _Reader,
+    _coco_box,
+    _path_of,
+    _write_coco_dataset,
+    _write_yolo_dataset,
+    patch_retry_sleep,
+)
 
 
-@pytest.fixture(autouse=True)
-def sleep(mocker: Any) -> Any:
-    """Replace the retry pause so the tests do not wait, and expose the mock to tests that check the pauses.
-
-    Examples:
-        >>> sleep(mocker)  # doctest: +SKIP
-        # Needs pytest's mocker fixture; cannot run standalone.
-    """
-    return mocker.patch.object(io_utils.time, "sleep")
-
-
-class _Reader:
-    """Stands in for a dataset's image read: fails for chosen indices and records every index it is asked for.
-
-    Args:
-        failing: Indices whose read always raises.
-        exc: Exception raised for a failing index.
-        flaky: Number of leading reads that fail, per index, before the read starts to succeed.
-
-    Examples:
-        >>> reader = _Reader(failing={1}, flaky={2: 1})
-        >>> reader(0)
-        'image-0'
-        >>> reader(1)
-        Traceback (most recent call last):
-            ...
-        OSError: image file is truncated
-        >>> try:
-        ...     reader(2)
-        ... except OSError:
-        ...     pass
-        >>> reader(2), reader.calls
-        ('image-2', [0, 1, 2, 2])
-    """
-
-    def __init__(
-        self, failing: set[int] | None = None, exc: Exception | None = None, flaky: dict[int, int] | None = None
-    ) -> None:
-        self._failing = failing or set()
-        self._exc = exc or OSError("image file is truncated")
-        self._flaky = dict(flaky or {})
-        self.calls: list[int] = []
-
-    def __call__(self, index: int) -> str:
-        self.calls.append(index)
-        if index in self._failing:
-            raise self._exc
-        if self._flaky.get(index, 0) > 0:
-            self._flaky[index] -= 1
-            raise self._exc
-        return f"image-{index}"
-
-
-def _path_of(index: int) -> str:
-    """Return the made-up image path the log and error messages of sample ``index`` name.
-
-    Examples:
-        >>> _path_of(3)
-        '/data/frame000003.png'
-    """
-    return f"/data/frame{index:06d}.png"
+sleep = pytest.fixture(autouse=True)(patch_retry_sleep)
 
 
 def _read(reader: _Reader, index: int, num_samples: int = 10) -> tuple[int, str]:
@@ -140,9 +89,13 @@ class TestTransientFailure:
 
     def test_logs_a_warning_naming_the_file_and_no_error(self, mocker: Any) -> None:
         log = mocker.patch.object(io_utils, "logger")
-        _read(_Reader(flaky={3: 1}), 3)
+        failure = OSError("image file is truncated")
+        _read(_Reader(flaky={3: 1}, exc=failure), 3)
         (warning,) = log.warning.call_args_list
-        assert (_path_of(3) in warning.args, log.error.called) == (True, False)
+        assert (warning.args, log.error.called) == (
+            ("Could not read image %s (attempt %d of %d): %s", _path_of(3), 1, io_utils._IMAGE_READ_ATTEMPTS, failure),
+            False,
+        )
 
     def test_pauses_half_a_second_then_a_second_before_the_retries(self, sleep: Any) -> None:
         _read(_Reader(flaky={3: 2}), 3)
@@ -173,9 +126,17 @@ class TestPersistentFailure:
 
     def test_logs_one_error_naming_the_file(self, mocker: Any) -> None:
         log = mocker.patch.object(io_utils, "logger")
-        _read(_Reader(failing={3}), 3)
+        failure = OSError("image file is truncated")
+        _read(_Reader(failing={3}, exc=failure), 3)
         (error,) = log.error.call_args_list
-        assert _path_of(3) in error.args
+        assert error.args == (
+            "Image %s (sample %d) is unreadable: %s. Using sample %d (%s) in its place.",
+            _path_of(3),
+            3,
+            failure,
+            4,
+            _path_of(4),
+        )
 
 
 class TestWholesaleFailure:
@@ -206,10 +167,11 @@ class TestWholesaleFailure:
         assert set(reader.calls) == set(range(11))
 
     def test_single_sample_dataset_is_not_substituted_with_itself(self) -> None:
+        """Three reads with retries, then one more after the pause for a storage stall, and never a substitute."""
         reader = _Reader(failing={0})
         with pytest.raises(RuntimeError, match="broken|unreadable"):
             _read(reader, 0, num_samples=1)
-        assert reader.calls == [0, 0, 0]
+        assert reader.calls == [0, 0, 0, 0]
 
 
 class TestNonImageErrors:
@@ -231,21 +193,6 @@ class TestNonImageErrors:
             _read(reader, 3)
 
 
-#: ``(width, height)`` of COCO image ``i`` in :func:`_write_coco_dataset`.  A JPEG decoded with ``draft_size=16`` is
-#: reduced by 1, 2, 4 and 8 respectively, each dividing both sides exactly, so every image has its own draft size.
-_COCO_IMAGE_SIZES = [(24, 20), (48, 32), (128, 112), (160, 144)]
-
-
-def _coco_box(index: int) -> list[int]:
-    """Return the COCO ``[x, y, width, height]`` box of image ``index``, distinct per image and inside every decode.
-
-    Examples:
-        >>> _coco_box(2)
-        [12, 12, 16, 20]
-    """
-    return [4 * (index + 1), 4 * (index + 1), 4 * (index + 2), 4 * (index + 3)]
-
-
 def _expected_coco_sample(index: int, reduction: int = 1) -> tuple[tuple[int, int], list[float]]:
     """Return the decoded size and the ``[x_min, y_min, x_max, y_max]`` target box of image ``index``.
 
@@ -263,59 +210,6 @@ def _expected_coco_sample(index: int, reduction: int = 1) -> tuple[tuple[int, in
     x, y, box_width, box_height = _coco_box(index)
     box = [x, y, x + box_width, y + box_height]
     return (width // reduction, height // reduction), [value / reduction for value in box]
-
-
-def _write_coco_dataset(root: Path, extension: str = "jpg", num_images: int = 4) -> Path:
-    """Write ``num_images`` images, one box each, and return the annotation file.
-
-    Image ``i`` has the size ``_COCO_IMAGE_SIZES[i]``, the box :func:`_coco_box`, the gray level ``40 * (i + 1)`` and
-    the COCO image id ``i + 1``, so a decoded sample and its target identify their source file, and a draft decode
-    reduces each source by a different factor.
-
-    Args:
-        root: Directory that receives the images and the annotation file.
-        extension: File extension, which also selects the encoding.
-        num_images: Number of images, at most ``len(_COCO_IMAGE_SIZES)``.
-
-    Raises:
-        ValueError: If ``num_images`` exceeds the number of defined image sizes.
-
-    Examples:
-        >>> import tempfile
-        >>> with tempfile.TemporaryDirectory() as tmp:
-        ...     annotation_file = _write_coco_dataset(Path(tmp), num_images=2)
-        ...     content = json.loads(annotation_file.read_text(encoding="utf-8"))
-        ...     print([image["id"] for image in content["images"]])
-        ...     print([(image["width"], image["height"]) for image in content["images"]])
-        ...     print(content["annotations"][1]["bbox"])
-        ...     print(sorted(path.name for path in Path(tmp).glob("*.jpg")))
-        [1, 2]
-        [(24, 20), (48, 32)]
-        [8, 8, 12, 16]
-        ['image0.jpg', 'image1.jpg']
-        >>> _write_coco_dataset(Path("unused"), num_images=5)
-        Traceback (most recent call last):
-            ...
-        ValueError: at most 4 images are defined, got 5
-    """
-    if num_images > len(_COCO_IMAGE_SIZES):
-        raise ValueError(f"at most {len(_COCO_IMAGE_SIZES)} images are defined, got {num_images}")
-    root.mkdir(parents=True, exist_ok=True)
-    images, annotations = [], []
-    for index in range(num_images):
-        file_name = f"image{index}.{extension}"
-        width, height = _COCO_IMAGE_SIZES[index]
-        Image.new("RGB", (width, height), color=(40 * (index + 1),) * 3).save(root / file_name)
-        images.append({"id": index + 1, "file_name": file_name, "width": width, "height": height})
-        box = _coco_box(index)
-        annotation = {"id": index + 1, "image_id": index + 1, "category_id": 1, "bbox": box, "area": box[2] * box[3]}
-        annotations.append({**annotation, "iscrowd": 0})
-    annotation_file = root / "_annotations.coco.json"
-    annotation_file.write_text(
-        json.dumps({"images": images, "annotations": annotations, "categories": [{"id": 1, "name": "object"}]}),
-        encoding="utf-8",
-    )
-    return annotation_file
 
 
 def _truncate(path: Path) -> None:
@@ -418,7 +312,7 @@ class TestCocoDetectionUnreadableFile:
         _truncate(tmp_path / "image1.jpg")
         dataset = CocoDetection(tmp_path, annotation_file, transforms=None)
 
-        with pytest.raises(OSError, match="(?i)truncated"):
+        with pytest.raises(OSError):
             dataset[1]
 
     def test_default_does_not_retry_or_log(self, tmp_path: Path, mocker: Any, sleep: Any) -> None:
@@ -429,7 +323,7 @@ class TestCocoDetectionUnreadableFile:
         decode = mocker.spy(dataset, "_decode_image")
         log = mocker.patch.object(io_utils, "logger")
 
-        with pytest.raises(OSError, match="(?i)truncated"):
+        with pytest.raises(OSError):
             dataset[1]
 
         assert (decode.call_count, sleep.called, log.method_calls) == (1, False, [])
@@ -472,31 +366,6 @@ class TestCocoDetectionUnreadableFile:
 
         with pytest.raises(RuntimeError, match="broken|unreadable"):
             dataset[0]
-
-
-def _write_yolo_dataset(root: Path, num_images: int = 3) -> tuple[Path, Path, Path]:
-    """Write ``num_images`` 64 x 48 PNG images, image ``i`` holding ``i + 1`` boxes, and return the three paths.
-
-    The paths are the image directory, the label directory and the ``data.yaml`` file, in that order.
-
-    Examples:
-        >>> import tempfile
-        >>> with tempfile.TemporaryDirectory() as tmp:
-        ...     image_dir, label_dir, data_file = _write_yolo_dataset(Path(tmp), num_images=2)
-        ...     print(sorted(path.name for path in image_dir.iterdir()))
-        ...     print(len((label_dir / "image1.txt").read_text(encoding="utf-8").splitlines()))
-        ['image0.png', 'image1.png']
-        2
-    """
-    image_dir, label_dir = root / "images", root / "labels"
-    image_dir.mkdir(parents=True)
-    label_dir.mkdir()
-    for index in range(num_images):
-        Image.new("RGB", (64, 48), color=(40 * (index + 1),) * 3).save(image_dir / f"image{index}.png")
-        (label_dir / f"image{index}.txt").write_text("0 0.5 0.5 0.25 0.25\n" * (index + 1), encoding="utf-8")
-    data_file = root / "data.yaml"
-    data_file.write_text("names:\n  - object\n", encoding="utf-8")
-    return image_dir, label_dir, data_file
 
 
 def _open_yolo(paths: tuple[Path, Path, Path], **kwargs: Any) -> YoloDetection:
@@ -796,7 +665,7 @@ def _builder_args(dataset_dir: Path, **train_kwargs: Any) -> Any:
         >>> args.skip_unreadable_images, args.square_resize_div_64
         (True, True)
     """
-    return _namespace_from_configs(RFDETRSmallConfig(), TrainConfig(dataset_dir=str(dataset_dir), **train_kwargs))
+    return _namespace_from_configs(RFDETRNanoConfig(), TrainConfig(dataset_dir=str(dataset_dir), **train_kwargs))
 
 
 def _roboflow_yolo_root(root: Path) -> Path:

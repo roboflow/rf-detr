@@ -12,6 +12,9 @@ dataset from stalling startup for every image, and the summary the builder logs 
 
 from __future__ import annotations
 
+import io
+import struct
+import zlib
 from pathlib import Path
 from typing import Any
 
@@ -22,14 +25,12 @@ from pytest_mock import MockerFixture
 from rfdetr.datasets import io_utils, yolo
 from rfdetr.datasets.io_utils import _MAX_SUBSTITUTIONS
 from rfdetr.datasets.yolo import YoloDetection
+from tests.datasets.helpers import patch_retry_sleep
 
 _CORRUPT_BYTES = b"not an image"
 
 
-@pytest.fixture(autouse=True)
-def sleep(mocker: MockerFixture) -> Any:
-    """Replace the retry pause so the tests do not wait, and expose the mock to tests that count the pauses."""
-    return mocker.patch.object(io_utils.time, "sleep")
+sleep = pytest.fixture(autouse=True)(patch_retry_sleep)
 
 
 def _write_yolo_images(root: Path, num_images: int, corrupt: set[int] | None = None) -> tuple[Path, Path, Path]:
@@ -275,3 +276,177 @@ class TestUnreadableSummary:
             _build(tmp_path, 3, corrupt={0, 1, 2})
 
         assert log.warning.called is False
+
+
+class TestRunWrapsAroundTheEndOfTheDataset:
+    """A read-time substitution wraps around the end of the dataset, so a run at the end continues at the start."""
+
+    def test_raises_when_a_leading_and_a_trailing_run_together_exceed_the_limit(self, tmp_path: Path) -> None:
+        num_images = 30
+        leading = set(range(5))
+        trailing = set(range(num_images - (_MAX_SUBSTITUTIONS + 1 - 5), num_images))
+
+        with pytest.raises(RuntimeError, match=f"{_MAX_SUBSTITUTIONS + 1} consecutive samples were unreadable"):
+            _build(tmp_path, num_images, corrupt=leading | trailing)
+
+    def test_error_names_the_first_sample_of_the_trailing_run(self, tmp_path: Path) -> None:
+        num_images = 30
+        leading = set(range(5))
+        first = num_images - 6
+        trailing = set(range(first, num_images))
+
+        with pytest.raises(RuntimeError, match=rf"starting at sample {first} \(.*image{first:03d}\.png\)"):
+            _build(tmp_path, num_images, corrupt=leading | trailing)
+
+    def test_keeps_a_split_run_of_exactly_the_substitution_limit(self, tmp_path: Path) -> None:
+        num_images = 30
+        leading = set(range(4))
+        trailing = set(range(num_images - (_MAX_SUBSTITUTIONS - 4), num_images))
+
+        dataset = _build(tmp_path, num_images, corrupt=leading | trailing)
+
+        assert _readable_flags(dataset).count(False) == _MAX_SUBSTITUTIONS
+
+    def test_a_leading_run_alone_is_not_joined_to_a_readable_last_sample(self, tmp_path: Path) -> None:
+        run = set(range(_MAX_SUBSTITUTIONS))
+
+        dataset = _build(tmp_path, 30, corrupt=run)
+
+        assert _readable_flags(dataset) == [False] * _MAX_SUBSTITUTIONS + [True] * (30 - _MAX_SUBSTITUTIONS)
+
+    def test_constructor_raises_for_the_same_split_run(self, tmp_path: Path) -> None:
+        num_images = 30
+        image_dir, label_dir, data_file = _write_yolo_images(
+            tmp_path, num_images, corrupt=set(range(5)) | set(range(num_images - 6, num_images))
+        )
+
+        with pytest.raises(RuntimeError, match="consecutive samples were unreadable"):
+            YoloDetection(str(image_dir), str(label_dir), str(data_file), transforms=None, skip_unreadable=True)
+
+
+def _png_with_truncated_phys(chunk_length: int = 4) -> bytes:
+    """Return a small valid PNG whose ``pHYs`` chunk is declared ``chunk_length`` bytes long, fewer than the 9 it needs.
+
+    Pillow reads the chunk while opening the file and raises ``ValueError("Truncated pHYs chunk")`` for it, instead of
+    the ``OSError`` it raises for an unidentifiable or truncated file.
+
+    Examples:
+        >>> data = _png_with_truncated_phys()
+        >>> data.startswith(b"\\x89PNG") and b"pHYs" in data
+        True
+    """
+    buffer = io.BytesIO()
+    Image.new("RGB", (16, 12), color=(40,) * 3).save(buffer, format="PNG")
+    data = buffer.getvalue()
+    payload = b"\x00" * chunk_length
+    chunk = struct.pack(">I", chunk_length) + b"pHYs" + payload + struct.pack(">I", zlib.crc32(b"pHYs" + payload))
+    ihdr_end = 8 + 4 + 4 + 13 + 4  # signature, then the length, type, data and CRC of the IHDR chunk
+    return data[:ihdr_end] + chunk + data[ihdr_end:]
+
+
+class TestCorruptHeaderRaisingValueError:
+    """A header Pillow rejects with ``ValueError`` is as unreadable as one it rejects with ``OSError``."""
+
+    def test_the_premise_pillow_raises_value_error_for_the_png(self, tmp_path: Path) -> None:
+        path = tmp_path / "bad.png"
+        path.write_bytes(_png_with_truncated_phys())
+
+        with pytest.raises(ValueError, match="Truncated pHYs chunk"):
+            Image.open(path)
+
+    def test_builds_and_marks_the_sample_unreadable(self, tmp_path: Path) -> None:
+        image_dir, label_dir, data_file = _write_yolo_images(tmp_path, 4)
+        (image_dir / "image001.png").write_bytes(_png_with_truncated_phys())
+
+        dataset = yolo._build_lazy_yolo_detection_dataset(
+            str(image_dir), str(label_dir), str(data_file), skip_unreadable=True
+        )
+
+        assert _readable_flags(dataset) == [True, False, True, True]
+
+    def test_retries_the_corrupt_header_like_any_unreadable_file(self, tmp_path: Path, sleep: Any) -> None:
+        image_dir, label_dir, data_file = _write_yolo_images(tmp_path, 3)
+        (image_dir / "image000.png").write_bytes(_png_with_truncated_phys())
+
+        yolo._build_lazy_yolo_detection_dataset(str(image_dir), str(label_dir), str(data_file), skip_unreadable=True)
+
+        assert sleep.call_count == io_utils._IMAGE_READ_ATTEMPTS - 1
+
+    def test_counts_toward_the_run_bound(self, tmp_path: Path) -> None:
+        image_dir, label_dir, data_file = _write_yolo_images(tmp_path, _MAX_SUBSTITUTIONS + 5)
+        for index in range(_MAX_SUBSTITUTIONS + 1):
+            (image_dir / f"image{index:03d}.png").write_bytes(_png_with_truncated_phys())
+
+        with pytest.raises(RuntimeError, match=f"{_MAX_SUBSTITUTIONS + 1} consecutive samples were unreadable"):
+            yolo._build_lazy_yolo_detection_dataset(
+                str(image_dir), str(label_dir), str(data_file), skip_unreadable=True
+            )
+
+    def test_default_path_keeps_the_decoder_error(self, tmp_path: Path) -> None:
+        image_dir, label_dir, data_file = _write_yolo_images(tmp_path, 3)
+        (image_dir / "image001.png").write_bytes(_png_with_truncated_phys())
+
+        with pytest.raises(ValueError, match="Truncated pHYs chunk"):
+            yolo._build_lazy_yolo_detection_dataset(str(image_dir), str(label_dir), str(data_file))
+
+
+class TestRetryPauseBudget:
+    """Unreadable headers scattered through a large dataset share one pause budget, so they cannot stall the build."""
+
+    num_images = 80
+    scattered = set(range(0, 60, 2))
+
+    @staticmethod
+    def _retried_headers() -> int:
+        """Return how many unreadable headers the budget pays a full retry for."""
+        return int(yolo._BUILD_RETRY_BUDGET_SECONDS // yolo._retry_pause_seconds(io_utils._IMAGE_READ_ATTEMPTS))
+
+    def test_total_pause_stays_within_the_budget(self, tmp_path: Path, sleep: Any) -> None:
+        dataset = _build(tmp_path, self.num_images, corrupt=self.scattered)
+
+        assert len(dataset) == self.num_images
+        assert 0 < sum(call.args[0] for call in sleep.call_args_list) <= yolo._BUILD_RETRY_BUDGET_SECONDS
+
+    def test_pays_a_full_retry_for_each_header_the_budget_covers(self, tmp_path: Path, sleep: Any) -> None:
+        assert self._retried_headers() < len(self.scattered)
+
+        _build(tmp_path, self.num_images, corrupt=self.scattered)
+
+        assert sleep.call_count == self._retried_headers() * (io_utils._IMAGE_READ_ATTEMPTS - 1)
+
+    def test_reads_each_header_once_after_the_budget_is_spent(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        read_size = mocker.spy(yolo, "_read_image_size")
+
+        _build(tmp_path, self.num_images, corrupt=self.scattered)
+
+        retried = self._retried_headers()
+        unretried = self.num_images - retried
+        assert read_size.call_count == retried * io_utils._IMAGE_READ_ATTEMPTS + unretried
+
+    def test_the_unretried_headers_are_still_marked_unreadable(self, tmp_path: Path) -> None:
+        dataset = _build(tmp_path, self.num_images, corrupt=self.scattered)
+
+        assert [not flag for flag in _readable_flags(dataset)] == [
+            index in self.scattered for index in range(self.num_images)
+        ]
+
+    def test_logs_one_warning_when_the_budget_is_spent(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        log = mocker.patch.object(yolo, "logger")
+
+        _build(tmp_path, self.num_images, corrupt=self.scattered)
+
+        spent = [call for call in log.warning.call_args_list if "budget" in _message(call)]
+        assert len(spent) == 1
+
+    def test_logs_no_budget_warning_for_a_few_unreadable_headers(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        log = mocker.patch.object(yolo, "logger")
+
+        _build(tmp_path, 10, corrupt={1, 5})
+
+        assert not any("budget" in _message(call) for call in log.warning.call_args_list)
+
+    def test_a_long_run_still_ends_the_build_after_the_budget_is_spent(self, tmp_path: Path) -> None:
+        run = set(range(60, 60 + _MAX_SUBSTITUTIONS + 1))
+
+        with pytest.raises(RuntimeError, match=f"{_MAX_SUBSTITUTIONS + 1} consecutive samples were unreadable"):
+            _build(tmp_path, self.num_images, corrupt=self.scattered | run)

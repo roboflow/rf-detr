@@ -21,7 +21,6 @@ from rfdetr.config import AugmentationBackend, ModelConfig, MultiScale, TrainCon
 from rfdetr.datasets import build_dataset
 from rfdetr.datasets._aug_utils import cycle_channel_stats
 from rfdetr.datasets.aug_configs import AUG_CONFIG
-from rfdetr.datasets.coco import CocoDetection
 from rfdetr.datasets.webdataset.index import WebDatasetSplitUnavailableError
 from rfdetr.datasets.webdataset.load import WebDatasetDetection, build_webdataset_loader
 from rfdetr.datasets.yolo import YoloSplitUnavailableError
@@ -1119,10 +1118,14 @@ class RFDETRDataModule(LightningDataModule):
             dataset does not, or the target carries no ``image_id``.
         """
         image_id = target.get("image_id")
-        if image_id is None or getattr(dataset, "root", None) is None or getattr(dataset, "coco", None) is None:
+        if (
+            image_id is None
+            or (root := getattr(dataset, "root", None)) is None
+            or (coco := getattr(dataset, "coco", None)) is None
+        ):
             return None
-        # ``YoloDetection`` is no ``CocoDetection``, but it has the ``root`` and the COCO API this lookup reads.
-        return CocoDetection._image_path(cast(CocoDetection, dataset), int(image_id))
+        file_name = coco.loadImgs(int(image_id))[0]["file_name"]
+        return Path(root) / file_name
 
     def _setup_kornia_pipeline(self) -> None:
         """Build the Kornia pipeline for ``self._resolved_augmentation_backend``.
