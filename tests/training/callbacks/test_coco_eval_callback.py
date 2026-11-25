@@ -6,6 +6,7 @@
 """Unit tests for COCOEvalCallback."""
 
 import inspect
+import logging
 import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import MagicMock, call, patch
@@ -17,6 +18,7 @@ from pytest_mock import MockerFixture
 from torch.utils.data import DistributedSampler, SequentialSampler
 
 from rfdetr.evaluation.matching import build_matching_data, merge_matching_data
+from rfdetr.training.callbacks import coco_eval as coco_eval_module
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision, _UfcocoBackend, _VernierBackend
 from tests._markers import _requires_cuda, _requires_torch_xla, _requires_ufcoco, _requires_vernier
@@ -472,14 +474,18 @@ class TestDistributedSamplerPaddingFilter:
 
         assert seen == [1, 1]
 
-    def test_rank_with_only_padding_records_update(self, epoch_start, batch_end, loaders_attr, stage) -> None:
+    @pytest.mark.parametrize("class_agnostic", [False, True])
+    def test_rank_with_only_padding_records_update(
+        self, epoch_start, batch_end, loaders_attr, stage, class_agnostic: bool
+    ) -> None:
         """With fewer images than ranks, a rank whose whole shard is padding must still update its accumulators.
 
         Rank 1 of 2 over a single image receives image 0 as a padded repeat and nothing else. Skipping the update
         entirely would leave that rank voting "no updates" in the epoch-end collectives and silence the ranks that do
-        hold data, so the batch flows through as empty lists instead.
+        hold data, so the batch flows through as empty lists instead. A real class-agnostic metric takes that empty
+        update too and keeps voting, since the agnostic vote is a collective of its own.
         """
-        cb = COCOEvalCallback()
+        cb = COCOEvalCallback(class_agnostic=class_agnostic)
         trainer = _trainer_with_sampler(loaders_attr, dataset_len=1, rank=1, num_replicas=2)
         cb.setup(trainer, _make_pl_module(), stage=stage)
         cb.map_metric = MagicMock(name="map_metric")
@@ -490,6 +496,8 @@ class TestDistributedSamplerPaddingFilter:
 
         called_preds, called_targets = cb.map_metric.update.call_args.args
         assert (called_preds, called_targets) == ([], [])
+        agnostic_votes = cb.map_metric_agnostic is not None and cb.map_metric_agnostic.has_updates
+        assert agnostic_votes == class_agnostic
 
     def test_sequential_sampler_is_left_alone(self, epoch_start, batch_end, loaders_attr, stage) -> None:
         """Single-process evaluation has no padding, so every sample is accumulated."""
@@ -2790,8 +2798,13 @@ def _metrics_with_per_class(aps: dict[int, float]) -> dict:
     return metrics
 
 
-def _run_compute_and_log(cb: COCOEvalCallback, merged: dict, metrics: dict) -> tuple[MagicMock, MagicMock]:
+def _run_compute_and_log(
+    cb: COCOEvalCallback, merged: dict, metrics: dict, split: str = "val", agnostic: dict | None = None
+) -> tuple[MagicMock, MagicMock]:
     """Drive ``_compute_and_log`` on the base-model track with the heavy collaborators stubbed out.
+
+    ``agnostic`` is the result a stubbed class-agnostic metric computes (one that holds updates); without it the
+    callback's own agnostic metric, if any, is left as ``setup`` built it.
 
     Examples:
         >>> cb = COCOEvalCallback(min_class_support=2)
@@ -2806,12 +2819,16 @@ def _run_compute_and_log(cb: COCOEvalCallback, merged: dict, metrics: dict) -> t
     cb.map_metric = MagicMock(name="map_metric")
     cb.map_metric.has_updates = True
     cb.map_metric.compute.return_value = metrics
+    if agnostic is not None:
+        cb.map_metric_agnostic = MagicMock(name="map_metric_agnostic")
+        cb.map_metric_agnostic.has_updates = True
+        cb.map_metric_agnostic.compute.return_value = agnostic
 
-    with (
-        patch.object(cb, "_print_metrics_tables"),
-        patch("rfdetr.training.callbacks.coco_eval.distributed_merge_matching_data", return_value=merged),
-    ):
-        cb._compute_and_log(trainer, module, "val")
+    # Seeded rather than patched in: outside a process group the merge returns the local accumulator unchanged. The
+    # table printer is replaced on this callback instance alone, which goes away with the test.
+    merge_matching_data(cb._f1_local, merged)
+    cb._print_metrics_tables = MagicMock(name="print_metrics_tables")
+    cb._compute_and_log(trainer, module, split)
     return trainer, module
 
 
@@ -2853,6 +2870,33 @@ def _two_class_batches() -> list[dict]:
     ]
 
 
+def _crowd_only_batches() -> list[dict]:
+    """Two validation batches: class 0 found once (AP 1); class 1 present only as a crowd region with one detection.
+
+    Examples:
+        >>> [target["labels"].tolist() for batch in _crowd_only_batches() for target in batch["targets"]]
+        [[0], [1]]
+        >>> _crowd_only_batches()[1]["targets"][0]["iscrowd"].tolist()
+        [1]
+    """
+    hit = {"boxes": torch.tensor([[90.0, 45.0, 110.0, 55.0]]), "scores": torch.tensor([0.9])}
+    on_crowd = {"boxes": torch.tensor([[30.0, 15.0, 50.0, 25.0]]), "scores": torch.tensor([0.8])}
+    return [
+        {"results": [{**hit, "labels": torch.tensor([0])}], "targets": _detection_targets(label=0)},
+        {
+            "results": [{**on_crowd, "labels": torch.tensor([1])}],
+            "targets": [
+                {
+                    "boxes": torch.tensor([[0.2, 0.2, 0.1, 0.1]]),
+                    "labels": torch.tensor([1]),
+                    "iscrowd": torch.tensor([1]),
+                    "orig_size": torch.tensor([100, 200]),
+                }
+            ],
+        },
+    ]
+
+
 class TestMinClassSupport:
     """Support floor keeps thinly-annotated classes out of the macro-averaged headline."""
 
@@ -2873,13 +2917,25 @@ class TestMinClassSupport:
 
         assert _logged(module, "val/mAP_50_95") == pytest.approx(0.4)
 
-    def test_falls_back_to_all_class_map_when_none_qualify(self) -> None:
-        """A floor no class reaches must not leave the monitored metric NaN."""
+    def test_falls_back_to_all_class_map_when_none_qualify(
+        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A floor no class reaches must not leave the monitored metric NaN, nor the F1 sweep without classes.
+
+        Both the gated mAP and the sweep fall back to every class holding ground truth, and the callback says so. The
+        ``rf-detr`` logger does not propagate to the root logger ``caplog`` listens on.
+        """
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        sweep = mocker.spy(coco_eval_module, "sweep_confidence_thresholds")
         cb = COCOEvalCallback(min_class_support=10_000)
         merged = {0: _matching_entry(100), 1: _matching_entry(3)}
-        _, module = _run_compute_and_log(cb, merged, _metrics_with_per_class({0: 0.6, 1: 0.0}))
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            _, module = _run_compute_and_log(cb, merged, _metrics_with_per_class({0: 0.6, 1: 0.0}))
 
         assert _logged(module, "val/mAP_50_95_gated") == pytest.approx(0.4)
+        assert sweep.call_args.args[2] == [0, 1]
+        assert any("min_class_support" in record.getMessage() for record in caplog.records)
 
     def test_classes_with_no_ground_truth_are_ignored(self) -> None:
         """The COCO -1 sentinel must not be averaged in as a real score."""
@@ -2898,7 +2954,7 @@ class TestMinClassSupport:
         assert not [c.args[0] for c in module.log.call_args_list if "gated" in c.args[0] or "agnostic" in c.args[0]]
         assert not [key for key in trainer.callback_metrics if "gated" in key or "agnostic" in key]
 
-    def test_f1_sweep_macro_averages_over_gated_classes(self) -> None:
+    def test_f1_sweep_macro_averages_over_gated_classes(self, mocker: MockerFixture) -> None:
         """The swept threshold is chosen for the classes that have enough GT to measure."""
         cb = COCOEvalCallback(min_class_support=10)
         merged = {0: _matching_entry(100), 1: _matching_entry(3), 2: _matching_entry(60)}
@@ -2912,10 +2968,11 @@ class TestMinClassSupport:
                 "per_class_rec": np.zeros(3),
             }
         ]
-        with patch(
+        sweep = mocker.patch(
             "rfdetr.training.callbacks.coco_eval.sweep_confidence_thresholds", return_value=sweep_result
-        ) as sweep:
-            _run_compute_and_log(cb, merged, _metrics_with_per_class({0: 0.6, 1: 0.0, 2: 0.5}))
+        )
+
+        _run_compute_and_log(cb, merged, _metrics_with_per_class({0: 0.6, 1: 0.0, 2: 0.5}))
 
         # sorted_ids == [0, 1, 2]; class 1 holds 3 instances, under the floor of 10.
         assert sweep.call_args.args[2] == [0, 2]
@@ -2928,7 +2985,9 @@ class TestMinClassSupport:
         assert cb.map_metric.class_metrics is True
 
     @pytest.mark.parametrize(("min_class_support", "expected"), [(10, [100, 3]), (0, None)])
-    def test_per_class_rows_carry_ground_truth_count(self, min_class_support: int, expected: list[int] | None) -> None:
+    def test_per_class_rows_carry_ground_truth_count(
+        self, min_class_support: int, expected: list[int] | None, mocker: MockerFixture
+    ) -> None:
         """Under a floor every per-class row reports its ground-truth count; without one the rows are unchanged."""
         cb = COCOEvalCallback(min_class_support=min_class_support, log_per_class_metrics=True)
         merged = {0: _matching_entry(100), 1: _matching_entry(3)}
@@ -2940,11 +2999,10 @@ class TestMinClassSupport:
         cb.map_metric.has_updates = True
         cb.map_metric.compute.return_value = _metrics_with_per_class({0: 0.6, 1: 0.0})
 
-        with (
-            patch.object(cb, "_print_metrics_tables") as print_tables,
-            patch("rfdetr.training.callbacks.coco_eval.distributed_merge_matching_data", return_value=merged),
-        ):
-            cb._compute_and_log(trainer, module, "val")
+        print_tables = mocker.patch.object(cb, "_print_metrics_tables")
+        mocker.patch("rfdetr.training.callbacks.coco_eval.distributed_merge_matching_data", return_value=merged)
+
+        cb._compute_and_log(trainer, module, "val")
 
         rows = print_tables.call_args.args[3]
         assert len(rows) == 2
@@ -2955,7 +3013,7 @@ class TestMinClassSupport:
         # Low-support classes stay in the table and in the per-class AP log.
         assert "val/AP/1" in {c.args[0] for c in module.log.call_args_list}
 
-    def test_table_shows_count_and_gated_score(self) -> None:
+    def test_table_shows_count_and_gated_score(self, mocker: MockerFixture) -> None:
         """The printed summary carries the per-class support column and the gated and agnostic column groups."""
         from rich.console import Console
 
@@ -2975,10 +3033,9 @@ class TestMinClassSupport:
         row = {"name": "cod", "support": 3, "ap": 0.0, "ar": 0.5, "f1": 0.1, "precision": 0.1, "recall": 0.1}
         console = Console(width=200, color_system=None)
 
-        with (
-            patch("rfdetr.training.callbacks.coco_eval._get_rich_console", return_value=console),
-            console.capture() as capture,
-        ):
+        mocker.patch("rfdetr.training.callbacks.coco_eval._get_rich_console", return_value=console)
+
+        with console.capture() as capture:
             cb._print_metrics_tables(_make_trainer(), "val", overall, [row])
 
         printed = capture.get()
@@ -2997,8 +3054,12 @@ class TestMinClassSupport:
             pytest.param("ufcoco", marks=_requires_ufcoco),
         ],
     )
-    def test_gated_and_agnostic_scores_from_real_backend(self, backend: str) -> None:
-        """Every evaluation backend supplies the per-class AP the gate reads and a second, agnostic accumulation."""
+    def test_gated_and_agnostic_scores_from_real_backend(self, backend: str, mocker: MockerFixture) -> None:
+        """Every evaluation backend supplies the per-class AP the gate reads and a second, agnostic accumulation.
+
+        The matching data is merged across ranks exactly once per epoch: a second collective in the same position would
+        be one more call every rank has to issue in the same order.
+        """
         cb = COCOEvalCallback(min_class_support=2, class_agnostic=True, eval_backend=backend, in_notebook=False)
         trainer = _make_trainer()
         trainer.callback_metrics = {}
@@ -3008,10 +3069,12 @@ class TestMinClassSupport:
         cb.on_validation_epoch_start(trainer, module)
         for batch_idx, outputs in enumerate(_two_class_batches()):
             cb.on_validation_batch_end(trainer, module, outputs, None, batch_idx)
+        merge = mocker.spy(coco_eval_module, "distributed_merge_matching_data")
+        mocker.patch.object(cb, "_print_metrics_tables")
 
-        with patch.object(cb, "_print_metrics_tables"):
-            cb.on_validation_epoch_end(trainer, module)
+        cb.on_validation_epoch_end(trainer, module)
 
+        assert merge.call_count == 1
         # Class 0 (2 instances, AP 1) clears the floor; class 1 (1 instance, AP 0) does not.
         assert float(trainer.callback_metrics["val/mAP_50_95"]) == pytest.approx(0.5, abs=1e-4)
         assert float(trainer.callback_metrics["val/mAP_50_95_gated"]) == pytest.approx(1.0, abs=1e-4)
@@ -3019,8 +3082,12 @@ class TestMinClassSupport:
         assert 0.6 < float(trainer.callback_metrics["val/mAP_50_95_agnostic"]) < 0.7
         assert 0.6 < float(trainer.callback_metrics["val/mAP_50_agnostic"]) < 0.7
 
-    def test_ema_only_validation_mirrors_gated_score_onto_primary_key(self) -> None:
-        """Default eval policy (EMA forward only): the gated EMA score reaches both monitor keys."""
+    def test_ema_only_validation_mirrors_gated_score_onto_primary_key(self, mocker: MockerFixture) -> None:
+        """Default eval policy (EMA forward only): the gated EMA score reaches both monitor keys.
+
+        The base metric never updates on this path, so the epoch end merges the matching data ahead of the EMA metrics,
+        in the early-return branch; it must still be the one and only merge of the epoch.
+        """
         cb = COCOEvalCallback(
             min_class_support=2,
             class_agnostic=True,
@@ -3035,10 +3102,13 @@ class TestMinClassSupport:
         cb.on_validation_epoch_start(trainer, module)
         for batch_idx, outputs in enumerate(_two_class_batches()):
             cb.on_validation_batch_end(trainer, module, outputs, None, batch_idx)
+        merge = mocker.spy(coco_eval_module, "distributed_merge_matching_data")
 
-        with patch.object(cb, "_print_metrics_tables") as print_tables:
-            cb.on_validation_epoch_end(trainer, module)
+        print_tables = mocker.patch.object(cb, "_print_metrics_tables")
 
+        cb.on_validation_epoch_end(trainer, module)
+
+        assert merge.call_count == 1
         assert float(trainer.callback_metrics["val/ema_mAP_50_95_gated"]) == pytest.approx(1.0, abs=1e-4)
         assert float(trainer.callback_metrics["val/mAP_50_95_gated"]) == pytest.approx(1.0, abs=1e-4)
         assert float(trainer.callback_metrics["val/mAP_50_95"]) == pytest.approx(0.5, abs=1e-4)
@@ -3067,6 +3137,86 @@ class TestMinClassSupport:
 
         assert _logged(module, "val/mAP_50_95_gated") == pytest.approx(0.6)
         assert _logged(module, "val/segm_mAP_50_95_gated") == pytest.approx(0.5)
+
+    def test_crowd_only_class_is_not_counted_by_a_real_backend(
+        self, mocker: MockerFixture, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A class annotated only as a crowd region has no ground truth to measure: AP -1, support 0, never averaged.
+
+        Counting its crowd rows as support would put an all-zero class into the macro F1 (0.5 here, not 1.0), and
+        averaging its -1 into the headline would pull ``val/mAP_50_95`` under 1.0.
+        """
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+        cb = COCOEvalCallback(min_class_support=1, eval_backend="faster_coco_eval", in_notebook=False)
+        trainer = _make_trainer()
+        trainer.callback_metrics = {}
+        module = _cpu_module()
+        module.model_config.num_classes = 2
+        cb.setup(trainer, module, stage="fit")
+        cb.on_validation_epoch_start(trainer, module)
+        for batch_idx, outputs in enumerate(_crowd_only_batches()):
+            cb.on_validation_batch_end(trainer, module, outputs, None, batch_idx)
+        mocker.patch.object(cb, "_print_metrics_tables")
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            cb.on_validation_epoch_end(trainer, module)
+
+        assert float(trainer.callback_metrics["val/mAP_50_95"]) == pytest.approx(1.0, abs=1e-4)
+        assert float(trainer.callback_metrics["val/mAP_50_95_gated"]) == pytest.approx(1.0, abs=1e-4)
+        assert float(trainer.callback_metrics["val/F1"]) == pytest.approx(1.0, abs=1e-4)
+        # Class 0 clears the floor, so nothing fell back.
+        assert not any("min_class_support" in record.getMessage() for record in caplog.records)
+
+    def test_segmentation_ema_only_epoch_mirrors_gated_mask_map(self, mocker: MockerFixture) -> None:
+        """EMA-only segmentation epoch: the gated mask mAP reaches both the ``ema_`` and the primary monitor keys."""
+        cb = COCOEvalCallback(max_dets=500, min_class_support=10, segmentation=True)
+        trainer = _make_trainer()
+        trainer.callback_metrics = {}
+        module = _cpu_module()
+        cb.setup(trainer, module, stage="fit")
+        cb.map_metric = MagicMock(name="map_metric")
+        cb.map_metric.has_updates = False
+        ema_metrics = _minimal_metrics(pfx="bbox_")
+        ema_metrics.update(
+            {
+                "segm_map": torch.tensor(0.2),
+                "segm_map_50": torch.tensor(0.3),
+                "classes": torch.tensor([0, 1]),
+                "bbox_map_per_class": torch.tensor([0.6, 0.0]),
+                "segm_map_per_class": torch.tensor([0.5, 0.1]),
+                "bbox_mar_500_per_class": torch.tensor([0.5, 0.5]),
+            }
+        )
+        cb.map_metric_ema = MagicMock(name="map_metric_ema")
+        cb.map_metric_ema.compute.return_value = ema_metrics
+        cb._ema_has_updates = True
+        mocker.patch.object(cb, "_print_metrics_tables")
+        mocker.patch(
+            "rfdetr.training.callbacks.coco_eval.distributed_merge_matching_data",
+            return_value={0: _matching_entry(100), 1: _matching_entry(3)},
+        )
+
+        cb.on_validation_epoch_end(trainer, module)
+
+        for key in ("val/ema_segm_mAP_50_95_gated", "val/segm_mAP_50_95_gated"):
+            assert float(trainer.callback_metrics[key]) == pytest.approx(0.5), key
+        for key in ("val/ema_mAP_50_95_gated", "val/mAP_50_95_gated"):
+            assert float(trainer.callback_metrics[key]) == pytest.approx(0.6), key
+
+    def test_test_split_logs_gated_and_agnostic_scores_under_its_own_prefix(self) -> None:
+        """The test loop gates and scores agnostically like validation, without a ``val/`` key bleeding in."""
+        cb = COCOEvalCallback(min_class_support=10, class_agnostic=True)
+        merged = {0: _matching_entry(100), 1: _matching_entry(3)}
+        agnostic = {"map": torch.tensor(0.7), "map_50": torch.tensor(0.8)}
+        trainer, module = _run_compute_and_log(
+            cb, merged, _metrics_with_per_class({0: 0.6, 1: 0.0}), split="test", agnostic=agnostic
+        )
+
+        assert _logged(module, "test/mAP_50_95_gated") == pytest.approx(0.6)
+        assert float(trainer.callback_metrics["test/mAP_50_95_gated"]) == pytest.approx(0.6)
+        assert float(trainer.callback_metrics["test/mAP_50_95_agnostic"]) == pytest.approx(0.7)
+        assert float(trainer.callback_metrics["test/mAP_50_agnostic"]) == pytest.approx(0.8)
+        assert not [c.args[0] for c in module.log.call_args_list if c.args[0].startswith("val/")]
 
 
 class TestClassAgnosticEval:
@@ -3101,7 +3251,7 @@ class TestClassAgnosticEval:
         _, targets = cb.map_metric_agnostic.update.call_args.args
         assert targets[0]["labels"].tolist() == [0]
 
-    def test_query_scored_under_two_labels_counts_once(self) -> None:
+    def test_query_scored_under_two_labels_counts_once(self, mocker: MockerFixture) -> None:
         """A query the top-k emits under two labels is one agnostic detection, not a hit plus a false positive."""
         cb = COCOEvalCallback(class_agnostic=True, eval_backend="faster_coco_eval", in_notebook=False)
         trainer = _make_trainer()
@@ -3129,9 +3279,9 @@ class TestClassAgnosticEval:
             ],
         }
         cb.on_validation_batch_end(trainer, module, outputs, None, 0)
+        mocker.patch.object(cb, "_print_metrics_tables")
 
-        with patch.object(cb, "_print_metrics_tables"):
-            cb.on_validation_epoch_end(trainer, module)
+        cb.on_validation_epoch_end(trainer, module)
 
         assert float(trainer.callback_metrics["val/mAP_50_95_agnostic"]) == pytest.approx(1.0, abs=1e-4)
         # The class-aware metric still sees every row: class 0 AP 1, class 1 AP 0.5 (the repeat ranks above its hit).
@@ -3165,7 +3315,7 @@ class TestClassAgnosticEval:
 
         assert "val/mAP_50_95_agnostic" not in {c.args[0] for c in module.log.call_args_list}
 
-    def test_train_split_leaves_agnostic_state_alone(self) -> None:
+    def test_train_split_leaves_agnostic_state_alone(self, mocker: MockerFixture) -> None:
         """Train-split metrics must not consume or log the val/test agnostic accumulation."""
         cb = COCOEvalCallback(max_dets=500, class_agnostic=True)
         trainer = _make_trainer()
@@ -3176,13 +3326,14 @@ class TestClassAgnosticEval:
         cb.map_metric_train.has_updates = True
         cb.map_metric_train.compute.return_value = _minimal_metrics()
 
-        with patch.object(cb, "_print_metrics_tables"):
-            cb._compute_and_log(trainer, module, "train", metric=cb.map_metric_train)
+        mocker.patch.object(cb, "_print_metrics_tables")
+
+        cb._compute_and_log(trainer, module, "train", metric=cb.map_metric_train)
 
         cb.map_metric_agnostic.compute.assert_not_called()
         cb.map_metric_agnostic.reset.assert_not_called()
 
-    def test_locally_empty_rank_still_merges_when_a_peer_has_updates(self, all_reduce) -> None:
+    def test_locally_empty_rank_still_merges_when_a_peer_has_updates(self, all_reduce, mocker: MockerFixture) -> None:
         """The agnostic merge is entered on a vote, so a rank with an empty shard stays in step with its peers."""
 
         def _peer_has_updates(flag, op=None):
@@ -3199,8 +3350,9 @@ class TestClassAgnosticEval:
         cb.map_metric_agnostic.has_updates = False
         cb.map_metric_agnostic.compute.return_value = _minimal_metrics()
 
-        with patch("rfdetr.training.callbacks.coco_eval.distributed_merge_matching_data", return_value={}):
-            cb._compute_and_log(_make_trainer(), _cpu_module(), "val")
+        mocker.patch("rfdetr.training.callbacks.coco_eval.distributed_merge_matching_data", return_value={})
+
+        cb._compute_and_log(_make_trainer(), _cpu_module(), "val")
 
         cb.map_metric_agnostic.merge_distributed_state.assert_called_once()
 
