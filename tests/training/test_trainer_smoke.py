@@ -343,8 +343,8 @@ def test_ddp_spawn_gated_and_agnostic_eval_completes(
 
     Both add cross-rank collectives at epoch end (the class-agnostic metric's vote and state merge, and the matching
     data merge the support counts are read from), and best-model selection then monitors the gated key. The 300 s
-    timeout turns a rank that skipped one of those collectives into a failure instead of a hang. The 1-image
-    validation split leaves rank 1 with nothing but sampler padding, which must still join every one of them.
+    timeout turns a rank that skipped one of those collectives into a failure instead of a hang. The 1-image validation
+    split leaves rank 1 with nothing but sampler padding, which must still join every one of them.
 
     ``BestModelCallback.on_fit_end`` skips its ``trainer.test()`` inside spawn workers, so the distributed test loop is
     entered from the parent process after ``fit`` returns.
