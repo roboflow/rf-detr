@@ -1,4 +1,10 @@
 cards:
+  - href: tta-medium-ablation/
+    name: "TTA on RF-DETR Medium: Zoom Range, Antialiasing and Masks"
+    labels: [INFERENCE, SEGMENTATION, COCO2017, CUDA]
+    version: v1.13.0
+    author: Borda
+    description: "Sweep the zoom scale, antialiasing of zoom-out views and shift plus zoom recipes on RF-DETR Medium over folds of COCO val2017, with a mask AP guard on Segmentation Medium, to settle the zoom range and defaults."
   - href: tta-latency-accuracy/
     name: "TTA Views: Latency, Memory and Accuracy"
     labels: [INFERENCE, LATENCY, COCO2017]

@@ -223,24 +223,27 @@ detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=thres
 
 The [per-class confidence thresholds cookbook](../../../cookbooks/per-class-confidence-thresholds/) shows how to choose the values from held-out images, and measures when a list of thresholds beats a single one and when it does not.
 
-## Steadier scores with shift test-time augmentation
+## Steadier scores with test-time augmentation
 
-The backbone reads the image in square patches (16 pixels for most models, 12 for the segmentation models). When an object moves by a fraction of a patch, its box barely changes, but its confidence score can swing enough to cross the threshold ([#1599](https://github.com/roboflow/rf-detr/issues/1599)). `shift_tta=N` predicts the image `N` times, each time moved by another `1/N` of a patch, and averages the matching detections:
+The backbone reads the image in square patches (16 pixels for most models, 12 for the segmentation models). When an object moves by a fraction of a patch, its box barely changes, but its confidence score can swing enough to cross the threshold ([#1599](https://github.com/roboflow/rf-detr/issues/1599)). `TTAConfig(shift=N)` predicts the image `N` times, each time moved by another `1/N` of a patch, and averages the matching detections:
 
 ```python
-detections = model.predict("image.jpg", threshold=0.5, shift_tta=4)
+from rfdetr import RFDETRInference, TTAConfig
+
+predictor = RFDETRInference(model)
+detections = predictor.predict("image.jpg", threshold=0.5, tta=TTAConfig(shift=4))
 ```
 
 The animation shows sequential execution on CPU and MPS.
 
-![Two pages showing sequential shift views. Page 1: a plain predict() runs the network once on the whole input image, which holds a person and a small dog, and returns a bounding box with a score for each: person 0.91 and dog 0.70, both kept. Page 2: with shift_tta=4 the same input is moved down and right by 0, a quarter, a half and three quarters of a patch on a canvas one patch larger, so nothing is cropped. Each snapshot goes through the same network once and returns its own boxes and scores. The network finds the person in every pass but misses the dog in one. The combine panel then plays the steps in order: the boxes of each pass slide back by subtracting their offset, boxes that share a class and have an IoU above 0.6 are grouped, each group is averaged into one box, and its score is built from one quarter of every pass score, so a missed pass adds nothing and counts as 0. The person gets 0.91 and the dog 0.54, and both are kept. Scores are illustrative.](../../assets/shift-tta.svg){ loading=lazy }
+![Two pages showing sequential shift views. Page 1: a plain predict() runs the network once on the whole input image, which holds a person and a small dog, and returns a bounding box with a score for each: person 0.91 and dog 0.70, both kept. Page 2: with tta=TTAConfig(shift=4) the same input is moved down and right by 0, a quarter, a half and three quarters of a patch on a canvas one patch larger, so nothing is cropped. Each snapshot goes through the same network once and returns its own boxes and scores. The network finds the person in every pass but misses the dog in one. The combine panel then plays the steps in order: the boxes of each pass slide back by subtracting their offset, boxes that share a class and have an IoU above 0.6 are grouped, each group is averaged into one box, and its score is built from one quarter of every pass score, so a missed pass adds nothing and counts as 0. The person gets 0.91 and the dog 0.54, and both are kept. Scores are illustrative.](../../assets/shift-tta.svg){ loading=lazy }
 
 - On CPU and MPS, each shift runs its own forward pass. CUDA can batch shifts on the same canvas and split them when the forward pixel budget limits how many views fit together. Two shifts require less work than four.
-- Detections match across passes when they have the same class and a box IoU above 0.6. The fused box is the mean box, and the fused score is the mean score over all passes, with a pass that missed the object counting as 0. No pass is held to `threshold` on its own: a pass that scores the object low still counts at its own score, and `threshold` applies only to the averaged score. Averaged scores can sit a little lower than single-pass ones; pick the threshold with `shift_tta` on.
-- Segmentation masks keep the pixels that at least half of the matched masks cover. Keypoint models do not support `shift_tta`, and the value is checked before any image is read.
-- `RFDETRInference.predict(..., tta=TTAConfig())` opts into zoomed views. Set `flip=True` to request mirroring and supply `zoom` explicitly to combine it with zoomed views. [Test-Time Augmentation](../tta.md) measures what each recipe adds and costs on COCO val2017.
+- Detections match across passes when they have the same class and a box IoU above 0.6. The fused box is the mean box, and the fused score is the mean score over all passes, with a pass that missed the object counting as 0. No pass is held to `threshold` on its own: a pass that scores the object low still counts at its own score, and `threshold` applies only to the averaged score. Averaged scores can sit a little lower than single-pass ones; pick the threshold with `tta` on.
+- Segmentation masks keep the pixels that at least half of the matched masks cover. Keypoint models do not support `tta`, and the request is refused before any image is read.
+- `RFDETRInference.predict(..., tta=TTAConfig())` opts into zoomed views. Set `shift` to request shifted views and supply `zoom` explicitly to combine them with zoomed views. [Test-Time Augmentation](../tta.md) measures what each recipe adds and costs on COCO val2017.
 
-On RF-DETR-N fine-tuned on the `deeppcb` dataset of RF100-VL, moving each test image by 0 to 16 pixels changed the keep-or-drop decision for 21.0% of the defects with one pass, 7.4% with `shift_tta=2` and 3.7% with `shift_tta=4`, each at its own best-F1 threshold. Test mAP50-95 was 0.702, 0.699 and 0.708.
+On RF-DETR-N fine-tuned on the `deeppcb` dataset of RF100-VL, moving each test image by 0 to 16 pixels changed the keep-or-drop decision for 21.0% of the defects with one pass, 7.4% with `TTAConfig(shift=2)` and 3.7% with `TTAConfig(shift=4)`, each at its own best-F1 threshold. Test mAP50-95 was 0.702, 0.699 and 0.708.
 
 ## Run on video, webcam, or RTSP stream
 

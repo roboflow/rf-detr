@@ -1,5 +1,5 @@
 ---
-description: Test-time augmentation for RF-DETR detection and segmentation. How to turn on shifted, zoomed and mirrored views, what they add in box AP for every model size on COCO val2017, what they cost in latency and memory, which recipe to choose, and when a larger model is the better use of the time.
+description: Test-time augmentation for RF-DETR detection and segmentation. How to turn on shifted and zoomed views, what they add in box AP for every model size on COCO val2017, what they cost in latency and memory, which recipe to choose, and when a larger model is the better use of the time.
 ---
 
 # Test-Time Augmentation
@@ -18,7 +18,7 @@ predictor = RFDETRInference(RFDETRSmall())
 detections = predictor.predict("image.jpg", threshold=0.5, tta=TTAConfig())
 ```
 
-`TTAConfig()` is the recommended recipe: one native-scale view and three zooms on padded canvases. Ask for another mix with explicit fields. Views add up, they do not multiply, and flip doubles the total.
+`TTAConfig()` is the recommended recipe: one native-scale view and three zooms on padded canvases. Ask for another mix with explicit fields. Views add up, they do not multiply: four shifts and three zooms are seven views.
 
 | Config                                 | Views | What runs                                                       |
 | -------------------------------------- | ----- | --------------------------------------------------------------- |
@@ -26,16 +26,15 @@ detections = predictor.predict("image.jpg", threshold=0.5, tta=TTAConfig())
 | `TTAConfig(zoom=(1.25,))`              | 2     | the native-scale view and a 1.25 zoom, the cheapest zoom recipe |
 | `TTAConfig(shift=4)`                   | 4     | the image moved by 0, 4, 8 and 12 pixels of a 16-pixel patch    |
 | `TTAConfig(shift=2, zoom=(1.25, 1.5))` | 4     | two shifts and two zooms                                        |
-| `TTAConfig(shift=2, flip=True)`        | 4     | two shifts, each also mirrored left to right                    |
 | `TTAConfig(zoom=())`                   | 1     | the plain prediction                                            |
 
-With `zoom` omitted, `shift > 1` or `flip=True` suppresses the default zooms. Explicit `shift=1` or `flip=False` with the other default retains the three zooms. Pass `zoom=()` with the default shift and flip values for plain prediction.
+With `zoom` omitted, `shift > 1` suppresses the default zooms. An explicit `shift=1` retains the three zooms. Pass `zoom=()` with the default shift for plain prediction.
 
 - **Cost:** every view adds a row on a padded canvas. Larger zooms can increase canvas size and cost per row.
 - **Batching:** on CUDA, views with the same canvas size can share a forward pass. On MPS and CPU each view is its own pass, so latency grows about linearly with the view count.
 - **Fusion:** a detection of one view matches a detection of another when both have the same class and a box IoU above 0.6. The fused box is the mean box, and the fused score is the sum of the matched scores divided by the number of views, so a view that missed the object counts as 0. `threshold` applies only to the fused score. Fused scores sit a little lower than single-view ones, so choose the threshold with TTA on. Segmentation masks keep the pixels that at least half of the matched masks cover.
-- **Limits:** keypoint models, an `inference()` snapshot and exported runtimes refuse several views before any image is read, because they fix their resolution or batch size. Mirroring assumes an object keeps its class when the image is flipped; do not use `flip` for arrows or turn signs.
-- **Related:** `RFDETR.predict(..., shift_tta=N)` is the older option that averages `N` shifted passes. It uses the same CUDA batching rules and is described on the [Detection page](run/detection.md#steadier-scores-with-shift-test-time-augmentation).
+- **Limits:** keypoint models, an `inference()` snapshot and exported runtimes refuse several views before any image is read, because they fix their resolution or batch size.
+- **Related:** the [Detection page](run/detection.md#steadier-scores-with-test-time-augmentation) shows a shift-only recipe on a fine-tuned dataset and how it changes the keep-or-drop decision.
 
 ## How the Views Become a Batch
 
@@ -54,9 +53,9 @@ A sweep over every released detection size, from Atto to 2XLarge, on all 5000 CO
 
 - **Accuracy:** box AP at confidence threshold 0.001, scored through `RFDETRInference.predict` and the stored predictions. The images are also split into 5 interleaved folds. The gain of a recipe over the plain prediction is paired, scored on the same images, and its error is the fold-to-fold standard error, so a gain well inside it is not a gain.
 - **Latency:** the median of 50 calls after 10 warm-up calls at threshold 0.5, in milliseconds, for two call shapes: `predict` with one image, and `predict` with a list of eight images. A call covers preprocessing, the forward pass, mapping back and fusing. The eight-image time is divided by 8, so both settings are the time per image.
-- **Recipes:** the shift sweep covers all nine sizes with 1, 2, 4, 6 and 8 views. The flip, zoom and shift + zoom recipes and the runtime switches were measured for Nano, Small and Large, and the cost breakdown and memory for Atto to 2XLarge.
+- **Recipes:** the shift sweep covers all nine sizes with 1, 2, 4, 6 and 8 views. The zoom and shift + zoom recipes and the runtime switches were measured for Nano, Small and Large, and the cost breakdown and memory for Atto to 2XLarge.
 
-The [cookbook](../../cookbooks/tta-latency-accuracy/) reruns the shift sweep, the two zoom recipes and both figures on your hardware. The flip and shift plus zoom recipes, the stage timers, memory and the runtime switches come from the extended version of the same notebook at commit `e0131796`.
+The [cookbook](../../cookbooks/tta-latency-accuracy/) reruns the shift sweep, the two zoom recipes and both figures on your hardware. The shift plus zoom recipes, the stage timers, memory and the runtime switches come from the extended version of the same notebook at commit `e0131796`.
 
 ## Accuracy: What Views Add
 
@@ -113,27 +112,24 @@ Latency per image in milliseconds for shift views on an eager PyTorch predictor.
 
 ## Ablation: Which Views to Use
 
-The same number of views can be shifts, mirrored copies, zoomed copies or a mix. Gain over the plain prediction in box AP points, with latency of one image per call in brackets.
+The same number of views can be shifts, zoomed copies or a mix. Gain over the plain prediction in box AP points, with latency of one image per call in brackets.
 
 | Views | Recipe            | Nano              | Small             | Medium            | Large             |
 | ----- | ----------------- | ----------------- | ----------------- | ----------------- | ----------------- |
 | 1     | plain             | 48.02 AP (5.7 ms) | 52.82 AP (6.2 ms) | 54.69 AP (6.8 ms) | 56.56 AP (7.9 ms) |
-| 2     | flip              | +0.75 (8.2 ms)    | +0.85 (9.1 ms)    | not measured      | +0.48 (11.8 ms)   |
 | 2     | shift             | +1.33 (7.2 ms)    | +1.35 (8.8 ms)    | +0.94 (9.8 ms)    | +0.86 (11.8 ms)   |
 | 2     | zoom `(1.25,)`    | +2.83 (11.7 ms)   | +2.41 (14.0 ms)   | not measured      | +1.30 (17.5 ms)   |
 | 4     | shift             | +2.20 (8.6 ms)    | +1.87 (10.7 ms)   | +1.43 (11.8 ms)   | +1.21 (16.0 ms)   |
-| 4     | shift + flip      | +2.21 (8.5 ms)    | +2.05 (10.8 ms)   | not measured      | +1.37 (16.1 ms)   |
 | 4     | zoom, the default | +4.02 (17.1 ms)   | +3.11 (21.6 ms)   | not measured      | +1.96 (30.9 ms)   |
 | 4     | shift + zoom      | +4.28 (16.8 ms)   | +3.46 (21.4 ms)   | not measured      | +2.05 (30.9 ms)   |
 | 8     | shift             | +2.43 (10.6 ms)   | +2.12 (14.8 ms)   | +1.65 (17.3 ms)   | +1.31 (25.2 ms)   |
-| 8     | shift + flip      | +2.77 (10.6 ms)   | +2.51 (15.0 ms)   | not measured      | +1.59 (25.3 ms)   |
 | 8     | shift + zoom      | +3.97 (23.4 ms)   | +3.15 (29.4 ms)   | not measured      | +1.95 (44.0 ms)   |
 
-Medium was swept with shift views only in the extended run, so its flip and zoom cells are empty; the cookbook measures its zoom recipes. Standard errors of the paired gains are 0.05 to 0.18 points. The recipes are `shift=2, flip=True` and `shift=4, flip=True` for shift + flip, `zoom=(0.85, 1.25, 1.5)` for the default, `shift=2, zoom=(1.25, 1.5)` and `shift=4, zoom=(0.85, 1.15, 1.3, 1.5)` for shift + zoom.
+Medium was swept with shift views only in the extended run, so its zoom cells are empty; the [Medium ablation cookbook](../../cookbooks/tta-medium-ablation/) measures its zoom recipes. Standard errors of the paired gains are 0.05 to 0.18 points. The recipes are `zoom=(0.85, 1.25, 1.5)` for the default, `shift=2, zoom=(1.25, 1.5)` and `shift=4, zoom=(0.85, 1.15, 1.3, 1.5)` for shift + zoom.
 
 - **Zoom beats shift per view.** At the same view count zoom adds about twice the AP of shifts, +4.02 against +2.20 on Nano at four views. A plausible reason is that a zoomed view shows objects at another scale, while a shift only changes where an object falls inside a patch; this was not tested separately. It is why zoom is the default.
 - **Zoom costs about twice as much.** Four zoom views take 17.1 ms on Nano against 8.6 ms for four shifts, because the canvas is larger. Per millisecond added, shifts buy more AP. At a similar latency zoom is still ahead by 0.05 to 0.4 points: two zoom views on Nano take 11.7 ms for +2.83, and eight shift views take 10.6 ms for +2.43.
-- **Flip alone is weak.** One mirrored copy adds 0.5 to 0.9 points, less than one shifted copy. Mirroring the shifts doubles the views at no extra latency in the rows above and adds 0.0 to 0.4 points over the same number of unmirrored shifts, a small gain, and only for classes that survive mirroring.
+- **Mirrored views were tried and dropped.** One mirrored copy added 0.5 to 0.9 points, less than one shifted copy, and mirroring the shifts added 0.0 to 0.4 points over the same number of unmirrored shifts on Nano, Small and Large. The gain was too small for a public option that also splits classes with a left-right meaning (arrows, turn signs).
 - **Shift plus zoom is the best four-view recipe, by a little.** It beats the default by 0.09 to 0.35 points at the same latency. The default is the simpler one to state and explain.
 - **More views can lower AP.** Eight shift + zoom views are worse than four on all three sizes (3.97 against 4.28 on Nano, 1.95 against 2.05 on Large). The fused score is the mean over all views with a missed view counting as 0, so a weak view dilutes a strong one. Stop at four views for zoom recipes.
 
@@ -154,14 +150,13 @@ TF32 matrix multiplies (`torch.set_float32_matmul_precision("high")`) sped the c
 - **Measure steadiness at your threshold.** The study reports score spread for detections selected separately by each shift recipe. Measure threshold crossings on matched detections if those crossings affect your use case.
 - **Do not go past four views.** Four shift views give 84 to 92 percent of the eight-view gain, and eight shift + zoom views are worse than four.
 - **Re-tune the threshold.** Fused scores are lower than single-view ones. Pick `threshold` with TTA on.
-- **Check flip on your classes.** Skip it for anything with a left-right meaning.
 - **Measure on your hardware.** Run the [cookbook](../../cookbooks/tta-latency-accuracy/) with your device, and compare against the next larger model before committing.
 
 ## What Is Not Established
 
 - Behavior on a GPU limited by arithmetic, such as a T4, and on a CPU, where views are not batched.
-- Zoom, flip and shift + zoom recipes for XLarge and 2XLarge, and for segmentation models.
-- A comparison with the older sequential `shift_tta` path on `develop`, and a padded zero-offset control that separates the effect of the larger canvas from the effect of the shift.
+- Zoom and shift + zoom recipes for XLarge and 2XLarge, and for segmentation models.
+- A comparison with the sequential shift implementation that `develop` had before batching, and a padded zero-offset control that separates the effect of the larger canvas from the effect of the shift.
 - Accuracy on fine-tuned datasets. All AP numbers are the pretrained COCO checkpoints on COCO val2017.
 
 ## Run Details
