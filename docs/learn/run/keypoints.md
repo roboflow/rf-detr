@@ -36,27 +36,27 @@ The configuration with the lowest end-to-end latency on four NVIDIA GPUs, batch 
 
 === "NVIDIA T4"
 
-    |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph |   TensorRT INT8   | TensorRT INT8 graph |
-    | :----------------: | :---------------------: | :-----------: | :-----------------: | :---------------: | :-----------------: |
-    | Keypoint (Preview) |      20.33 (22.75)      | 18.76 (19.88) |    19.07 (19.91)    | **16.98 (18.02)** |  **17.32 (18.29)**  |
+    |        Size        | PyTorch CUDA graph FP16 [ms] | TensorRT FP16 [ms] | TensorRT FP16 graph [ms] | TensorRT INT8 [ms] | TensorRT INT8 graph [ms] |
+    | :----------------: | :--------------------------: | :----------------: | :----------------------: | :----------------: | :----------------------: |
+    | Keypoint (Preview) |        20.33 (22.75)         |   18.76 (19.88)    |      19.07 (19.91)       | **16.98 (18.02)**  |    **17.32 (18.29)**     |
 
 === "NVIDIA L4"
 
-    |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph |  TensorRT INT8  | TensorRT INT8 graph |
-    | :----------------: | :---------------------: | :-----------: | :-----------------: | :-------------: | :-----------------: |
-    | Keypoint (Preview) |      9.95 (10.62)       | 9.28 (10.17)  |   **8.78 (9.15)**   | **8.80 (9.34)** |   **8.40 (9.24)**   |
+    |        Size        | PyTorch CUDA graph FP16 [ms] | TensorRT FP16 [ms] | TensorRT FP16 graph [ms] | TensorRT INT8 [ms] | TensorRT INT8 graph [ms] |
+    | :----------------: | :--------------------------: | :----------------: | :----------------------: | :----------------: | :----------------------: |
+    | Keypoint (Preview) |         9.95 (10.62)         |    9.28 (10.17)    |     **8.78 (9.15)**      |  **8.80 (9.34)**   |     **8.40 (9.24)**      |
 
 === "NVIDIA A100"
 
-    |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
-    | :----------------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
-    | Keypoint (Preview) |       7.95 (8.30)       |  8.09 (8.55)  |   **7.14 (7.57)**   |  8.10 (8.67)  |   **7.47 (8.02)**   |
+    |        Size        | PyTorch CUDA graph FP16 [ms] | TensorRT FP16 [ms] | TensorRT FP16 graph [ms] | TensorRT INT8 [ms] | TensorRT INT8 graph [ms] |
+    | :----------------: | :--------------------------: | :----------------: | :----------------------: | :----------------: | :----------------------: |
+    | Keypoint (Preview) |         7.95 (8.30)          |    8.09 (8.55)     |     **7.14 (7.57)**      |    8.10 (8.67)     |     **7.47 (8.02)**      |
 
 === "NVIDIA RTX PRO 6000"
 
-    |        Size        | PyTorch CUDA graph FP16 | TensorRT FP16 | TensorRT FP16 graph | TensorRT INT8 | TensorRT INT8 graph |
-    | :----------------: | :---------------------: | :-----------: | :-----------------: | :-----------: | :-----------------: |
-    | Keypoint (Preview) |       4.30 (4.40)       |  3.68 (3.78)  |   **3.40 (3.48)**   |  3.56 (3.64)  |   **3.24 (3.31)**   |
+    |        Size        | PyTorch CUDA graph FP16 [ms] | TensorRT FP16 [ms] | TensorRT FP16 graph [ms] | TensorRT INT8 [ms] | TensorRT INT8 graph [ms] |
+    | :----------------: | :--------------------------: | :----------------: | :----------------------: | :----------------: | :----------------------: |
+    | Keypoint (Preview) |         4.30 (4.40)          |    3.68 (3.78)     |     **3.40 (3.48)**      |    3.56 (3.64)     |     **3.24 (3.31)**      |
 
 Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md).
 
@@ -68,9 +68,9 @@ The configuration with the lowest end-to-end latency on an Apple M4 Max, batch 1
 
 <!-- COPIES: every number comes from the results table of docs/cookbooks/measure-latency.ipynb (HARDWARE = "apple", one run, provenance in docs/learn/run/latency.md). -->
 
-|        Size        | PyTorch inductor FP32 | PyTorch inductor FP16 | PyTorch TorchScript FP16 |  CoreML FP32  |  CoreML FP16  | CoreML GPU FP32 |  CoreML GPU FP16  |
-| :----------------: | :-------------------: | :-------------------: | :----------------------: | :-----------: | :-----------: | :-------------: | :---------------: |
-| Keypoint (Preview) |     26.32 (27.01)     |     23.55 (24.08)     |      26.04 (26.55)       | 24.75 (25.12) | 75.02 (78.57) |  24.84 (25.47)  | **21.34 (21.63)** |
+|        Size        | PyTorch inductor FP32 [ms] | PyTorch inductor FP16 [ms] | PyTorch TorchScript FP16 [ms] | CoreML FP32 [ms] | CoreML FP16 [ms] | CoreML GPU FP32 [ms] | CoreML GPU FP16 [ms] |
+| :----------------: | :------------------------: | :------------------------: | :---------------------------: | :--------------: | :--------------: | :------------------: | :------------------: |
+| Keypoint (Preview) |       26.32 (27.01)        |       23.55 (24.08)        |         26.04 (26.55)         |  24.75 (25.12)   |  75.02 (78.57)   |    24.84 (25.47)     |  **21.34 (21.63)**   |
 
 Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md).
 
@@ -82,9 +82,9 @@ The configuration with the lowest end-to-end latency on a Colab x86 CPU (AMD EPY
 
 <!-- COPIES: every number comes from the results of docs/cookbooks/measure-latency.ipynb (HARDWARE = "cpu", one run, provenance in docs/learn/run/latency.md). -->
 
-|        Size        | PyTorch TorchScript FP32 |    ONNX FP32     |      ONNX INT8      |  OpenVINO FP32   |  OpenVINO FP16   |  OpenVINO INT8   |
-| :----------------: | :----------------------: | :--------------: | :-----------------: | :--------------: | :--------------: | :--------------: |
-| Keypoint (Preview) |     811.00 (1655.81)     | 986.71 (1091.36) | **738.26 (848.24)** | 800.24 (1138.00) | 823.17 (1447.85) | 775.78 (1223.29) |
+|        Size        | PyTorch TorchScript FP32 [ms] |  ONNX FP32 [ms]  |   ONNX INT8 [ms]    | OpenVINO FP32 [ms] | OpenVINO FP16 [ms] | OpenVINO INT8 [ms] |
+| :----------------: | :---------------------------: | :--------------: | :-----------------: | :----------------: | :----------------: | :----------------: |
+| Keypoint (Preview) |       811.00 (1655.81)        | 986.71 (1091.36) | **738.26 (848.24)** |  800.24 (1138.00)  |  823.17 (1447.85)  |  775.78 (1223.29)  |
 
 Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md). Atto, Femto and Pico have no INT8 cell. Run on an AMD EPYC 7B12 with 8 logical cores, `rfdetr` 1.13.0.dev0 (commit `add6c3e4`), `rfdetr_plus` 1.3.0, PyTorch 2.14.1 (CPU build), ONNX Runtime 1.32.0, OpenVINO 2026.4.1 and NNCF 3.4.0, from 2026-11-22 21:41 to 2026-11-23 03:47 UTC.
 
