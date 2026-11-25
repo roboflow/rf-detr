@@ -24,13 +24,23 @@ _RESOLUTION = (320, 448)
 
 
 def _build(resolution: int | tuple[int, int], pretrain_weights: str | None = None) -> RFDETRNano:
-    """Return a one-class Nano model on the CPU, randomly initialized unless ``pretrain_weights`` is given."""
+    """Return a one-class Nano model on the CPU, randomly initialized unless ``pretrain_weights`` is given.
+
+    Examples:
+        >>> _build((64, 96)).model_config.positional_encoding_size
+        (4, 6)
+    """
     torch.manual_seed(0)
     return RFDETRNano(pretrain_weights=pretrain_weights, num_classes=1, device="cpu", resolution=resolution)
 
 
 def _image(height: int = 90, width: int = 150) -> np.ndarray:
-    """Return a fixed random ``(height, width, 3)`` uint8 image."""
+    """Return a fixed random ``(height, width, 3)`` uint8 image.
+
+    Examples:
+        >>> _image(4, 6).shape, str(_image().dtype)
+        ((4, 6, 3), 'uint8')
+    """
     return (np.random.default_rng(0).random((height, width, 3)) * 255).astype(np.uint8)
 
 
