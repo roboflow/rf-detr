@@ -225,7 +225,7 @@ The [per-class confidence thresholds cookbook](../../../cookbooks/per-class-conf
 
 ## Steadier scores with test-time augmentation
 
-The backbone reads the image in square patches (16 pixels for most models, 12 for the segmentation models). When an object moves by a fraction of a patch, its box barely changes, but its confidence score can swing enough to cross the threshold ([#1599](https://github.com/roboflow/rf-detr/issues/1599)). `TTAConfig(shift=N)` predicts the image `N` times, each time moved by another `1/N` of a patch, and averages the matching detections:
+The backbone reads the image in square patches (16 pixels for most models, 12 for the segmentation models). When an object moves by a fraction of a patch, its box barely changes, but its confidence score can swing enough to cross the threshold ([#1599](https://github.com/roboflow/rf-detr/issues/1599)). `TTAConfig(shift=N, zoom=())` predicts the image `N` times, each time moved by another `1/N` of a patch, and averages the matching detections:
 
 ```python
 from rfdetr import RFDETRInference, TTAConfig

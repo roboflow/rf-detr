@@ -941,6 +941,24 @@ class TestChunkedForward:
             _predict_tta(_square_image(20), TTAConfig(shift=2), run=self._oom_run(0, rows))
         assert rows == [1]
 
+    @pytest.mark.usefixtures("all_views_in_one_forward")
+    @pytest.mark.parametrize("stream", [False, True])
+    def test_view_limit_holds_across_batches_and_resets_for_a_new_request(self, stream: bool) -> None:
+        """Retry once per request, including when prediction yields results lazily."""
+        rows: list[int] = []
+        context = partial(_grid_sensitive_context, self._oom_run(2, rows))
+        images = [_square_image(20), _square_image(32)]
+        tta = TTAConfig(shift=4)
+
+        results = list(core.predict(context, images, batch=1, stream=stream, tta=tta))
+
+        assert len(results) == 2
+        assert rows == [4, 2, 2, 2, 2]
+
+        rows.clear()
+        list(core.predict(context, images[:1], batch=1, stream=stream, tta=tta))
+        assert rows == [4, 2, 2]
+
 
 class TestMaskSizeReduction:
     """The size every view's mask logits are resampled to, whatever the model's mask downsample ratio."""

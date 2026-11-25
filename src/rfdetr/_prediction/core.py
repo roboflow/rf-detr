@@ -918,6 +918,13 @@ def _decode_prefetched_jpegs(images: Sequence[Any], device: torch.device) -> dic
     return dict(zip(encoded, _decode_jpegs_on_gpu(list(encoded.values()), device)))
 
 
+@dataclass
+class _ViewRetryState:
+    """Remember the reduced view limit for one prediction request."""
+
+    limit: int | None = None
+
+
 @torch.inference_mode()
 def _predict_batch(
     context_factory: Callable[[], PredictionContext],
@@ -929,6 +936,7 @@ def _predict_batch(
     antialias: bool | None,
     *,
     tta: TTAConfig | None = None,
+    view_retry: _ViewRetryState | None = None,
 ) -> _PredictionOutput:
     """Prepare images, execute one batch, and decode results using a shared contract.
 
@@ -946,6 +954,7 @@ def _predict_batch(
         include_source_image: Store the source image in result metadata.
         antialias: Use antialiasing during image resize. Match the checkpoint training resize.
         tta: The views to fuse (see :func:`_predict_shifted`); ``None`` runs the plain prediction.
+        view_retry: The reduced view limit shared by batches of this request, if any.
 
     Returns:
         One Supervision result or a list matching the input container.
@@ -975,7 +984,7 @@ def _predict_batch(
         tta=tta,
     )
     if len(prepared.views) > 1:
-        return _predict_shifted(prepared, patch_size)
+        return _predict_shifted(prepared, patch_size, view_retry if view_retry is not None else _ViewRetryState())
     return _decode_batch(prepared, prepared.context.run(prepared.batch_tensor))
 
 
@@ -1086,7 +1095,9 @@ def _run_views(prepared: _PreparedBatch, chunk: list[int], canvas: tuple[int, in
 
 
 @torch.inference_mode()
-def _predict_shifted(prepared: _PreparedBatch, patch_size: int | None) -> _PredictionOutput:
+def _predict_shifted(
+    prepared: _PreparedBatch, patch_size: int | None, view_retry: _ViewRetryState
+) -> _PredictionOutput:
     """Run a prepared batch once per view and average the matching detections.
 
     Each view scales and places the batch on a canvas at least one ``patch_size * num_windows`` block larger
@@ -1100,6 +1111,7 @@ def _predict_shifted(prepared: _PreparedBatch, patch_size: int | None) -> _Predi
     Args:
         prepared: The batch :func:`_prepare_batch` built, with at least two views.
         patch_size: Backbone patch size, or ``None`` for the model's own.
+        view_retry: Request-local limit lowered after a grouped forward runs out of memory.
 
     Returns:
         One Supervision result or a list matching the input container.
@@ -1119,16 +1131,16 @@ def _predict_shifted(prepared: _PreparedBatch, patch_size: int | None) -> _Predi
     candidates: list[list[_ShiftCandidates]] = [[] for _ in views]
     # Mask logits stay at mask-head resolution until fusion has decided which detections are kept.
     mask_logits: list[torch.Tensor | None] = [None] * len(views)
-    # The most views one forward may take after CUDA ran out of memory; it holds for the rest of the request.
-    cap: int | None = None
     for canvas, indices in groups.items():
         start = 0
         while start < len(indices):
             step = _views_per_forward(context, batch.shape[0], canvas, len(indices))
-            chunk = indices[start : start + (step if cap is None else min(step, cap))]
+            if view_retry.limit is not None:
+                step = min(step, view_retry.limit)
+            chunk = indices[start : start + step]
             outputs = _run_views(prepared, chunk, canvas)
             if outputs is None:
-                cap = max(1, len(chunk) // 2)
+                view_retry.limit = max(1, len(chunk) // 2)
                 continue
             start += len(chunk)
             split = {key: torch.chunk(outputs[key], len(chunk)) for key in _FUSED_OUTPUT_KEYS if key in outputs}
