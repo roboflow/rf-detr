@@ -1263,10 +1263,15 @@ class TestOnTrainBatchStart:
         new_h, new_w = samples.tensors.shape[2], samples.tensors.shape[3]
         assert new_h == new_w, "Multi-scale should produce square outputs"
 
-    def test_multi_scale_resize_uses_height_width_scales_for_a_non_square_model(self, tmp_path):
-        """A non-square model resizes the batch and its padding mask to one of its ``(height, width)`` scales."""
+    @pytest.mark.parametrize("square_resize_div_64", [True, False])
+    def test_multi_scale_resize_uses_height_width_scales_for_a_non_square_model(self, tmp_path, square_resize_div_64):
+        """A non-square model resizes the batch and its padding mask to one of its ``(height, width)`` scales.
+
+        The dataset resize mode does not change that: the batch takes the model's shape, as it takes a square for an
+        integer resolution.
+        """
         model_config = _base_model_config(resolution=(448, 672))
-        train_config = _base_train_config(tmp_path, multi_scale="per-batch")
+        train_config = _base_train_config(tmp_path, multi_scale="per-batch", square_resize_div_64=square_resize_div_64)
         module, _, _, _ = _build_module(model_config=model_config, train_config=train_config)
         _attach_trainer(module, global_step=0)
         samples, targets = _make_batch(batch_size=2, h=16, w=24)
