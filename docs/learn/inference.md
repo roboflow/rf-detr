@@ -110,6 +110,7 @@ The output is `supervision.Detections` for detection and segmentation, or `super
 | ------------------- | ---------------------------------------------------------- |
 | `backend`, `device` | Runtime and its device policy or selected device.          |
 | `task`              | `detect`, `segment`, or `keypoints`.                       |
+| `has_keypoints`     | Whether `predict()` returns keypoints, also for `segment`. |
 | `input_shape`       | Canonical NCHW shape; `None` marks a dynamic axis.         |
 | `default_shape`     | Default image height and width as `(H, W)`.                |
 | `batch_size`        | Exact required batch size, or `None` when not fixed.       |

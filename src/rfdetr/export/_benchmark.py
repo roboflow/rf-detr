@@ -1061,7 +1061,10 @@ def _coco_ap_prediction(
 ) -> dict[str, torch.Tensor]:
     """Convert one public prediction result to the tensors consumed by CocoEvaluator.
 
-    Empty results need no fields; CocoEvaluator accepts an empty dictionary for a missed image.
+    Empty results need no fields; CocoEvaluator accepts an empty dictionary for a missed image. For ``"keypoints"``,
+    a model with both a segmentation and a keypoint head returns :class:`~supervision.Detections` (``KeyPoints`` has no
+    mask field) with its keypoints in ``data["keypoints"]``; those score like ``KeyPoints``, and their masks are
+    ignored (score them with ``"segment"`` in a separate run).
 
     Args:
         output: Public prediction result for one image, using sparse COCO category IDs.
@@ -1076,11 +1079,18 @@ def _coco_ap_prediction(
     Examples:
         >>> _coco_ap_prediction(sv.Detections.empty(), "detect")
         {}
+        >>> two_heads = sv.Detections(
+        ...     xyxy=np.array([[0.0, 0.0, 4.0, 4.0]]), confidence=np.array([0.9]), class_id=np.array([1]),
+        ...     data={"keypoints": np.ones((1, 17, 3))},
+        ... )
+        >>> _coco_ap_prediction(two_heads, "keypoints")["keypoints"].shape
+        torch.Size([1, 17, 3])
     """
     import torch
 
     expected_type = sv.KeyPoints if task == "keypoints" else sv.Detections
-    if not isinstance(output, expected_type):
+    has_keypoint_data = isinstance(output, sv.Detections) and "keypoints" in output.data
+    if not isinstance(output, expected_type) and not (task == "keypoints" and has_keypoint_data):
         raise ValueError(f"Prediction type {type(output).__name__} does not match task {task!r}.")
     if len(output) == 0:
         return {}
@@ -1110,6 +1120,13 @@ def _coco_ap_prediction(
         mask = np.asarray(output.mask)
         # Boolean masks: the evaluator thresholds at 0.5 anyway, and a float copy of 300 full-size masks is 4x larger.
         prediction["masks"] = torch.from_numpy(mask[:, None])
+    elif task == "keypoints":
+        keypoints = np.asarray(output.data["keypoints"])
+        if keypoints.ndim != 3 or keypoints.shape[-1] != 3:
+            raise ValueError(
+                f'Detections need data["keypoints"] shaped (N, K, 3) (pixel x, y, confidence); got {keypoints.shape}.'
+            )
+        prediction["keypoints"] = torch.as_tensor(keypoints, dtype=torch.float32)
     return prediction
 
 
@@ -1125,7 +1142,9 @@ def evaluate_coco_ap(
     Args:
         run: Callable wrapping ``RFDETRInference.predict(image, threshold=0.001, include_source_image=False)``.
         subset: Images and instance annotations from :func:`fetch_coco_val2017`.
-        task: The predictor's ``runtime_info["task"]``: detect, segment or keypoints.
+        task: The predictor's ``runtime_info["task"]``: detect, segment or keypoints. A model with both a
+            segmentation and a keypoint head reports ``segment``, which scores its masks; pass ``keypoints`` in a
+            second run to score the keypoints its ``sv.Detections`` carry in ``data["keypoints"]``.
         progress: Whether to show a progress bar.
 
     Returns:
@@ -1222,7 +1241,8 @@ def evaluate_coco_predictions(
     Args:
         predictions: One prediction per image ID, as ``predict`` returned it.
         subset: Annotations from :func:`fetch_coco_val2017`; its ``image_ids`` are the default images to score.
-        task: The predictor's ``runtime_info["task"]``: detect, segment or keypoints.
+        task: The predictor's ``runtime_info["task"]``: detect, segment or keypoints, chosen as for
+            :func:`evaluate_coco_ap`.
         image_ids: The unique images to score, each with an entry in ``predictions``. Defaults to ``subset.image_ids``.
 
     Returns:

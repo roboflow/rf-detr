@@ -253,6 +253,7 @@ class TestLiveModelSource:
                 "backend": "pytorch",
                 "device": "cpu",
                 "task": "detect",
+                "has_keypoints": False,
                 "input_shape": (None, 3, None, None),
                 "default_shape": (64, 64),
                 "batch_size": None,

@@ -156,6 +156,8 @@ model.train(dataset_dir=str(DATASET_DIR), class_names=schema.class_names, epochs
 detections = model.predict("image.jpg", threshold=0.5)
 detections.mask  # (N, H, W) boolean instance masks
 detections.data["keypoints"]  # (N, K, 3): pixel x, y and keypoint confidence
+detections.data["covariance"]  # (N, K, 2, 2): pixel-space covariance of each keypoint
+visible = detections.data["keypoints"][..., 2] > 0  # what sv.KeyPoints.visible holds for a keypoint model
 ```
 
 Such a model trains with [`SegmentationKeypointTrainConfig`](../../reference/segmentation_keypoint_train_config.md). Validation reports mask mAP and OKS keypoint AP, and the best checkpoint follows mask mAP. `predict()` returns `sv.Detections`, not `sv.KeyPoints`, because `sv.KeyPoints` has no mask field. Two limits apply: `model.export()` refuses a model with both heads, so predict with the PyTorch model or `model.inference()`, and YOLO datasets cannot supply masks and keypoints together.
