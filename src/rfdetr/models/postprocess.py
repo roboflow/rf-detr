@@ -242,9 +242,13 @@ class PostProcess(nn.Module):
         Returns:
             Absolute ``xyxy`` boxes with shape ``(B, K, 4)`` in pixel units,
             clamped to ``[0, width]`` for x-coordinates and ``[0, height]`` for y-coordinates.
+            Float16 and bfloat16 boxes are decoded and returned in float32.
         """
-        boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
-        boxes = torch.gather(boxes, 1, topk_boxes.unsqueeze(-1).expand(-1, -1, 4))
+        boxes = torch.gather(out_bbox, 1, topk_boxes.unsqueeze(-1).expand(-1, -1, 4))
+        # Widen before computing corners to avoid rounding them in the model's half-precision dtype.
+        if boxes.dtype in (torch.float16, torch.bfloat16):
+            boxes = boxes.float()
+        boxes = box_ops.box_cxcywh_to_xyxy(boxes)
         img_h, img_w = target_sizes.unbind(1)
         scale_fct = torch.stack([img_w, img_h, img_w, img_h], dim=1).to(boxes.dtype)
         boxes = boxes * scale_fct[:, None, :]

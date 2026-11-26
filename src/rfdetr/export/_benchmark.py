@@ -23,6 +23,7 @@ guarantee across versions. Formerly duplicated per export format (see the remove
 from __future__ import annotations
 
 import gc
+import itertools
 import json
 import os
 import platform
@@ -622,6 +623,60 @@ def time_folder(predictor: Any, folder: Path, n_images: int, repeats: int, **pre
         if len(results) != n_images:
             raise ValueError(f"{folder} gave {len(results)} results, expected {n_images}.")
     return n_images / sorted(seconds)[len(seconds) // 2]
+
+
+def time_predict_call(
+    predictor: Any,
+    images: Sequence[Any],
+    batch_size: int,
+    *,
+    label: str,
+    device: str | torch.device,
+    warmup: int,
+    runs: int,
+    **predict_kwargs: Any,
+) -> dict[str, float]:
+    """Time one ``predictor.predict`` call of ``batch_size`` distinct images and return its median and 95th percentile.
+
+    The images are cut into consecutive full batches and the calls cycle through them, so every timed call sees images
+    the previous call did not and a decode or preprocessing cache cannot flatter the result. A trailing partial batch is
+    never used.
+
+    Args:
+        predictor: Anything with a ``predict`` method that takes a list of images.
+        images: Pool of images to cycle through, at least *batch_size* long.
+        batch_size: Images in every call.
+        label: Name for the timing row, passed to :func:`measure_latency`.
+        device: Device the predictor runs on, passed to :func:`measure_latency` to pick the timer.
+        warmup: Untimed warm-up calls.
+        runs: Timed calls.
+        **predict_kwargs: Keywords passed to every ``predict`` call.
+
+    Returns:
+        ``{"call_ms": median, "call_p95_ms": 95th percentile}`` of the time of one call, in milliseconds.
+
+    Raises:
+        ValueError: If *batch_size* is not positive or *images* holds less than one full batch.
+
+    Examples:
+        >>> class _Predictor:
+        ...     def predict(self, images, **kwargs):
+        ...         return [None] * len(images)
+        >>> timing = time_predict_call(
+        ...     _Predictor(), list(range(6)), 2, label="fake", device="cpu", warmup=1, runs=3, threshold=0.5
+        ... )
+        >>> sorted(timing)
+        ['call_ms', 'call_p95_ms']
+    """
+    if not 1 <= batch_size <= len(images):
+        raise ValueError(f"The image pool holds {len(images)} images, which is not a full batch of {batch_size}.")
+    batches = itertools.cycle([images[i : i + batch_size] for i in range(0, len(images) - batch_size + 1, batch_size)])
+
+    def call() -> object:
+        return predictor.predict(list(next(batches)), **predict_kwargs)
+
+    timing = measure_latency(call, label=label, device=device, warmup=warmup, runs=runs)
+    return {"call_ms": timing.median_ms, "call_p95_ms": timing.p95_ms}
 
 
 def export_cached(model: Any, output_dir: Path, pattern: str, **export_kwargs: Any) -> Path:

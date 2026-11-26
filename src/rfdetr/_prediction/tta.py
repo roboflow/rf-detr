@@ -3,17 +3,17 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Test-time augmentation views: sub-patch shifts, mirroring and zoom, fused into one prediction.
+"""Test-time augmentation views: sub-patch shifts and zoom, fused into one prediction.
 
 The backbone cuts its input into a grid of ``patch_size`` squares, and an object's class score depends a little on where
 the object sits inside its square. Moving an image by a fraction of a patch can therefore swing a score across the
 threshold while the box stays put (
 https://github.com/roboflow/rf-detr/issues/1599).
 TTA runs the batch once per
-*view*: the image is mirrored, scaled and placed at a sub-patch offset on a canvas that is at least as large as the
+*view*: the image is scaled and placed at a sub-patch offset on a canvas that is at least as large as the
 image, so no view cuts content off. Each view is mapped back to the image, and the matching detections of all views are
-averaged. ``RFDETR.predict(..., shift_tta=N)`` uses ``N`` shifted views, and
-``RFDETRInference.predict(..., tta=TTAConfig(...))`` adds mirrored and zoomed views.
+averaged. ``RFDETRInference.predict(..., tta=TTAConfig(...))`` takes the views: ``shift`` sub-patch shifted
+views and ``zoom`` scaled views.
 """
 
 from __future__ import annotations
@@ -21,7 +21,7 @@ from __future__ import annotations
 import copy
 import math
 from collections.abc import Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -44,26 +44,26 @@ ZOOM_MAX = 1.5
 DEFAULT_ZOOM = (0.85, 1.25, 1.5)
 
 
-def validate_shift_tta(shift_tta: object, patch_size: int) -> int:
-    """Check the ``shift_tta`` argument of ``predict``.
+def validate_shift(shift: object, patch_size: int) -> int:
+    """Check the ``shift`` field of ``TTAConfig`` against the backbone patch size.
 
     Args:
-        shift_tta: Number of passes; 1 turns shift TTA off.
-        patch_size: Backbone patch size in model input pixels. Each pass needs its own sub-patch offset.
+        shift: Number of shifted views; 1 adds no shift.
+        patch_size: Backbone patch size in model input pixels. Each view needs its own sub-patch offset.
 
     Returns:
-        The number of passes.
+        The number of shifted views.
 
     Raises:
-        ValueError: If ``shift_tta`` is not an integer from 1 to ``patch_size``.
+        ValueError: If ``shift`` is not an integer from 1 to ``patch_size``.
 
     Examples:
-        >>> validate_shift_tta(4, patch_size=16)
+        >>> validate_shift(4, patch_size=16)
         4
     """
-    if isinstance(shift_tta, bool) or not isinstance(shift_tta, int) or not 1 <= shift_tta <= patch_size:
-        raise ValueError(f"shift_tta must be an integer from 1 to the patch size ({patch_size}), got {shift_tta!r}.")
-    return shift_tta
+    if isinstance(shift, bool) or not isinstance(shift, int) or not 1 <= shift <= patch_size:
+        raise ValueError(f"TTAConfig.shift must be an integer from 1 to the patch size ({patch_size}), got {shift!r}.")
+    return shift
 
 
 def shift_offsets(patch_size: int, passes: int) -> list[int]:
@@ -93,18 +93,16 @@ class TTAConfig:
 
     Passing ``tta`` at all is the opt-in; ``tta=None`` is the plain prediction. ``TTAConfig()`` is the recommended
     recipe, the native-scale view plus three zoomed copies (``DEFAULT_ZOOM``), four views. With no explicit zoom
-    scales, ``shift > 1`` or ``flip=True`` suppresses the default zooms, so ``TTAConfig(shift=4)`` is four views.
-    ``TTAConfig(zoom=())`` with the default shift and flip values runs one plain prediction. Every view
+    scales, ``shift > 1`` suppresses the default zooms, so ``TTAConfig(shift=4)`` is four views.
+    ``TTAConfig(zoom=())`` with the default shift runs one plain prediction. Every view
     costs one forward pass over a canvas at least as large as the image, so the cost grows with the number of views
-    (see :func:`view_count`) and, for zoom, with the canvas area. Mirroring assumes an object keeps its class when the
-    image is flipped: a class that does not (arrows, turn signs) splits into two groups and loses score.
+    (see :func:`view_count`) and, for zoom, with the canvas area.
 
     Attributes:
         shift: Number of sub-patch shifted views, from 1 to the backbone patch size; 1 adds no shift.
-        flip: Also run every view mirrored left to right.
         zoom: Extra views at these scales, each a resized copy of the image on a larger canvas. Every value is a finite
             number inside ``[ZOOM_MIN, ZOOM_MAX]`` and not 1. ``None``, the default, means ``DEFAULT_ZOOM`` when
-            ``shift`` is 1 and ``flip`` is off, and no zoom otherwise; it is stored as the tuple it resolves to.
+            ``shift`` is 1, and no zoom otherwise; it is stored as the tuple it resolves to.
 
     Raises:
         TypeError: If a field has the wrong type, or ``zoom`` is a string, a mapping or a set.
@@ -112,17 +110,16 @@ class TTAConfig:
 
     Examples:
         >>> TTAConfig()
-        TTAConfig(shift=1, flip=False, zoom=(0.85, 1.25, 1.5))
+        TTAConfig(shift=1, zoom=(0.85, 1.25, 1.5))
         >>> TTAConfig(shift=4)
-        TTAConfig(shift=4, flip=False, zoom=())
-        >>> TTAConfig(shift=2, flip=True, zoom=[1.25])
-        TTAConfig(shift=2, flip=True, zoom=(1.25,))
-        >>> view_count(TTAConfig(shift=2, flip=True, zoom=(1.25,)))
-        6
+        TTAConfig(shift=4, zoom=())
+        >>> TTAConfig(shift=2, zoom=[1.25])
+        TTAConfig(shift=2, zoom=(1.25,))
+        >>> view_count(TTAConfig(shift=2, zoom=(1.25,)))
+        3
     """
 
     shift: int = 1
-    flip: bool = False
     zoom: tuple[float, ...] | None = None
 
     def __post_init__(self) -> None:
@@ -131,11 +128,9 @@ class TTAConfig:
             raise TypeError(f"TTAConfig.shift must be an int, got {type(self.shift).__name__}.")
         if self.shift < 1:
             raise ValueError(f"TTAConfig.shift must be at least 1, got {self.shift!r}.")
-        if not isinstance(self.flip, bool):
-            raise TypeError(f"TTAConfig.flip must be a bool, got {type(self.flip).__name__}.")
         requested = self.zoom
         if requested is None:
-            requested = DEFAULT_ZOOM if self.shift == 1 and not self.flip else ()
+            requested = DEFAULT_ZOOM if self.shift == 1 else ()
         if not isinstance(requested, (list, tuple)):
             raise TypeError(f"TTAConfig.zoom must be a list or tuple of numbers, got {type(requested).__name__}.")
         zoom: list[float] = []
@@ -153,7 +148,7 @@ class TTAConfig:
 
 
 def view_count(config: TTAConfig) -> int:
-    """Return how many views ``config`` runs: shifts plus zooms, doubled by ``flip``.
+    """Return how many views ``config`` runs: shifts plus zooms.
 
     Args:
         config: The requested views.
@@ -166,49 +161,23 @@ def view_count(config: TTAConfig) -> int:
         4
         >>> view_count(TTAConfig(zoom=()))
         1
-        >>> view_count(TTAConfig(shift=4, flip=True))
-        8
+        >>> view_count(TTAConfig(shift=4))
+        4
     """
-    return (config.shift + len(config.zoom or ())) * (2 if config.flip else 1)
-
-
-def shift_tta_config(shift_tta: object) -> TTAConfig | None:
-    """Turn the ``shift_tta`` argument of ``RFDETR.predict`` into the views it stands for.
-
-    Args:
-        shift_tta: Number of shifted passes; 1 is the plain prediction. The upper bound, the patch size, is checked
-            with the views, where the patch size is known.
-
-    Returns:
-        ``None`` for the plain prediction, else a shift-only ``TTAConfig``.
-
-    Raises:
-        ValueError: If ``shift_tta`` is not an integer of at least 1 (``True`` and ``1.0`` included).
-
-    Examples:
-        >>> shift_tta_config(1) is None
-        True
-        >>> shift_tta_config(4)
-        TTAConfig(shift=4, flip=False, zoom=())
-    """
-    if isinstance(shift_tta, bool) or not isinstance(shift_tta, int) or shift_tta < 1:
-        raise ValueError(f"shift_tta must be an integer from 1 to the patch size, got {shift_tta!r}.")
-    return None if shift_tta == 1 else TTAConfig(shift=shift_tta, zoom=())
+    return config.shift + len(config.zoom or ())
 
 
 @dataclass(frozen=True)
 class _View:
-    """One pass: the image is mirrored, scaled by ``scale`` and placed at ``(offset, offset)`` on a canvas.
+    """One pass: the image is scaled by ``scale`` and placed at ``(offset, offset)`` on a canvas.
 
     Attributes:
         scale: 1 is native size, above 1 zooms in, below 1 zooms out. A view never crops.
         offset: Placement down and right, in model input pixels. Shift views use ``0`` to ``patch_size - 1``.
-        flip: Mirror about the vertical axis before scaling.
     """
 
     scale: float = 1.0
     offset: int = 0
-    flip: bool = False
 
 
 def placed_size(view: _View, size: tuple[int, int]) -> tuple[int, int]:
@@ -231,9 +200,8 @@ def placed_size(view: _View, size: tuple[int, int]) -> tuple[int, int]:
 def build_views(config: TTAConfig, patch_size: int, size: tuple[int, int]) -> list[_View]:
     """Return the views of ``config`` for one model input size.
 
-    Shift views come first (scale 1, the offsets of :func:`shift_offsets`), then one view per zoom (offset 0). With
-    ``flip`` every view is repeated mirrored after the unmirrored ones. The views are additive, not a product, so
-    4 shifts and 3 zooms are 7 views, not 12.
+    Shift views come first (scale 1, the offsets of :func:`shift_offsets`), then one view per zoom (offset 0). The
+    views are additive, not a product, so 4 shifts and 3 zooms are 7 views, not 12.
 
     Args:
         config: The requested views.
@@ -248,10 +216,10 @@ def build_views(config: TTAConfig, patch_size: int, size: tuple[int, int]) -> li
             (it would repeat that view and double its weight).
 
     Examples:
-        >>> [(v.scale, v.offset, v.flip) for v in build_views(TTAConfig(shift=2, flip=True), 16, (64, 64))]
-        [(1.0, 0, False), (1.0, 8, False), (1.0, 0, True), (1.0, 8, True)]
+        >>> [(v.scale, v.offset) for v in build_views(TTAConfig(shift=2, zoom=(1.25,)), 16, (64, 64))]
+        [(1.0, 0), (1.0, 8), (1.25, 0)]
     """
-    validate_shift_tta(config.shift, patch_size)
+    validate_shift(config.shift, patch_size)
     views = [_View(offset=offset) for offset in shift_offsets(patch_size, config.shift)]
     sizes = {placed_size(views[0], size)}
     for zoom in config.zoom or ():
@@ -261,8 +229,6 @@ def build_views(config: TTAConfig, patch_size: int, size: tuple[int, int]) -> li
             raise ValueError(f"TTAConfig.zoom {zoom!r} places the image at {placed}, the size of another view.")
         sizes.add(placed)
         views.append(view)
-    if config.flip:
-        views += [replace(view, flip=True) for view in views]
     return views
 
 
@@ -303,7 +269,7 @@ def place_view(
     antialias: bool = False,
     resize_on_cpu: bool = False,
 ) -> torch.Tensor:
-    """Mirror, scale and place a normalized ``(B, C, H, W)`` batch on a zero canvas.
+    """Scale and place a normalized ``(B, C, H, W)`` batch on a zero canvas.
 
     The canvas is zero, the normalization mean colour, so the backbone sees the whole image and a plain border, never
     cropped content. A scaled view is resampled with the same call preprocessing uses.
@@ -321,11 +287,11 @@ def place_view(
     Examples:
         >>> place_view(torch.ones(1, 1, 2, 2), _View(offset=1), (4, 4))[0, 0].int().tolist()
         [[0, 0, 0, 0], [0, 1, 1, 0], [0, 1, 1, 0], [0, 0, 0, 0]]
-        >>> place_view(torch.tensor([[[[1.0, 2.0]]]]), _View(flip=True), (1, 2))[0, 0].tolist()
-        [[2.0, 1.0]]
+        >>> place_view(torch.tensor([[[[1.0, 2.0]]]]), _View(), (1, 2))[0, 0].tolist()
+        [[1.0, 2.0]]
     """
     b, c, h, w = batch.shape
-    content = batch.flip(-1) if view.flip else batch
+    content = batch
     ch, cw = placed_size(view, (h, w))
     if (ch, cw) != (h, w):
         resized = resize(content.cpu() if resize_on_cpu else content, [ch, cw], antialias=antialias)
@@ -344,9 +310,8 @@ def map_to_image(
 ) -> dict[str, torch.Tensor]:
     """Map raw model outputs for a canvas from :func:`place_view` back to the image it holds.
 
-    Boxes are normalized ``cxcywh`` and become relative to the image instead of the canvas, mirrored back when the view
-    was. Boxes outside the image content have zero area. Mask logits are resampled from the image's region of the canvas
-    to ``mask_size``, mirrored back as well. The
+    Boxes are normalized ``cxcywh`` and become relative to the image instead of the canvas. Boxes outside the image
+    content have zero area. Mask logits are resampled from the image's region of the canvas to ``mask_size``. The
     result reads as if the model had seen the image directly, so the usual post-processing applies unchanged.
 
     Args:
@@ -375,8 +340,6 @@ def map_to_image(
     outside_y = (cy + h / 2 <= view.offset / canvas_h) | (cy - h / 2 >= (view.offset + ch) / canvas_h)
     cx = (cx * canvas_w - view.offset) / cw
     cy = (cy * canvas_h - view.offset) / ch
-    if view.flip:
-        cx = 1 - cx
     w = (w * canvas_w / cw).masked_fill(outside_x, 0)
     h = (h * canvas_h / ch).masked_fill(outside_y, 0)
     mapped["pred_boxes"] = torch.stack((cx, cy, w, h), dim=-1)
@@ -384,11 +347,9 @@ def map_to_image(
     masks = outputs.get("pred_masks")
     if masks is not None and mask_size is not None:
         out_h, out_w = mask_size
-        # Centres of the output mask pixels as fractions of the image, mirrored in the image frame, not the canvas.
+        # Centres of the output mask pixels as fractions of the image.
         frac_y = (torch.arange(out_h, device=masks.device) + 0.5) / out_h
         frac_x = (torch.arange(out_w, device=masks.device) + 0.5) / out_w
-        if view.flip:
-            frac_x = 1 - frac_x
         # The same centres in the canvas's [-1, 1] grid_sample coordinates (align_corners=False).
         ys = (view.offset + frac_y * ch) * 2 / canvas_h - 1
         xs = (view.offset + frac_x * cw) * 2 / canvas_w - 1
