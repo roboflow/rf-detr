@@ -806,9 +806,8 @@ class ModelConfig(BaseConfig):
 
         When a user provides a custom ``resolution`` at construction time (e.g., ``RFDETRLarge(resolution=640)``),
         ``positional_encoding_size`` is updated proportionally, provided the class-default PE is formula-derived
-        (``default_pe == default_resolution // patch_size``).
-        For those classes, a non-positive ``int`` resolution raises ``ValueError`` at config construction when
-        ``positional_encoding_size`` is derived automatically.
+        (``default_pe == default_resolution // patch_size``). For those classes, a non-positive ``int`` resolution
+        raises ``ValueError`` at config construction when ``positional_encoding_size`` is derived automatically.
 
         Configs with a pretrained-specific PE (e.g., ``RFDETRBaseConfig`` with ``positional_encoding_size=37`` for
         DINOv2's native 518 px grid, while ``resolution=560``) are left unchanged.
