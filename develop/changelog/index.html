@@ -3272,6 +3272,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="added">Added<a class="headerlink" href="#added" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><code>TrainConfig.skip_unreadable_images</code> (default <code>False</code>) keeps a training run alive when an image cannot be read: a missing file, an I/O error, or a truncated or unidentifiable file. When it is <code>True</code>, the read is tried three times with a short pause; if it still fails, the next readable sample is used in its place and one error naming the file is logged. Without it an unreadable image ends the run, as before (COCO raises in the DataLoader worker; a missing or bad-header YOLO file already fails while the dataset is built), and under DDP a failure on rank 0 can leave the other ranks blocked until the process-group timeout. A substituted sample changes that batch, so repair the files the log names if exact reproducibility matters; when the 10 following samples are unreadable as well, a <code>RuntimeError</code> reports a broken dataset or filesystem. Validation and test splits always raise. Applies to COCO and YOLO datasets (<code>CocoDetection</code> and <code>YoloDetection</code> gain a <code>skip_unreadable</code> argument), not to WebDataset shards. (<a href="https://github.com/roboflow/rf-detr/pull/1761">#1761</a>)</p>
+</li>
+<li>
 <p><code>RFDETR.export(format="executorch", backend="tensorrt")</code> writes an ExecuTorch <code>.pte</code> that runs on an NVIDIA GPU through TensorRT, built through Torch-TensorRT from the <code>torch.export</code> graph with no ONNX step. <code>RFDETRInference</code> loads it on the GPU. It needs the new <code>rfdetr[executorch-tensorrt]</code> extra (Linux, Python 3.11 or newer), which cannot share an environment with <code>rfdetr[executorch]</code>, and a CUDA device at export time. (<a href="https://github.com/roboflow/rf-detr/pull/1712">#1712</a>)</p>
 </li>
 <li>
@@ -3319,6 +3322,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>Loading DINOv2 hub weights (only for a patch-14 backbone with 37 positional encodings and <code>pretrain_weights=None</code>, such as the deprecated RF-DETR Base configs) reads <code>model.safetensors</code> through <code>huggingface_hub</code>, using pinned commits for <code>facebook/dinov2-small</code>, <code>facebook/dinov2-base</code>, and <code>facebook/dinov2-with-registers-small</code> and the <code>main</code> branch for other repositories, and raises if the file's keys differ from the backbone's instead of randomly initializing the missing ones. Without <code>huggingface_hub</code> and <code>safetensors</code> it raises an <code>ImportError</code> that names them.</li>
 <li>A non-windowed <code>DinoV2(use_windowed_attn=False)</code> imports <code>transformers</code> when it is built, and raises an <code>ImportError</code> with the install command if <code>transformers</code> is missing.</li>
 </ul>
+</li>
+<li>
+<p>With <code>skip_unreadable_images</code> off, a corrupt image now ends the run with an <code>OSError</code>: a <code>SyntaxError</code> from the Pillow decoder process or from an in-process decode, and a corrupt-file <code>ValueError</code> Pillow raises on open or decode, are converted to it, and built-in <code>OSError</code> subclasses from the decoder process keep their type. Before, a decoder-process failure other than a plain <code>OSError</code> surfaced as <code>RuntimeError</code> and an in-process <code>SyntaxError</code> escaped as it was. A crash of the decoder process itself still surfaces as <code>RuntimeError</code>. A default YOLO dataset therefore wraps a corrupt PNG as a <code>ValueError</code> chained to the <code>OSError</code>. (<a href="https://github.com/roboflow/rf-detr/pull/1761">#1761</a>)</p>
 </li>
 </ul>
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
