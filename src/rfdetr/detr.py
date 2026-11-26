@@ -503,6 +503,48 @@ def _ensure_model_on_device(method: Callable[Concatenate[Any, _P], _R]) -> Calla
     return typed_wrapper
 
 
+def _restore_resolution_on_failure(
+    method: Callable[Concatenate[RFDETR, _P], _R],
+) -> Callable[Concatenate[RFDETR, _P], _R]:
+    """Restore the detector's resolution metadata if training raises.
+
+    Args:
+        method: Training method whose resolution changes are guarded.
+    """
+
+    @wraps(method)
+    def wrapper(self: RFDETR, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+        """Snapshot resolution metadata and restore it if the method raises."""
+        model_config = self.model_config
+        resolution = model_config.resolution
+        positional_encoding_size = model_config.positional_encoding_size
+        model = getattr(self, "model", None)
+        model_args = getattr(model, "args", None) if model is not None else None
+        missing: Any = object()
+        model_resolution = getattr(model, "resolution", missing)
+        args_resolution = getattr(model_args, "resolution", missing)
+        args_pe = getattr(model_args, "positional_encoding_size", missing)
+
+        try:
+            return method(self, *args, **kwargs)
+        except BaseException:
+            model_config.resolution = resolution
+            model_config.positional_encoding_size = positional_encoding_size
+            if model is not None:
+                if model_resolution is not missing and hasattr(model, "resolution"):
+                    model.resolution = model_resolution
+                # Training replaces model.args after fit, before the final config write.
+                model_args = getattr(model, "args", None)
+                if model_args is not None:
+                    if args_resolution is not missing and hasattr(model_args, "resolution"):
+                        model_args.resolution = args_resolution
+                    if args_pe is not missing and hasattr(model_args, "positional_encoding_size"):
+                        model_args.positional_encoding_size = args_pe
+            raise
+
+    return wrapper
+
+
 def _prepare_run_config(
     detector: RFDETR, *, for_eval: bool = False, **kwargs: Any
 ) -> tuple[TrainConfig, str | None, list[int] | None]:
@@ -1336,6 +1378,7 @@ class RFDETR:
         )
         return None, None
 
+    @_restore_resolution_on_failure
     def train(self, **kwargs: Any) -> None:
         """Train an RF-DETR model via the PyTorch Lightning stack.
 
@@ -1396,7 +1439,7 @@ class RFDETR:
                 "The new training run will start from the original pretrained weights (pretrain_weights), "
                 "NOT from the in-memory trained state. To continue training, pass resume=<checkpoint_path>.",
                 UserWarning,
-                stacklevel=2,
+                stacklevel=3,
             )
 
         # Absorb the special train/evaluate kwargs (device, resolution, deprecated knobs),

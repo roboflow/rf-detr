@@ -18,6 +18,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `resolution` accepts a `(height, width)` pair for a non-square input, such as `RFDETRMedium(resolution=(384, 672))`; an integer still means a square and behaves as before. Each side must be divisible by `patch_size * num_windows`. `ModelConfig.positional_encoding_size` takes the matching `(height, width)` patch grid and is derived from a pair `resolution` as it is from an integer one. Training (`train(resolution=...)`, the dataset transforms, multi-scale training and `batch_size="auto"`), `evaluate()`, `predict()`, `inference()` and the default `export()` shape use the pair. Pretrained and fine-tuned checkpoints load into a non-square model by interpolating the backbone's positional embeddings to its grid, including when the two grids hold the same number of patches. ([#1764](https://github.com/roboflow/rf-detr/pull/1764))
 
+    - A non-positive `int` resolution is now rejected at config construction when the positional-encoding size is derived automatically.
+    - Plus models accept only an integer `resolution` for now.
+
 ### Documentation
 
 - Cookbook for joint training on three RF100-VL datasets 20x apart in size, with `WeightedMultiSourceBatchSampler` weights computed automatically as the inverse of each source's measured size (`docs/cookbooks/multi-source-rf100vl.ipynb`).

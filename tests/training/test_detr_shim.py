@@ -607,6 +607,33 @@ class TestResolutionKwarg:
         RFDETR.train(mock_self, resolution=valid_resolution)
         assert mock_self.model_config.resolution == valid_resolution
 
+    def test_restores_resolution_after_failed_fit(
+        self, tmp_path: Path, patch_lit: tuple[MagicMock, MagicMock, MagicMock], mocker: MockerFixture
+    ) -> None:
+        """A failed fit restores the original resolution and positional encoding metadata."""
+        mock_self = _make_rfdetr_self(tmp_path)
+        block_size = mock_self.model_config.patch_size * mock_self.model_config.num_windows
+        valid_resolution = block_size * 11
+        original_resolution = mock_self.model_config.resolution
+        # Use a formula-derived grid so the override changes the positional encoding size too.
+        original_pe = original_resolution // mock_self.model_config.patch_size
+        mock_self.model_config.positional_encoding_size = original_pe
+        mock_self.model.resolution = original_resolution
+        mock_self.model.args = SimpleNamespace(resolution=original_resolution, positional_encoding_size=original_pe)
+        _, _, mock_bt = patch_lit
+        error = RuntimeError("boom")
+        mock_bt.return_value.fit = mocker.Mock(side_effect=error)
+
+        with pytest.raises(RuntimeError, match="boom") as exc_info:
+            RFDETR.train(mock_self, resolution=valid_resolution)
+
+        assert exc_info.value is error
+        assert mock_self.model_config.resolution == original_resolution
+        assert mock_self.model_config.positional_encoding_size == original_pe
+        assert mock_self.model.resolution == original_resolution
+        assert mock_self.model.args.resolution == original_resolution
+        assert mock_self.model.args.positional_encoding_size == original_pe
+
     @pytest.mark.usefixtures("patch_lit")
     def test_does_not_implicitly_update_positional_encoding_size(self, tmp_path):
         """Pretrained-specific PE (RFDETRBase DINOv2=37) is preserved when resolution is overridden."""
