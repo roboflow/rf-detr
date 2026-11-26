@@ -5,6 +5,7 @@
 # ------------------------------------------------------------------------
 """Tests for Albumentations augmentation wrappers."""
 
+import math
 from functools import partial
 from typing import Any
 from unittest import mock
@@ -12,7 +13,7 @@ from unittest import mock
 import numpy as np
 import pytest
 import torch
-from PIL import Image
+from PIL import Image, ImageDraw
 from torch.utils.data import DataLoader
 from torchvision.transforms.v2 import Compose
 
@@ -2279,7 +2280,7 @@ class TestMakeCocoTransformsAugConfig:
         custom = {"HorizontalFlip": {"p": 1.0}}
         pipeline = make_transforms("train", 640, aug_config=custom)
         wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
-        aug_wrappers = wrappers[1:]  # skip resize wrapper
+        aug_wrappers = [w for w in wrappers if "HorizontalFlip" in _transform_leaf_names(w.transform)]
 
         assert len(aug_wrappers) == 1
         assert aug_wrappers[0].transform.transforms[0].__class__.__name__ == "HorizontalFlip"
@@ -2291,6 +2292,150 @@ class TestMakeCocoTransformsAugConfig:
         pipeline = make_transforms(split, 640, aug_config={"HorizontalFlip": {"p": 1.0}})
 
         assert not any(isinstance(t, AlbumentationsWrapper) for t in pipeline.transforms)
+
+
+def _transform_leaf_names(transform: Any) -> set[str]:
+    """Collect the class names of every transform nested inside *transform* (itself included).
+
+    Albumentations containers expose their children through ``.transforms``, so walking that attribute flattens
+    ``OneOf``/``Sequential`` wrappers down to their leaves.
+
+    Args:
+        transform: An Albumentations transform, possibly a container.
+
+    Returns:
+        The class names of *transform* and every transform nested inside it.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> outer = SimpleNamespace(transforms=[SimpleNamespace(transforms=[]), SimpleNamespace(transforms=[])])
+        >>> sorted(_transform_leaf_names(outer))
+        ['SimpleNamespace']
+    """
+    names = {type(transform).__name__}
+    for child in getattr(transform, "transforms", []) or []:
+        names |= _transform_leaf_names(child)
+    return names
+
+
+def _line_angle(mask: np.ndarray) -> float:
+    """Return the angle (degrees from horizontal) of the principal axis of a boolean *mask*.
+
+    Args:
+        mask: Two-dimensional boolean array marking the line's pixels.
+
+    Returns:
+        The line's angle in degrees, in ``(-90, 90]``.
+
+    Examples:
+        >>> _line_angle(np.eye(5, dtype=bool))
+        45.0
+    """
+    ys, xs = np.nonzero(mask)
+    covariance = np.cov(np.stack([xs - xs.mean(), ys - ys.mean()]))
+    values, vectors = np.linalg.eigh(covariance)
+    dx, dy = vectors[:, np.argmax(values)]
+    return (math.degrees(math.atan2(dy, dx)) + 90) % 180 - 90
+
+
+@_requires_albumentations
+class TestAugmentBeforeResize:
+    """Regression tests for #1769: geometric aug_config entries run before the square resize.
+
+    A rotation applied after the square resize turns rigidly in the network input, a shape no camera produces. On a
+    non-square image the augmentation must run on the image as loaded, so the resize then preserves the
+    camera-realistic slant: the two axes of a tilted object turn by different angles.
+    """
+
+    _ROTATION = 7.5
+
+    def _rotated_line_angles(self, pipeline: Compose) -> tuple[float, float]:
+        """Run the reporter's 800x1500 line image through *pipeline* and measure the two line angles.
+
+        Args:
+            pipeline: Train transform pipeline built with a fixed 7.5 degree ``Affine`` rotation.
+
+        Returns:
+            ``(horizontal_angle, vertical_lean)`` in degrees: the horizontal line's turn from horizontal and the
+            vertical line's lean from vertical, as the network input sees them.
+        """
+        width, height = 800, 1500
+        image = Image.new("RGB", (width, height))
+        draw = ImageDraw.Draw(image)
+        draw.line([(100, height // 2), (width - 100, height // 2)], fill=(255, 0, 0), width=9)
+        draw.line([(width // 2, 150), (width // 2, height - 150)], fill=(0, 255, 0), width=9)
+        target = {
+            "boxes": torch.zeros((0, 4)),
+            "labels": torch.zeros((0,), dtype=torch.int64),
+            "image_id": torch.tensor(1),
+            "orig_size": torch.tensor([height, width]),
+            "size": torch.tensor([height, width]),
+        }
+        output, _ = pipeline(image, target)
+        mean = torch.tensor([0.485, 0.456, 0.406])[:, None, None]
+        std = torch.tensor([0.229, 0.224, 0.225])[:, None, None]
+        rgb = ((output * std + mean).clamp(0, 1).permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+        horizontal = _line_angle((rgb[..., 0] > 128) & (rgb[..., 1] < 100))
+        vertical = _line_angle((rgb[..., 1] > 128) & (rgb[..., 0] < 100))
+        return horizontal, (vertical - 90 if vertical > 0 else vertical + 90)
+
+    @pytest.mark.parametrize("make_transforms", [make_coco_transforms, make_coco_transforms_square_div_64])
+    def test_geometric_aug_wrapper_precedes_resize_wrapper(self, make_transforms):
+        """The geometric aug wrapper sits before the resize wrapper in the train pipeline."""
+        pipeline = make_transforms(
+            "train",
+            576,
+            aug_config={"Affine": {"rotate": [self._ROTATION, self._ROTATION], "p": 1.0}},
+            scale_jitter=False,
+        )
+        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+        aug_index = next(i for i, w in enumerate(wrappers) if "Affine" in _transform_leaf_names(w.transform))
+        resize_index = next(
+            i for i, w in enumerate(wrappers) if _transform_leaf_names(w.transform) & {"Resize", "SmallestMaxSize"}
+        )
+
+        assert aug_index < resize_index
+
+    def test_rotation_on_non_square_image_keeps_camera_realistic_slant(self):
+        """A 7.5 degree rotation of an 800x1500 image slants the two axes by different angles."""
+        pipeline = make_coco_transforms_square_div_64(
+            "train",
+            576,
+            aug_config={"Affine": {"rotate": [self._ROTATION, self._ROTATION], "p": 1.0}},
+            scale_jitter=False,
+        )
+
+        horizontal, vertical_lean = self._rotated_line_angles(pipeline)
+
+        # Rotate-then-resize reference values from the issue: a rigid -7.5 / -7.5 would mean the rotation ran
+        # after the square resize.
+        assert horizontal == pytest.approx(-4.0, abs=1.5)
+        assert vertical_lean == pytest.approx(-13.9, abs=1.5)
+
+    def test_gpu_postprocess_still_runs_geometry_before_resize(self):
+        """With gpu_postprocess the geometric entry still runs on the CPU before the resize."""
+        pipeline = make_coco_transforms_square_div_64(
+            "train",
+            576,
+            aug_config={"Affine": {"rotate": [self._ROTATION, self._ROTATION], "p": 1.0}},
+            scale_jitter=False,
+            gpu_postprocess=True,
+        )
+        # The Kornia path resizes with torchvision transforms, so the resize step is the first transform after the
+        # Albumentations wrapper, not another wrapper.
+        aug_index = next(
+            i
+            for i, t in enumerate(pipeline.transforms)
+            if isinstance(t, AlbumentationsWrapper) and "Affine" in _transform_leaf_names(t.transform)
+        )
+        resize_index = next(
+            i
+            for i, t in enumerate(pipeline.transforms)
+            if type(t).__name__ in {"RandomChoice", "RandomResize", "RandomSelect"}
+        )
+
+        assert aug_index < resize_index
+        assert not any(isinstance(t, Normalize) for t in pipeline.transforms)
 
 
 @_requires_albumentations

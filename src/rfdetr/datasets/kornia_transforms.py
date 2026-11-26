@@ -1109,6 +1109,83 @@ _REGISTRY: dict[str, Callable[[dict[str, Any]], Any]] = {
     "Perspective": _make_perspective,
 }
 
+#: aug_config keys whose geometry never commutes with the anisotropic square resize, so they always run on the CPU
+#: before the resize (roboflow/rf-detr#1769): a rotation or perspective applied after the resize turns rigidly in the
+#: network input, a shape no camera produces.
+_ALWAYS_PRE_RESIZE_AUG_KEYS: frozenset[str] = frozenset({"Rotate", "ShiftScaleRotate", "Perspective"})
+
+
+def _affine_has_rotation_or_shear(params: dict[str, Any]) -> bool:
+    """Return whether an ``Affine`` aug_config entry rotates or shears.
+
+    Rotation and shear do not commute with the anisotropic square resize, so such an entry must run on the CPU before
+    the resize (roboflow/rf-detr#1769). Pure translation and (per-axis) scale commute with the resize, so an ``Affine``
+    without rotation or shear stays on the GPU — that is also where the whole-pixel ``translate_px`` path lives.
+
+    Args:
+        params: The ``Affine`` aug_config params. An unset or ``None`` ``rotate`` or ``shear`` is the identity.
+
+    Returns:
+        ``True`` when ``rotate`` or ``shear`` is set to anything other than its identity, read the way Albumentations
+        reads it (see :func:`_affine_range_is`).
+
+    Examples:
+        >>> _affine_has_rotation_or_shear({"translate_px": 4, "scale": (0.9, 1.1)})
+        False
+        >>> _affine_has_rotation_or_shear({"rotate": (-15, 15)})
+        True
+        >>> _affine_has_rotation_or_shear({"shear": {"x": 0}})
+        True
+    """
+    for name in ("rotate", "shear"):
+        value = params.get(name)
+        if value is not None and not _affine_range_is(value, 0.0):
+            return True
+    return False
+
+
+def split_aug_config_for_gpu(
+    aug_config: dict[str, dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Split an aug_config into the entries that must run on the CPU before the resize and the GPU entries.
+
+    Geometric transforms applied after the square resize act on the squashed image: a rotation becomes a rigid turn in
+    the network input, which no real image produces (roboflow/rf-detr#1769). The entries that rotate, shear or displace
+    corners therefore run on the CPU before the resize, while flips (which commute with a resize exactly) and
+    pixel-level transforms stay on the Kornia GPU pipeline:
+
+    * ``Rotate``, ``ShiftScaleRotate`` and ``Perspective`` always run before the resize.
+    * ``Affine`` runs before the resize only when it rotates or shears; pure translation/scale stays on the GPU.
+    * Every other key stays on the GPU. Unknown keys are kept there too, so :func:`build_kornia_pipeline` still
+      raises its ``ValueError`` for them.
+
+    Args:
+        aug_config: Mapping of augmentation names to parameter dicts, as accepted by :func:`build_kornia_pipeline`.
+
+    Returns:
+        ``(pre_resize_config, gpu_config)``: the entries to run on the CPU before the resize first, then the entries
+        for the GPU pipeline, each preserving the input order. When nothing moves before the resize, the returned GPU
+        config is the input object itself.
+
+    Examples:
+        >>> split_aug_config_for_gpu({"Affine": {"rotate": (-15, 15)}, "HorizontalFlip": {"p": 0.5}})
+        ({'Affine': {'rotate': (-15, 15)}}, {'HorizontalFlip': {'p': 0.5}})
+        >>> split_aug_config_for_gpu({"Affine": {"translate_px": 4}, "HorizontalFlip": {"p": 0.5}})
+        ({}, {'Affine': {'translate_px': 4}, 'HorizontalFlip': {'p': 0.5}})
+        >>> split_aug_config_for_gpu({})
+        ({}, {})
+    """
+    pre_resize: dict[str, dict[str, Any]] = {}
+    gpu: dict[str, dict[str, Any]] = {}
+    for name, params in aug_config.items():
+        if name in _ALWAYS_PRE_RESIZE_AUG_KEYS or (name == "Affine" and _affine_has_rotation_or_shear(params)):
+            pre_resize[name] = params
+        else:
+            gpu[name] = params
+    if not pre_resize:
+        return {}, aug_config
+    return pre_resize, gpu
+
 
 # ---------------------------------------------------------------------------
 # Pipeline builders
@@ -1131,6 +1208,10 @@ def build_kornia_pipeline(
     Args:
         aug_config: Mapping of augmentation names to parameter dicts, identical
             to the format accepted by the Albumentations path (e.g. ``{"HorizontalFlip": {"p": 0.5}}``).
+            On the training path the caller passes only the GPU entries from
+            :func:`split_aug_config_for_gpu` — geometric entries that rotate, shear or displace corners run on the
+            CPU before the resize instead (roboflow/rf-detr#1769) — but the builder itself still accepts a full
+            config, as direct callers and tests use it.
         resolution: Target image resolution in pixels (currently reserved for
             future resolution-aware augmentations).
         with_masks: When ``True``, include ``"mask"`` in ``data_keys`` so

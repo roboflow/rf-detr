@@ -498,7 +498,7 @@ class TestBuildO365RawGpuBackend:
     class _FakeArgs:
         """Minimal args stub for build_o365_raw."""
 
-        def __init__(self, augmentation_backend="cpu", square_resize_div_64=False):
+        def __init__(self, augmentation_backend="cpu", square_resize_div_64=False, aug_config=None):
             self.augmentation_backend = augmentation_backend
             self.square_resize_div_64 = square_resize_div_64
             self.multi_scale = False
@@ -507,12 +507,15 @@ class TestBuildO365RawGpuBackend:
             self.num_windows = 4
             self.dataset_dir = "/nonexistent/o365"
             self.coco_path = "/nonexistent/o365"
+            self.aug_config = aug_config
 
-    def _call_build_o365_raw(self, mocker, augmentation_backend, square_resize_div_64=False):
+    def _call_build_o365_raw(self, mocker, augmentation_backend, square_resize_div_64=False, aug_config=None):
         """Call build_o365_raw with mocked CocoDetection and transform builders."""
         from rfdetr.datasets.o365 import build_o365_raw
 
-        args = self._FakeArgs(augmentation_backend=augmentation_backend, square_resize_div_64=square_resize_div_64)
+        args = self._FakeArgs(
+            augmentation_backend=augmentation_backend, square_resize_div_64=square_resize_div_64, aug_config=aug_config
+        )
         mocker.patch("rfdetr.datasets.o365.CocoDetection", return_value=mocker.MagicMock())
         mock_transform = mocker.patch("rfdetr.datasets.o365.make_coco_transforms")
         mock_sq_transform = mocker.patch("rfdetr.datasets.o365.make_coco_transforms_square_div_64")
@@ -529,7 +532,18 @@ class TestBuildO365RawGpuBackend:
         assert len(o365_warns) == 0, f"{backend} backend without CUDA must not warn about O365 GPU augmentation"
 
     def test_auto_backend_emits_warning(self, mocker):
-        """Auto + CUDA + kornia available: logger.warning about O365 Phase 1 limitation."""
+        """Auto + CUDA + kornia available + custom aug_config: logger.warning about O365 GPU augmentation."""
+        from rfdetr.config import AugmentationBackend
+
+        mocker.patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True)
+        mocker.patch.object(AugmentationBackend, "_is_available", lambda self: True)
+        mock_logger = mocker.patch("rfdetr.datasets.o365.logger")
+        self._call_build_o365_raw(mocker, "auto", aug_config={"Affine": {"rotate": (-15, 15), "p": 1.0}})
+        o365_warns = [c for c in mock_logger.warning.call_args_list if "O365" in str(c)]
+        assert len(o365_warns) >= 1, "auto backend must warn about O365 GPU aug limitation"
+
+    def test_auto_backend_no_warning_without_custom_aug_config(self, mocker):
+        """Auto + CUDA but no custom aug_config: nothing to reroute, so no O365 GPU-augmentation warning."""
         from rfdetr.config import AugmentationBackend
 
         mocker.patch("rfdetr.datasets.kornia_transforms._has_cuda_device", return_value=True)
@@ -537,7 +551,7 @@ class TestBuildO365RawGpuBackend:
         mock_logger = mocker.patch("rfdetr.datasets.o365.logger")
         self._call_build_o365_raw(mocker, "auto")
         o365_warns = [c for c in mock_logger.warning.call_args_list if "O365" in str(c)]
-        assert len(o365_warns) >= 1, "auto backend must warn about O365 GPU aug limitation"
+        assert len(o365_warns) == 0, "auto backend without a custom aug_config must not warn"
 
     @pytest.mark.parametrize(
         "backend,has_cuda,expected",

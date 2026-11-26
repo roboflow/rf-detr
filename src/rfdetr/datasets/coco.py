@@ -45,7 +45,7 @@ from rfdetr.datasets._torchvision import (
 )
 from rfdetr.datasets.aug_configs import AUG_CONFIG
 from rfdetr.datasets.io_utils import _warn_if_labels_follow_stored_pixels, decode_pil_image
-from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build
+from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build, split_aug_config_for_gpu
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from rfdetr.utilities.logger import get_logger
 
@@ -1136,7 +1136,11 @@ def _build_albumentations_pipeline(
         resolution: Target resolution.
         scales: Candidate train resize scales.
         square: Whether to use square resize.
-        aug_config: Custom Albumentations config.
+        aug_config: Custom Albumentations config. On the train split the augmentation wrappers run *before* the
+            resize wrappers: a geometric augmentation applied after the square resize acts on the squashed image, so
+            a rotation becomes a rigid turn in the network input, a shape no camera produces
+            (roboflow/rf-detr#1769). Running the augmentations on the image as loaded keeps the camera-realistic
+            slant the resize then preserves.
         scale_jitter: If ``True`` (default), the training resize pipeline randomly picks between
             a direct resize (Option A) and a resize → crop → resize sequence (Option B). Set to
             ``False`` to use Option A only — no random crop.
@@ -1159,13 +1163,14 @@ def _build_albumentations_pipeline(
                 scale_jitter=scale_jitter,
             )
         )
-        pipeline: list[Any] = [*resize_wrappers]
+        pipeline: list[Any] = []
         if not gpu_postprocess:
             aug_wrappers = AlbumentationsWrapper.from_config(
                 aug_config if aug_config is not None else AUG_CONFIG,
                 keypoint_flip_pairs=keypoint_flip_pairs,
             )
             pipeline += [*aug_wrappers]
+        pipeline += [*resize_wrappers]
         pipeline += [to_image, to_float]
         if not gpu_postprocess:
             pipeline += [normalize]
@@ -1196,6 +1201,7 @@ def _build_torchvision_pipeline(
     scale_jitter: bool = True,
     gpu_postprocess: bool,
     keypoint_flip_pairs: Optional[List[int]],
+    pre_resize_aug_config: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Compose:
     """Build the default torchvision-native transform pipeline.
 
@@ -1210,6 +1216,10 @@ def _build_torchvision_pipeline(
             ``False`` to use Option A only — no random crop.
         gpu_postprocess: Whether GPU augmentation/normalization will run later.
         keypoint_flip_pairs: Keypoint left/right swap pairs.
+        pre_resize_aug_config: Albumentations aug_config entries to run on the CPU *before* the resize, on the
+            train split only. This is the Kornia GPU path's geometric entries (see :func:`_route_transforms`):
+            they cannot run on the GPU after the square resize without producing shapes no camera produces
+            (roboflow/rf-detr#1769). Requires the optional Albumentations install when non-empty.
 
     Returns:
         Transform pipeline.
@@ -1232,14 +1242,22 @@ def _build_torchvision_pipeline(
                 UserWarning,
                 stacklevel=4,
             )
-        pipeline: list[Any] = [
+        pipeline: list[Any] = []
+        if pre_resize_aug_config:
+            # Kornia GPU path (#1769): these geometric entries cannot run on the GPU after the square resize, so
+            # they run here on the CPU, before the resize, through the Albumentations wrappers.
+            pipeline += AlbumentationsWrapper.from_config(
+                pre_resize_aug_config,
+                keypoint_flip_pairs=keypoint_flip_pairs,
+            )
+        pipeline.append(
             _build_train_resize_transforms(
                 scales,
                 square=square,
                 max_size=None if square else _COCO_MAX_SIZE,
                 scale_jitter=scale_jitter,
             )
-        ]
+        )
         if aug_config is None and not gpu_postprocess:
             if keypoint_flip_pairs is not None and not keypoint_flip_pairs:
                 # Keypoint pipeline with no flip pairs defined: mirror the Albumentations path's
@@ -1273,6 +1291,12 @@ def _route_transforms(
 ) -> Compose:
     """Route transform construction to Albumentations or torchvision backend.
 
+    On the Kornia GPU path (``gpu_postprocess=True``) the geometric ``aug_config`` entries run on the CPU before
+    the resize — applying them on the GPU after the square resize would produce shapes no camera produces
+    (roboflow/rf-detr#1769) — while the remaining entries run on the GPU pipeline built by
+    :meth:`rfdetr.training.module_data.RFDETRDataModule._setup_kornia_pipeline` from the same split (see
+    :func:`rfdetr.datasets.kornia_transforms.split_aug_config_for_gpu`).
+
     Args:
         image_set: Dataset split name.
         resolution: Target resolution in pixels.
@@ -1298,6 +1322,19 @@ def _route_transforms(
             scale_jitter=scale_jitter,
             gpu_postprocess=gpu_postprocess,
             keypoint_flip_pairs=keypoint_flip_pairs,
+        )
+    if image_set == "train" and gpu_postprocess and aug_config not in (None, {}):
+        pre_resize_aug_config, _gpu_aug_config = split_aug_config_for_gpu(aug_config)
+        return _build_torchvision_pipeline(
+            image_set,
+            resolution,
+            scales,
+            square=square,
+            aug_config=aug_config,
+            scale_jitter=scale_jitter,
+            gpu_postprocess=gpu_postprocess,
+            keypoint_flip_pairs=keypoint_flip_pairs,
+            pre_resize_aug_config=pre_resize_aug_config or None,
         )
     return _build_torchvision_pipeline(
         image_set,
@@ -1331,9 +1368,9 @@ def make_coco_transforms(
     statistics. Non-empty custom ``aug_config`` values continue to use the optional Albumentations path.
 
     For the ``"train"`` split the pipeline uses a two-branch ``OneOf`` between a direct resize and a resize →
-    random-crop → resize sequence (built via :func:`_build_train_resize_config`), followed by the
-    augmentation stack and normalisation.  For ``"val"``, ``"test"``, and ``"val_speed"`` only resize
-    and normalisation are applied — no augmentation.
+    random-crop → resize sequence (built via :func:`_build_train_resize_config`); the Albumentations augmentation
+    stack runs before that resize (roboflow/rf-detr#1769), and normalisation comes last.  For ``"val"``, ``"test"``,
+    and ``"val_speed"`` only resize and normalisation are applied — no augmentation.
 
     When *gpu_postprocess* is ``True``, both the Albumentations augmentation wrappers and the ``Normalize`` step are
     omitted from the ``"train"`` pipeline. The ``RFDETRDataModule`` then applies
@@ -1375,7 +1412,10 @@ def make_coco_transforms(
             image borders stay intact.
         gpu_postprocess: When ``True``, skip CPU augmentation and
             ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
-            normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
+            normalization on the GPU in ``on_after_batch_transfer`` — except the geometric ``aug_config`` entries
+            (rotation, shear, perspective), which run on the CPU before the resize instead, since applying them on
+            the GPU after the square resize would produce shapes no camera produces (roboflow/rf-detr#1769).
+            Has no effect on val/test splits.
         keypoint_flip_pairs: Keypoint left/right swap pairs, or ``None`` for a
             detection-only pipeline.  On the torchvision-native default backend
             (``aug_config=None``), an empty list disables ``RandomHorizontalFlip``
@@ -1473,7 +1513,10 @@ def make_coco_transforms_square_div_64(
             image borders stay intact.
         gpu_postprocess: When ``True``, skip Albumentations augmentation wrappers and
             ``Normalize`` from the CPU pipeline.  The ``RFDETRDataModule`` then applies both augmentation and
-            normalization on the GPU in ``on_after_batch_transfer``.  Has no effect on val/test splits.
+            normalization on the GPU in ``on_after_batch_transfer`` — except the geometric ``aug_config`` entries
+            (rotation, shear, perspective), which run on the CPU before the resize instead, since applying them on
+            the GPU after the square resize would produce shapes no camera produces (roboflow/rf-detr#1769).
+            Has no effect on val/test splits.
         keypoint_flip_pairs: Keypoint left/right swap pairs, or ``None`` for a
             detection-only pipeline.  On the torchvision-native default backend
             (``aug_config=None``), an empty list disables ``RandomHorizontalFlip``
