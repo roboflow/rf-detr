@@ -15,7 +15,7 @@ import pytest
 import torch
 import torch.nn.functional as F  # noqa: N812
 
-from rfdetr import RFDETR, RFDETRNano
+from rfdetr import RFDETR, RFDETRInference, RFDETRNano, TTAConfig
 from rfdetr.utilities.box_ops import box_cxcywh_to_xyxy
 from rfdetr.utilities.state_dict import strip_checkpoint
 
@@ -127,18 +127,23 @@ class TestNonSquareModel:
         with pytest.raises(ValueError, match="optimized for resolution 320x448, but got 448x320"):
             predictor.predict(_image(), threshold=0.0, shape=(448, 320))
 
-    def test_shift_tta_runs_each_pass_on_a_height_width_canvas(self, non_square_model: RFDETRNano) -> None:
-        """``shift_tta`` pads the 320x448 input by one 32-pixel block per side pair and keeps boxes in the image."""
+    def test_shifted_tta_views_run_on_a_height_width_canvas(self, non_square_model: RFDETRNano) -> None:
+        """Shifted TTA views pad the 320x448 input by one 32-pixel block per side pair and keep boxes in the image."""
         network = non_square_model.model.model
-        shapes: list[tuple[int, int]] = []
-        hook = network.register_forward_pre_hook(lambda module, args: shapes.append(tuple(args[0].shape[-2:])))
+        shapes: list[tuple[int, int, int]] = []
+        hook = network.register_forward_pre_hook(
+            lambda module, args: shapes.append((args[0].shape[0], *args[0].shape[-2:]))
+        )
 
         try:
-            detections = non_square_model.predict(_image(), threshold=0.0, shift_tta=2)
+            detections = RFDETRInference(non_square_model).predict(
+                _image(), threshold=0.0, tta=TTAConfig(shift=2, zoom=())
+            )
         finally:
             hook.remove()
 
-        assert shapes == [(352, 480), (352, 480)]
+        assert {shape[1:] for shape in shapes} == {(352, 480)}
+        assert sum(shape[0] for shape in shapes) == 2
         assert len(detections) > 0
         assert np.isfinite(detections.xyxy).all()
         assert detections.xyxy[:, [0, 2]].max() <= 150 + 1e-3
