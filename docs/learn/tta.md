@@ -112,28 +112,47 @@ Latency per image in milliseconds for shift views on an eager PyTorch predictor.
 
 ## Ablation: Which Views to Use
 
-The same number of views can be shifts, zoomed copies or a mix. Gain over the plain prediction in box AP points, with the latency of one image per call, in the milliseconds named in each header, in brackets.
+The same number of views can be shifts, zoomed copies or a mix. The two tabs show the same rows: the accuracy and the latency of one image per call.
 
-| Views | Recipe            | Nano [ms]      | Small [ms]     | Medium [ms]      | Large [ms]     |
-| ----- | ----------------- | -------------- | -------------- | ---------------- | -------------- |
-| 1     | plain             | 48.02 AP (5.7) | 52.82 AP (6.2) | 54.69 AP (6.8)   | 56.56 AP (7.9) |
-| 2     | shift             | +1.33 (7.2)    | +1.35 (8.8)    | +0.94 (9.8)      | +0.86 (11.8)   |
-| 2     | zoom `(1.25,)`    | +2.83 (11.7)   | +2.41 (14.0)   | +1.79 (T4 104.9) | +1.30 (17.5)   |
-| 4     | shift             | +2.20 (8.6)    | +1.87 (10.7)   | +1.43 (11.8)     | +1.21 (16.0)   |
-| 4     | zoom, the default | +4.02 (17.1)   | +3.11 (21.6)   | +2.61 (T4 212.2) | +1.96 (30.9)   |
-| 4     | shift + zoom      | +4.28 (16.8)   | +3.46 (21.4)   | +2.76 (T4 210.6) | +2.05 (30.9)   |
-| 8     | shift             | +2.43 (10.6)   | +2.12 (14.8)   | +1.65 (17.3)     | +1.31 (25.2)   |
-| 8     | shift + zoom      | +3.97 (23.4)   | +3.15 (29.4)   | +2.59 (T4 355.2) | +1.95 (44.0)   |
+=== "AP"
 
-The extended run swept Medium with shift views only, so its zoom cells come from the [ablation cookbook](../../cookbooks/tta-ablation-study/) run with `MODEL_SIZE = "Medium"` on a Colab T4, and their latency is the T4 time, not comparable with the other cells. The T4 run reproduces the Medium shift gains of the main run (+0.95, +1.42 and +1.64 against +0.94, +1.43 and +1.65), so the gains can be read across hardware; the latencies cannot. Standard errors of the paired gains are 0.05 to 0.18 points. The recipes are `zoom=(0.85, 1.25, 1.5)` for the default, `shift=2, zoom=(1.25, 1.5)` and `shift=4, zoom=(0.85, 1.15, 1.3, 1.5)` for shift + zoom.
+    Box AP in points: the plain row is the absolute AP, every other row is the gain over it.
+
+    | Views | Recipe            | Nano [AP] | Small [AP] | Medium [AP] | Large [AP] |
+    | ----- | ----------------- | --------- | ---------- | ----------- | ---------- |
+    | 1     | plain             | 48.02     | 52.82      | 54.69       | 56.56      |
+    | 2     | shift             | +1.33     | +1.35      | +0.94       | +0.86      |
+    | 2     | zoom `(1.25,)`    | +2.83     | +2.41      | +1.81       | +1.30      |
+    | 4     | shift             | +2.20     | +1.87      | +1.43       | +1.21      |
+    | 4     | zoom, the default | +4.02     | +3.11      | +2.58       | +1.96      |
+    | 4     | shift + zoom      | +4.28     | +3.46      | +2.73       | +2.05      |
+    | 8     | shift             | +2.43     | +2.12      | +1.65       | +1.31      |
+    | 8     | shift + zoom      | +3.97     | +3.15      | +2.59       | +1.95      |
+
+=== "Latency"
+
+    Median time of one call with one image, in milliseconds.
+
+    | Views | Recipe            | Nano [ms] | Small [ms] | Medium [ms] | Large [ms] |
+    | ----- | ----------------- | --------- | ---------- | ----------- | ---------- |
+    | 1     | plain             | 5.7       | 6.2        | 6.8         | 7.9        |
+    | 2     | shift             | 7.2       | 8.8        | 9.8         | 11.8       |
+    | 2     | zoom `(1.25,)`    | 11.7      | 14.0       | 15.2        | 17.5       |
+    | 4     | shift             | 8.6       | 10.7       | 11.8        | 16.0       |
+    | 4     | zoom, the default | 17.1      | 21.6       | 25.1        | 30.9       |
+    | 4     | shift + zoom      | 16.8      | 21.4       | 25.0        | 30.9       |
+    | 8     | shift             | 10.6      | 14.8       | 17.3        | 25.2       |
+    | 8     | shift + zoom      | 23.4      | 29.4       | 35.6        | 44.0       |
+
+The extended run swept Medium with shift views only, so the Medium zoom cells come from the [ablation cookbook](../../cookbooks/tta-ablation-study/) run with `MODEL_SIZE = "Medium"` on the same GPU model, a second Colab instance with a later install of the branch. That run reproduces the Medium shift cells of the main run: gains +0.94, +1.43 and +1.65 in both, plain 6.8 ms in both, and shift latencies of 9.9, 12.2 and 18.3 ms against 9.8, 11.8 and 17.3 ms, up to 6 percent apart. Standard errors of the paired gains are 0.05 to 0.18 points. The recipes are `zoom=(0.85, 1.25, 1.5)` for the default, `shift=2, zoom=(1.25, 1.5)` and `shift=4, zoom=(0.85, 1.15, 1.3, 1.5)` for shift + zoom.
 
 - **Zoom beats shift per view.** At the same view count zoom adds about twice the AP of shifts, +4.02 against +2.20 on Nano at four views. A plausible reason is that a zoomed view shows objects at another scale, while a shift only changes where an object falls inside a patch; this was not tested separately. It is why zoom is the default.
 - **Zoom costs about twice as much.** Four zoom views take 17.1 ms on Nano against 8.6 ms for four shifts, because the canvas is larger. Per millisecond added, shifts buy more AP. At a similar latency zoom is still ahead by 0.05 to 0.4 points: two zoom views on Nano take 11.7 ms for +2.83, and eight shift views take 10.6 ms for +2.43.
 - **Mirrored views were tried and dropped.** One mirrored copy added 0.5 to 0.9 points, less than one shifted copy, and mirroring the shifts added 0.0 to 0.4 points over the same number of unmirrored shifts on Nano, Small and Large. The gain was too small for a public option that also splits classes with a left-right meaning (arrows, turn signs).
 - **Shift plus zoom is the best four-view recipe, by a little.** It beats the default by 0.09 to 0.35 points at the same latency. The default is the simpler one to state and explain.
-- **Zoom-out views add nothing on Medium.** The T4 sweep of single zoom scales gave -0.59 for 0.75, +0.09 for 0.85, +1.27 for 1.1, +1.79 for 1.25 and +2.49 for 1.5, so the 0.85 view of the default costs latency and adds little, and resizing the zoom-out views with antialiasing changed AP by 0.02 or less. The gain is still rising at 1.5, the largest scale `TTAConfig` accepts, so a larger scale may do better; that was not measured.
-- **Zoom recipes passed the gate on Medium.** Each beat the same number of shift views by at least 0.3 box AP on every one of folds 1 to 4 (mean +0.73 to +1.24), and raised `RFDETRSegMedium` mask AP by 0.59 to 0.76 over four shift views.
-- **More views can lower AP.** Eight shift + zoom views are worse than four on all four sizes (3.97 against 4.28 on Nano, 2.59 against 2.76 on Medium, 1.95 against 2.05 on Large). The fused score is the mean over all views with a missed view counting as 0, so a weak view dilutes a strong one. Stop at four views for zoom recipes.
+- **Zoom-out views add nothing on Medium.** The sweep of single zoom scales gave -0.59 for 0.75, +0.10 for 0.85, +1.27 for 1.1, +1.81 for 1.25 and +2.49 for 1.5, so the 0.85 view of the default costs latency and adds little, and resizing the zoom-out views with antialiasing changed AP by 0.02 or less. The gain is still rising at 1.5, the largest scale `TTAConfig` accepts, so a larger scale may do better; that was not measured.
+- **Zoom recipes passed the gate on Medium.** Each beat the same number of shift views by at least 0.3 box AP on every one of folds 1 to 4 (mean +0.83 to +1.41), and raised `RFDETRSegMedium` mask AP by 0.51 to 0.82 over four shift views.
+- **More views can lower AP.** Eight shift + zoom views are worse than four on all four sizes (3.97 against 4.28 on Nano, 2.59 against 2.73 on Medium, 1.95 against 2.05 on Large). The fused score is the mean over all views with a missed view counting as 0, so a weak view dilutes a strong one. Stop at four views for zoom recipes.
 
 ## Should You Use a Larger Model Instead?
 
@@ -156,7 +175,7 @@ TF32 matrix multiplies (`torch.set_float32_matmul_precision("high")`) sped the c
 
 ## What Is Not Established
 
-- Behavior on a CPU, where views are not batched, and on a T4 for sizes other than Medium.
+- Behavior on a CPU, where views are not batched, and on a GPU other than the RTX PRO 6000.
 - Zoom and shift + zoom recipes for XLarge and 2XLarge, and mask AP for segmentation sizes other than Medium.
 - Zoom scales above 1.5, and whether the default zooms are the best choice for Medium.
 - A comparison with the sequential shift implementation that `develop` had before batching, and a padded zero-offset control that separates the effect of the larger canvas from the effect of the shift.
@@ -166,4 +185,4 @@ TF32 matrix multiplies (`torch.set_float32_matmul_precision("high")`) sped the c
 
 Hardware: NVIDIA RTX PRO 6000 Blackwell Server Edition (Colab) | `rfdetr` 1.13.0.dev0 at commit `e0131796` | `rfdetr_plus` 1.3.0 | PyTorch 2.14.1+cu130 | supervision 0.32.1 | faster-coco-eval 1.8.1 | Python 3.13.16 | run started 2026-11-24 23:05 UTC | box AP on 5000 COCO val2017 images at threshold 0.001 in 5 folds, latency at threshold 0.5, median of 50 timed calls after 10 warm-up calls, eager PyTorch FP32 path with `RFDETRInference` on the live model.
 
-Medium zoom cells of the ablation table: Tesla T4 (Colab) | `rfdetr` 1.13.0.dev0 at commit `3934d874` | PyTorch 2.14.1+cu130 | supervision 0.32.2 | faster-coco-eval 1.8.1 | Python 3.13.16 | run started 2026-11-25 15:47 UTC | same protocol as above; the mask AP run on `RFDETRSegMedium` used folds 1 to 4.
+Medium zoom cells of the ablation table: NVIDIA RTX PRO 6000 Blackwell Server Edition (Colab) | `rfdetr` 1.13.0.dev0 from the `feat/tta-followup` branch, commit not recorded | PyTorch 2.14.1+cu130 | supervision 0.32.2 | faster-coco-eval 1.8.1 | Python 3.13.16 | run started 2026-11-25 21:43 UTC | same protocol as above; the mask AP run on `RFDETRSegMedium` used folds 1 to 4.
