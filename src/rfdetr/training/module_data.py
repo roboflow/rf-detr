@@ -1124,7 +1124,7 @@ class RFDETRDataModule(LightningDataModule):
             or (coco := getattr(dataset, "coco", None)) is None
         ):
             return None
-        file_name = coco.loadImgs(int(image_id))[0]["file_name"]
+        file_name = cast(str, coco.loadImgs(int(image_id))[0]["file_name"])
         return Path(root) / file_name
 
     def _setup_kornia_pipeline(self) -> None:

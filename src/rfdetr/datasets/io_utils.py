@@ -339,8 +339,7 @@ def _decode_with_pillow(
             if error_type is None:
                 # Built-in ``OSError`` subclasses keep their type, so callers that catch ``OSError`` see them.
                 builtin = getattr(builtins, header["error"], None)
-                is_os_error = isinstance(builtin, type) and issubclass(builtin, OSError)
-                error_type = builtin if is_os_error else RuntimeError
+                error_type = builtin if isinstance(builtin, type) and issubclass(builtin, OSError) else RuntimeError
             error = error_type(header["message"])
             if isinstance(error, OSError):
                 # Kept so that callers can tell a process out of resources from an unreadable file.
