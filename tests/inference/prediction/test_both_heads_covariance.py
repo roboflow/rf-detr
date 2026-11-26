@@ -28,9 +28,7 @@ def _both_heads_model() -> _DummyRFDETR:
         (True, True)
     """
     model = _DummyRFDETR()
-    model.model = _DummyModel(
-        labels=[0, 1], include_keypoints=True, num_keypoints=_NUM_KEYPOINTS, include_masks=True
-    )
+    model.model = _DummyModel(labels=[0, 1], include_keypoints=True, num_keypoints=_NUM_KEYPOINTS, include_masks=True)
     return model
 
 

@@ -186,4 +186,3 @@ class TestBuildTrainerWithBothHeads:
         best_callback = next(cb for cb in trainer.callbacks if isinstance(cb, BestModelCallback))
         assert eval_callback._use_segm_metrics is True
         assert best_callback.monitor == "val/segm_mAP_50_95"
-

@@ -1151,9 +1151,7 @@ class TestPredictKeypointClassNameMapping:
             pytest.param(
                 ["helmet", "person"], [1], [0, 17], "person", id="named-leading-zero-slot-1-maps-to-second-class"
             ),
-            pytest.param(
-                ["helmet", "person"], [2], [0, 17], "__background__", id="named-leading-zero-no-object-slot"
-            ),
+            pytest.param(["helmet", "person"], [2], [0, 17], "__background__", id="named-leading-zero-no-object-slot"),
             # Active-first schemas (no leading zero) — fallback path must stay correct
             pytest.param(["person"], [0], [25], "person", id="active-first-single-class-slot-0-maps-to-person"),
             pytest.param(

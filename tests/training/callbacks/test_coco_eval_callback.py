@@ -2922,8 +2922,8 @@ def _make_both_heads_callback(
 class TestBothHeadsEvaluationFlows:
     """Validation, EMA, test and skipped-epoch flows of a model with mask and keypoint heads.
 
-    The mask mAP and OKS keypoint metrics are real; only the ground-truth lookup is pointed at a one-image COCO file.
-    A prediction identical to the ground truth must score 1.0 on every metric, so a flow that drops one head is caught.
+    The mask mAP and OKS keypoint metrics are real; only the ground-truth lookup is pointed at a one-image COCO file. A
+    prediction identical to the ground truth must score 1.0 on every metric, so a flow that drops one head is caught.
     """
 
     @pytest.fixture(autouse=True)
