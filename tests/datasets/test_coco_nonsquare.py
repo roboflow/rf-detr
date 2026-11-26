@@ -16,11 +16,13 @@ from rfdetr.datasets import _torchvision
 from rfdetr.datasets._torchvision import RandomSizedCrop
 from rfdetr.datasets.coco import (
     _build_train_resize_config,
+    _random_sized_crop_config,
     compute_multi_scale_scales,
     draft_size_for_transforms,
     make_coco_transforms,
     make_coco_transforms_square_div_64,
 )
+from rfdetr.datasets.transforms import AlbumentationsWrapper
 from tests._markers import _requires_albumentations
 
 _BACKENDS = [
@@ -181,7 +183,7 @@ class TestTrainResizeConfig:
         (crop,) = entry["OneOf"]["transforms"][1]["Sequential"]["transforms"][1]["OneOf"]["transforms"]
 
         assert crop == {
-            "RandomSizedCrop": {
+            "AspectRandomSizedCrop": {
                 "min_max_height": min_max_height,
                 "height": pair[0],
                 "width": pair[1],
@@ -246,6 +248,25 @@ class TestNonSquareTransforms:
         """A crop that does not fit the image shrinks on both sides, so it keeps the output's aspect ratio."""
         cropper = RandomSizedCrop((384, 600), output_size)
         torch.manual_seed(0)
+
+        for _ in range(20):
+            image, target = cropper(*_grid_sample(*source))
+            boxes = target["boxes"]
+            inside = (boxes[:, :2] > 1).all(dim=1) & (boxes[:, 2] < image.width - 1) & (boxes[:, 3] < image.height - 1)
+            aspects = ((boxes[:, 2] - boxes[:, 0]) / (boxes[:, 3] - boxes[:, 1]))[inside]
+
+            assert image.size == (output_size[1], output_size[0])
+            assert len(aspects) > 0
+            assert aspects.min() > 0.97 and aspects.max() < 1.03
+
+    @_requires_albumentations
+    @pytest.mark.parametrize("output_size", [(64, 112), (112, 64)])
+    @pytest.mark.parametrize("source", [(800, 600), (600, 800), (300, 280)])
+    def test_albumentations_crop_shrinks_both_sides_to_fit_the_image(
+        self, output_size: tuple[int, int], source: tuple[int, int]
+    ) -> None:
+        """The Albumentations crop of a pair shrinks on both sides to fit an image of another aspect ratio."""
+        (cropper,) = AlbumentationsWrapper.from_config([_random_sized_crop_config(*output_size)], strict=True)
 
         for _ in range(20):
             image, target = cropper(*_grid_sample(*source))

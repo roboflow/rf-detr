@@ -1846,13 +1846,27 @@ class TestPredictPatchSize:
         with pytest.raises(ValueError, match="default resolution"):
             model.predict(img)
 
-    @pytest.mark.parametrize("resolution", [(28, 25), (25, 28)])
-    def test_non_square_default_resolution_is_checked_on_both_sides(self, resolution: tuple[int, int]) -> None:
+    @pytest.mark.parametrize(
+        ("resolution", "match"),
+        [((28, 25), r"default resolution \(28, 25\)"), ((25, 28), r"default resolution \(25, 28\)")],
+    )
+    def test_non_square_default_resolution_is_checked_on_both_sides(
+        self, resolution: tuple[int, int], match: str
+    ) -> None:
         """Predict() with shape=None checks the height and the width of a ``(height, width)`` resolution."""
         model = self._make_model_with_config(patch_size=14, num_windows=1)
         model.model.resolution = resolution
         img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
-        with pytest.raises(ValueError, match=r"default resolution \(25\)"):
+        with pytest.raises(ValueError, match=match):
+            model.predict(img)
+
+    def test_non_square_default_resolution_error_names_the_pair(self) -> None:
+        """The error for a ``(height, width)`` default names the whole pair, not only the side that does not divide."""
+        # patch_size=16, num_windows=4 → block_size=64; 384 divides, 672 does not (672 % 64 == 32)
+        model = self._make_model_with_config(patch_size=16, num_windows=4)
+        model.model.resolution = (384, 672)
+        img = PIL.Image.new("RGB", (100, 80), color=(64, 64, 64))
+        with pytest.raises(ValueError, match=r"default resolution \(384, 672\) is not divisible by block_size=64"):
             model.predict(img)
 
 

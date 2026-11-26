@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import inspect
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from functools import cache
 from typing import Any
 
@@ -136,6 +136,7 @@ GEOMETRIC_TRANSFORMS = {
     # Crops
     "RandomCrop",
     "RandomSizedCrop",
+    "AspectRandomSizedCrop",
     "CenterCrop",
     "Crop",
     "CropNonEmptyMaskIfExists",
@@ -173,6 +174,9 @@ ALBUMENTATIONS_CONTAINERS = frozenset({"OneOf", "SomeOf", "Sequential"})
 # Config name for the conditional-cap resize transform built by _capped_longest_max_size_cls().
 _CAPPED_LONGEST_MAX_SIZE_NAME = "CappedLongestMaxSize"
 
+# Config name for the aspect-keeping crop built by _aspect_random_sized_crop_cls().
+_ASPECT_RANDOM_SIZED_CROP_NAME = "AspectRandomSizedCrop"
+
 
 @cache
 def _capped_longest_max_size_cls() -> type:
@@ -200,6 +204,48 @@ def _capped_longest_max_size_cls() -> type:
             return resolved
 
     return CappedLongestMaxSize
+
+
+@cache
+def _aspect_random_sized_crop_cls() -> type:
+    """Build a ``RandomSizedCrop`` subclass whose crop keeps its aspect ratio when it does not fit the image.
+
+    Standard ``alb.RandomSizedCrop`` samples the crop height, derives the width from ``w2h_ratio`` and then clips each
+    side to the image on its own, so a crop wider or taller than the image takes another aspect ratio and the resize to
+    ``size`` stretches it. This subclass shrinks both sides by one factor instead, as
+    :class:`rfdetr.datasets._torchvision.RandomSizedCrop` does. A crop that fits the image keeps the standard crop box
+    and random draws. Lazily defined (not at module scope) so importing this module never requires Albumentations to
+    be installed.
+
+    Returns:
+        A ``RandomSizedCrop`` subclass that keeps the crop's aspect ratio.
+    """
+
+    class AspectRandomSizedCrop(alb.RandomSizedCrop):  # type: ignore[misc]
+        """``RandomSizedCrop`` that shrinks both crop sides by one factor to fit the image."""
+
+        def get_params_dependent_on_data(self, params: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+            image_height, image_width = params["shape"][:2]
+            crop_height = self.py_random.randint(*self.min_max_height)
+            crop_width = max(1, int(crop_height * self.w2h_ratio))
+            fit = min(1.0, image_height / crop_height, image_width / crop_width)
+            if fit < 1.0:
+                crop_height = min(image_height, max(1, round(crop_height * fit)))
+                crop_width = min(image_width, max(1, round(crop_width * fit)))
+            h_start = self.py_random.random()
+            w_start = self.py_random.random()
+            y_min = int((image_height - crop_height + 1) * h_start)
+            x_min = int((image_width - crop_width + 1) * w_start)
+            return {"crop_coords": (x_min, y_min, x_min + crop_width, y_min + crop_height)}
+
+    return AspectRandomSizedCrop
+
+
+# Config names of the RF-DETR transform classes, each built on first use by its factory.
+_CUSTOM_TRANSFORM_FACTORIES: dict[str, Callable[[], type]] = {
+    _CAPPED_LONGEST_MAX_SIZE_NAME: _capped_longest_max_size_cls,
+    _ASPECT_RANDOM_SIZED_CROP_NAME: _aspect_random_sized_crop_cls,
+}
 
 
 def _is_geometric_transform(transform: alb.BasicTransform) -> bool:
@@ -305,7 +351,8 @@ def _build_albu_transform(name: str, params: dict[str, Any]) -> alb.BasicTransfo
             raise ValueError(f"Unknown Albumentations container: {name!r}")
         return container_cls(transforms=nested_transforms, **other_params)
 
-    aug_cls = _capped_longest_max_size_cls() if name == _CAPPED_LONGEST_MAX_SIZE_NAME else getattr(alb, name, None)
+    factory = _CUSTOM_TRANSFORM_FACTORIES.get(name)
+    aug_cls = factory() if factory is not None else getattr(alb, name, None)
     if aug_cls is None:
         raise ValueError(f"Unknown Albumentations transform: {name!r}")
     return aug_cls(**_normalize_albu_params(name, params, aug_cls))
@@ -332,8 +379,9 @@ def _random_sized_crop_uses_size_param(aug_cls: type) -> bool:
 def _normalize_albu_params(name: str, params: dict[str, Any], aug_cls: type) -> dict[str, Any]:
     """Normalize transform params across Albumentations API variations.
 
-    Currently this adapts ``RandomSizedCrop`` arguments so a config using ``height``/``width`` works on Albumentations
-    2.x and a config using ``size=(height, width)`` still works on Albumentations 1.x.
+    Currently this adapts ``RandomSizedCrop`` and ``AspectRandomSizedCrop`` arguments so a config using
+    ``height``/``width`` works on Albumentations 2.x and a config using ``size=(height, width)`` still works on
+    Albumentations 1.x.
 
     Args:
         name: Albumentations transform name.
@@ -354,7 +402,7 @@ def _normalize_albu_params(name: str, params: dict[str, Any], aug_cls: type) -> 
         {'min_max_height': [384, 600], 'size': (640, 640)}
     """
     normalized_params = dict(params)
-    if name != "RandomSizedCrop":
+    if name not in {"RandomSizedCrop", _ASPECT_RANDOM_SIZED_CROP_NAME}:
         return normalized_params
 
     uses_size = _random_sized_crop_uses_size_param(aug_cls)

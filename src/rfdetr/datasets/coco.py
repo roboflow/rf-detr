@@ -1004,10 +1004,11 @@ class ConvertCoco:
 
 
 def _random_sized_crop_config(height: int, width: int) -> dict[str, Any]:
-    """Return the ``RandomSizedCrop`` entry whose crop has the aspect ratio of its ``(height, width)`` output.
+    """Return the random-sized-crop entry whose crop has the aspect ratio of its ``(height, width)`` output.
 
-    The 384-600 range bounds the crop's shorter side, so a square output keeps the historical entry and a pair is
-    not stretched from a square crop.
+    The 384-600 range bounds the crop's shorter side, so a square output keeps the historical ``RandomSizedCrop``
+    entry and a pair is not stretched from a square crop. A pair takes ``AspectRandomSizedCrop``, which shrinks both
+    sides of a crop that does not fit the image by one factor, where ``RandomSizedCrop`` clips each side on its own.
 
     Args:
         height: Output height in pixels.
@@ -1019,16 +1020,19 @@ def _random_sized_crop_config(height: int, width: int) -> dict[str, Any]:
     Examples:
         >>> _random_sized_crop_config(640, 640)
         {'RandomSizedCrop': {'min_max_height': [384, 600], 'height': 640, 'width': 640}}
-        >>> _random_sized_crop_config(768, 384)["RandomSizedCrop"]["min_max_height"]
+        >>> _random_sized_crop_config(768, 384)["AspectRandomSizedCrop"]["min_max_height"]
         [768, 1200]
     """
+    name = "RandomSizedCrop"
     params: dict[str, Any] = {"min_max_height": [384, 600], "height": height, "width": width}
     if height != width:
         # Albumentations samples the crop height; scale the range so it bounds the shorter side of a tall crop.
         scale = max(height / width, 1.0)
         params["min_max_height"] = [round(384 * scale), round(600 * scale)]
         params["w2h_ratio"] = width / height
-    return {"RandomSizedCrop": params}
+        # A crop clipped on one side only would change its aspect ratio and be stretched to the pair.
+        name = "AspectRandomSizedCrop"
+    return {name: params}
 
 
 def _build_train_resize_config(
