@@ -3286,6 +3286,13 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li>
 <p><code>RFDETRInference.predict(..., tta=TTAConfig(...))</code> fuses shifted and zoomed views of each image, opt-in and off by default. <code>TTAConfig()</code> runs one native-scale view and three zooms. When <code>zoom</code> is omitted, <code>shift &gt; 1</code> suppresses the default zooms. CUDA groups views of the same canvas shape and can split groups across forwards. MPS and CPU run one forward per view. Detection and segmentation models; keypoint models, <code>inference()</code> snapshots and exported runtimes refuse several views. On COCO val2017 the default recipe added 4.02, 3.11 and 1.96 box AP to Nano, Small and Large at 3 to 4 times the latency of one plain call, and eight shift views added 3.65 (Atto) to 1.09 (2XLarge) box AP.</p>
 </li>
+<li>
+<p><code>TrainConfig.min_class_support</code> and <code>TrainConfig.class_agnostic_eval</code>, two opt-in evaluation settings for long-tailed datasets. Both are off by default, and the default metrics, logged keys and console tables are unchanged. (<a href="https://github.com/roboflow/rf-detr/pull/1762">#1762</a>)</p>
+<ul>
+<li><code>min_class_support=N</code> logs <code>&lt;split&gt;/mAP_50_95_gated</code> (with <code>ema_</code> and, for segmentation, <code>segm_</code> variants): the mean per-class AP over classes with at least <code>N</code> ground-truth instances in the evaluated split. The confidence-threshold sweep maximises macro-F1 over the same classes, and with <code>best_model_metric="map"</code> best-checkpoint selection and early stopping monitor the gated key, so a class with a handful of instances cannot decide which checkpoint is kept. With <code>log_per_class_metrics=True</code>, classes below the floor still get per-class rows and <code>&lt;split&gt;/AP/&lt;class&gt;</code> keys, and the per-class table gains a <code>Support</code> column.</li>
+<li><code>class_agnostic_eval=True</code> also evaluates boxes with every label collapsed to one class, logged as <code>&lt;split&gt;/mAP_50_95_agnostic</code> and <code>&lt;split&gt;/mAP_50_agnostic</code> for validation and test, to separate whether an object was found from whether it was named correctly.</li>
+</ul>
+</li>
 </ul>
 <h3 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h3>
 <ul>

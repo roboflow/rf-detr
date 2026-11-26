@@ -4260,6 +4260,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#rfdetr.training.callbacks.best_model.BestModelCallback(min_class_support)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;min_class_support
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rfdetr.training.callbacks.best_model.BestModelCallback-functions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -4380,6 +4391,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;skip_best_epochs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.training.callbacks.best_model.RFDETREarlyStopping(min_class_support)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;min_class_support
       
     </span>
   </a>
@@ -4623,6 +4645,28 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;eval_backend
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback(min_class_support)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;min_class_support
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback(class_agnostic)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;class_agnostic
       
     </span>
   </a>
@@ -6248,6 +6292,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </li>
       
         <li class="md-nav__item">
+  <a href="#rfdetr.training.callbacks.best_model.BestModelCallback(min_class_support)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;min_class_support
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#rfdetr.training.callbacks.best_model.BestModelCallback-functions" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -6368,6 +6423,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;skip_best_epochs
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.training.callbacks.best_model.RFDETREarlyStopping(min_class_support)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;min_class_support
       
     </span>
   </a>
@@ -6611,6 +6677,28 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-ellipsis">
       
         <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;eval_backend
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback(min_class_support)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;min_class_support
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback(class_agnostic)" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        <code class="doc-symbol doc-symbol-toc doc-symbol-parameter"></code>&nbsp;class_agnostic
       
     </span>
   </a>
@@ -9420,6 +9508,22 @@ base weights. The EMA track still runs, and <code>on_fit_end</code> promotes its
                   <code>True</code>
             </td>
           </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.training.callbacks.best_model.BestModelCallback(min_class_support)" class="doc doc-heading doc-heading-parameter">                  <code>min_class_support</code>
+<a href="#rfdetr.training.callbacks.best_model.BestModelCallback(min_class_support)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Support floor used by the monitored metric, or zero for an ungated monitor.</p>
+              </div>
+            </td>
+            <td>
+                  <code>0</code>
+            </td>
+          </tr>
       </tbody>
     </table>
 
@@ -9457,7 +9561,7 @@ base weights. The EMA track still runs, and <code>on_fit_end</code> promotes its
 
 
 <h3 id="rfdetr.training.callbacks.best_model.BestModelCallback.__init__" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">output_dir</span><span class="p">,</span> <span class="n">monitor_regular</span><span class="o">=</span><span class="s1">'val/mAP_50_95'</span><span class="p">,</span> <span class="n">monitor_ema</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">run_test</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">skip_best_epochs</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">smooth_alpha</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">evaluates_base_model</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span></code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">output_dir</span><span class="p">,</span> <span class="n">monitor_regular</span><span class="o">=</span><span class="s1">'val/mAP_50_95'</span><span class="p">,</span> <span class="n">monitor_ema</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">run_test</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">skip_best_epochs</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">smooth_alpha</span><span class="o">=</span><span class="mf">0.0</span><span class="p">,</span> <span class="n">evaluates_base_model</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">min_class_support</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span></code>
 
 <a href="#rfdetr.training.callbacks.best_model.BestModelCallback.__init__" class="headerlink" title="Permanent link">&para;</a></h3>
 
@@ -9627,6 +9731,22 @@ stopping before the model adapts to the new dataset.</p>
                   <code>0</code>
             </td>
           </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.training.callbacks.best_model.RFDETREarlyStopping(min_class_support)" class="doc doc-heading doc-heading-parameter">                  <code>min_class_support</code>
+<a href="#rfdetr.training.callbacks.best_model.RFDETREarlyStopping(min_class_support)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Support floor used by the monitored metric, or zero for an ungated monitor.</p>
+              </div>
+            </td>
+            <td>
+                  <code>0</code>
+            </td>
+          </tr>
       </tbody>
     </table>
 
@@ -9662,7 +9782,7 @@ stopping before the model adapts to the new dataset.</p>
 
 
 <h3 id="rfdetr.training.callbacks.best_model.RFDETREarlyStopping.__init__" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">patience</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">min_delta</span><span class="o">=</span><span class="mf">0.001</span><span class="p">,</span> <span class="n">use_ema</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">monitor_regular</span><span class="o">=</span><span class="s1">'val/mAP_50_95'</span><span class="p">,</span> <span class="n">monitor_ema</span><span class="o">=</span><span class="s1">'val/ema_mAP_50_95'</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">skip_best_epochs</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span></code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">patience</span><span class="o">=</span><span class="mi">10</span><span class="p">,</span> <span class="n">min_delta</span><span class="o">=</span><span class="mf">0.001</span><span class="p">,</span> <span class="n">use_ema</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">monitor_regular</span><span class="o">=</span><span class="s1">'val/mAP_50_95'</span><span class="p">,</span> <span class="n">monitor_ema</span><span class="o">=</span><span class="s1">'val/ema_mAP_50_95'</span><span class="p">,</span> <span class="n">verbose</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">skip_best_epochs</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">min_class_support</span><span class="o">=</span><span class="mi">0</span><span class="p">)</span></code>
 
 <a href="#rfdetr.training.callbacks.best_model.RFDETREarlyStopping.__init__" class="headerlink" title="Permanent link">&para;</a></h3>
 
@@ -10021,6 +10141,44 @@ positional callers keep binding the arguments they always did.</p>
                   <code>&#39;vernier&#39;</code>
             </td>
           </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.training.callbacks.coco_eval.COCOEvalCallback(min_class_support)" class="doc doc-heading doc-heading-parameter">                  <code>min_class_support</code>
+<a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback(min_class_support)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="int">int</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Minimum ground-truth instances a class needs before it counts toward the gated headline
+<code>&lt;split&gt;/mAP_50_95_gated</code> (<code>segm_mAP_50_95_gated</code> too for segmentation, and the <code>ema_</code> variants)
+and toward the macro-F1 the threshold sweep maximises. Classes below the floor still appear in the
+per-class table and in <code>&lt;split&gt;/AP/&lt;name&gt;</code>. <code>0</code> disables gating. Forces per-class AP on in the
+metric even when <code>log_per_class_metrics</code> is <code>False</code>.</p>
+              </div>
+            </td>
+            <td>
+                  <code>0</code>
+            </td>
+          </tr>
+          <tr class="doc-section-item">
+            <td>
+<h2 id="rfdetr.training.callbacks.coco_eval.COCOEvalCallback(class_agnostic)" class="doc doc-heading doc-heading-parameter">                  <code>class_agnostic</code>
+<a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback(class_agnostic)" class="headerlink" title="Permanent link">&para;</a></h2>            </td>
+            <td>
+                  <code><span title="bool">bool</span></code>
+            </td>
+            <td>
+              <div class="doc-md-description">
+                <p>Also evaluate with every label collapsed to one class, logged as
+<code>&lt;split&gt;/mAP_50_95_agnostic</code> and <code>&lt;split&gt;/mAP_50_agnostic</code> for val and test. Boxes only, and only
+for the model <code>validation_step</code> forwarded (the same track the macro-F1 sweep follows).</p>
+              </div>
+            </td>
+            <td>
+                  <code>False</code>
+            </td>
+          </tr>
       </tbody>
     </table>
 
@@ -10047,7 +10205,7 @@ positional callers keep binding the arguments they always did.</p>
 
 
 <h3 id="rfdetr.training.callbacks.coco_eval.COCOEvalCallback.__init__" class="doc doc-heading">
-<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">max_dets</span><span class="o">=</span><span class="n">DEFAULT_KEYPOINT_MAX_DETS</span><span class="p">,</span> <span class="n">segmentation</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">eval_interval</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">log_per_class_metrics</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">keypoint_oks_sigmas</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">in_notebook</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">eval_ema_only</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">eval_base_model</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">eval_backend</span><span class="o">=</span><span class="s1">'vernier'</span><span class="p">)</span></code>
+<code class="doc-symbol doc-symbol-heading doc-symbol-method"></code>            <code class="highlight language-python"><span class="fm">__init__</span><span class="p">(</span><span class="n">max_dets</span><span class="o">=</span><span class="n">DEFAULT_KEYPOINT_MAX_DETS</span><span class="p">,</span> <span class="n">segmentation</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">eval_interval</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">log_per_class_metrics</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span> <span class="n">keypoint_oks_sigmas</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">in_notebook</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">eval_ema_only</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">eval_base_model</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span> <span class="n">eval_backend</span><span class="o">=</span><span class="s1">'vernier'</span><span class="p">,</span> <span class="n">min_class_support</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">class_agnostic</span><span class="o">=</span><span class="kc">False</span><span class="p">)</span></code>
 
 <a href="#rfdetr.training.callbacks.coco_eval.COCOEvalCallback.__init__" class="headerlink" title="Permanent link">&para;</a></h3>
 
