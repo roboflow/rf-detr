@@ -56,15 +56,18 @@ def _read(reader: _Reader, index: int, num_samples: int = 10) -> tuple[int, str]
 class TestReadableImage:
     """A healthy sample is returned directly."""
 
-    def test_returns_the_requested_sample(self) -> None:
+    def test_returns_requested_sample(self) -> None:
+        """A readable image is returned as the sample that was asked for."""
         assert _read(_Reader(), 3) == (3, "image-3")
 
     def test_does_not_retry(self) -> None:
+        """A readable image is read exactly once."""
         reader = _Reader()
         _read(reader, 3)
         assert reader.calls == [3]
 
     def test_logs_nothing(self, mocker: Any) -> None:
+        """Reading a readable image writes no log message."""
         log = mocker.patch.object(io_utils, "logger")
         _read(_Reader(), 3)
         assert log.method_calls == []
@@ -73,20 +76,23 @@ class TestReadableImage:
 class TestTransientFailure:
     """A read that succeeds on retry yields the originally requested sample."""
 
-    def test_returns_the_real_sample_after_one_failure(self) -> None:
+    def test_returns_real_sample_after_one_failure(self) -> None:
+        """An image that fails once and then reads fine is returned as itself, not replaced."""
         assert _read(_Reader(flaky={3: 1}), 3) == (3, "image-3")
 
-    def test_retries_the_same_index_not_a_neighbour(self) -> None:
+    def test_retries_same_index_not_neighbour(self) -> None:
+        """The retry after a failed read asks for the same image again, not a neighbouring one."""
         reader = _Reader(flaky={3: 1})
         _read(reader, 3)
         assert reader.calls == [3, 3]
 
-    def test_succeeds_on_the_third_attempt(self) -> None:
+    def test_succeeds_on_third_attempt(self) -> None:
         """Three reads of the requested sample are made before it is given up on: two failures, then a success."""
         reader = _Reader(flaky={3: 2})
         assert (_read(reader, 3), reader.calls) == ((3, "image-3"), [3, 3, 3])
 
-    def test_logs_a_warning_naming_the_file_and_no_error(self, mocker: Any) -> None:
+    def test_logs_warning_naming_file_and_no_error(self, mocker: Any) -> None:
+        """A failed read that later recovers logs a warning with the file path and no error."""
         log = mocker.patch.object(io_utils, "logger")
         failure = OSError("image file is truncated")
         _read(_Reader(flaky={3: 1}, exc=failure), 3)
@@ -96,7 +102,8 @@ class TestTransientFailure:
             False,
         )
 
-    def test_pauses_half_a_second_then_a_second_before_the_retries(self, sleep: Any) -> None:
+    def test_pauses_half_second_then_second_before_retries(self, sleep: Any) -> None:
+        """The retries wait half a second, then a full second."""
         _read(_Reader(flaky={3: 2}), 3)
         assert [call.args[0] for call in sleep.call_args_list] == [0.5, 1.0]
 
@@ -104,26 +111,31 @@ class TestTransientFailure:
 class TestPersistentFailure:
     """A permanently unreadable image is substituted."""
 
-    def test_substitutes_the_next_index(self) -> None:
+    def test_substitutes_next_index(self) -> None:
+        """An image that never reads is replaced by the next image in the dataset."""
         assert _read(_Reader(failing={3}), 3) == (4, "image-4")
 
-    def test_reads_the_requested_sample_three_times_before_substituting(self) -> None:
+    def test_reads_requested_sample_three_times_before_substituting(self) -> None:
+        """The broken image is tried three times before the next image is used instead."""
         reader = _Reader(failing={3})
         _read(reader, 3)
         assert reader.calls.count(3) == 3
 
-    def test_pauses_half_a_second_then_a_second_before_substituting(self, sleep: Any) -> None:
+    def test_pauses_half_second_then_second_before_substituting(self, sleep: Any) -> None:
         """Only the leading pauses are pinned; a failed sweep of substitutes may pause again."""
         _read(_Reader(failing={3}), 3)
         assert [call.args[0] for call in sleep.call_args_list][:2] == [0.5, 1.0]
 
     def test_skips_consecutive_bad_images(self) -> None:
+        """When several images in a row are broken, the first readable one after them is used."""
         assert _read(_Reader(failing={3, 4, 5}), 3) == (6, "image-6")
 
-    def test_wraps_around_the_end_of_the_dataset(self) -> None:
+    def test_wraps_around_end_of_dataset(self) -> None:
+        """A broken last image is replaced by the first image of the dataset."""
         assert _read(_Reader(failing={3}), 3, num_samples=4) == (0, "image-0")
 
-    def test_logs_one_error_naming_the_file(self, mocker: Any) -> None:
+    def test_logs_one_error_naming_file(self, mocker: Any) -> None:
+        """One error is logged that names the broken file and the image used in its place."""
         log = mocker.patch.object(io_utils, "logger")
         failure = OSError("image file is truncated")
         _read(_Reader(failing={3}, exc=failure), 3)
@@ -142,24 +154,27 @@ class TestWholesaleFailure:
     """A broken dataset still surfaces as an error instead of silent duplication."""
 
     def test_raises_when_every_candidate_fails(self) -> None:
+        """A dataset where every image is broken raises an error instead of returning a stand-in."""
         with pytest.raises(RuntimeError, match="broken|unreadable"):
             _read(_Reader(failing=set(range(100))), 0, num_samples=100)
 
-    def test_error_names_the_first_bad_file(self) -> None:
+    def test_error_names_first_bad_file(self) -> None:
+        """The error for a fully broken dataset names the first file that failed."""
         with pytest.raises(RuntimeError) as exc_info:
             _read(_Reader(failing=set(range(100))), 0, num_samples=100)
         assert _path_of(0) in str(exc_info.value)
 
-    def test_substitutes_the_tenth_following_sample(self) -> None:
+    def test_substitutes_tenth_following_sample(self) -> None:
         """The requested sample and the nine after it are unreadable; the tenth following one is the last one tried."""
         assert _read(_Reader(failing=set(range(10))), 0, num_samples=100) == (10, "image-10")
 
-    def test_raises_when_the_ten_following_samples_are_unreadable(self) -> None:
+    def test_raises_when_ten_following_samples_are_unreadable(self) -> None:
         """The requested sample and the ten after it are unreadable, so every substitute tried fails."""
         with pytest.raises(RuntimeError, match="broken|unreadable"):
             _read(_Reader(failing=set(range(11))), 0, num_samples=100)
 
     def test_reads_at_most_ten_substitutes(self) -> None:
+        """Only the ten images after a broken one are tried before giving up."""
         reader = _Reader(failing=set(range(100)))
         with pytest.raises(RuntimeError, match="broken|unreadable"):
             _read(reader, 0, num_samples=100)
@@ -177,16 +192,19 @@ class TestNonImageErrors:
     """Errors other than ``OSError`` must not be masked by a retry or a substitution."""
 
     def test_value_error_propagates(self) -> None:
+        """A ValueError from the reader is raised as it is, not hidden by a substitution."""
         with pytest.raises(ValueError, match="bad annotation"):
             _read(_Reader(failing={3}, exc=ValueError("bad annotation")), 3)
 
     def test_value_error_is_not_retried(self) -> None:
+        """A ValueError from the reader is not retried."""
         reader = _Reader(failing={3}, exc=ValueError("bad annotation"))
         with pytest.raises(ValueError, match="bad annotation"):
             _read(reader, 3)
         assert reader.calls == [3]
 
     def test_decompression_bomb_propagates(self) -> None:
+        """An image that exceeds the pixel limit raises its error instead of being replaced."""
         reader = _Reader(failing={3}, exc=Image.DecompressionBombError("too many pixels"))
         with pytest.raises(Image.DecompressionBombError):
             _read(reader, 3)
@@ -253,7 +271,7 @@ class TestCocoDetectionUnreadableFile:
             pytest.param("png", False, None, 1, id="png-pillow"),
         ],
     )
-    def test_truncated_file_is_replaced_by_the_next_sample(
+    def test_truncated_file_is_replaced_by_next_sample(
         self,
         tmp_path: Path,
         monkeypatch: pytest.MonkeyPatch,
@@ -262,6 +280,7 @@ class TestCocoDetectionUnreadableFile:
         draft_size: int | None,
         reduction: int,
     ) -> None:
+        """A truncated COCO image is replaced by the next sample, for each decoder and draft size."""
         if not use_simplejpeg:
             monkeypatch.setattr(io_utils, "simplejpeg", None)
         annotation_file = _write_coco_dataset(tmp_path, extension)
@@ -276,6 +295,7 @@ class TestCocoDetectionUnreadableFile:
         assert (image.size, target["boxes"].tolist()) == (expected_size, [expected_box])
 
     def test_truncated_file_logs_one_error_naming_its_path(self, tmp_path: Path, mocker: Any) -> None:
+        """A truncated COCO image logs one error that contains the file path."""
         annotation_file = _write_coco_dataset(tmp_path)
         _truncate(tmp_path / "image1.jpg")
         dataset = CocoDetection(tmp_path, annotation_file, transforms=None, skip_unreadable=True)
@@ -286,7 +306,8 @@ class TestCocoDetectionUnreadableFile:
         (call,) = error.call_args_list
         assert str(tmp_path / "image1.jpg") in call.args[0] % call.args[1:]
 
-    def test_missing_file_is_replaced_by_the_next_sample(self, tmp_path: Path) -> None:
+    def test_missing_file_is_replaced_by_next_sample(self, tmp_path: Path) -> None:
+        """A missing last COCO image is replaced by the first sample of the dataset."""
         annotation_file = _write_coco_dataset(tmp_path)
         (tmp_path / "image3.jpg").unlink()
         dataset = CocoDetection(tmp_path, annotation_file, transforms=None, skip_unreadable=True)
@@ -296,7 +317,7 @@ class TestCocoDetectionUnreadableFile:
         expected_size, expected_box = _expected_coco_sample(0)
         assert (int(target["image_id"]), image.size, target["boxes"].tolist()) == (1, expected_size, [expected_box])
 
-    def test_length_is_kept_and_the_bad_sample_serves_its_neighbour(self, tmp_path: Path) -> None:
+    def test_length_is_kept_and_bad_sample_serves_its_neighbour(self, tmp_path: Path) -> None:
         """Every DDP rank must keep the same batch count, so a bad file does not shorten the dataset."""
         annotation_file = _write_coco_dataset(tmp_path)
         _truncate(tmp_path / "image1.jpg")
@@ -306,7 +327,8 @@ class TestCocoDetectionUnreadableFile:
 
         assert (len(dataset), image_ids) == (4, [1, 3, 3, 4])
 
-    def test_default_raises_the_decoder_error(self, tmp_path: Path) -> None:
+    def test_default_raises_decoder_error(self, tmp_path: Path) -> None:
+        """With substitution off, a truncated COCO image raises the decoder's OSError."""
         annotation_file = _write_coco_dataset(tmp_path)
         _truncate(tmp_path / "image1.jpg")
         dataset = CocoDetection(tmp_path, annotation_file, transforms=None)
@@ -327,7 +349,8 @@ class TestCocoDetectionUnreadableFile:
 
         assert (decode.call_count, sleep.called, log.method_calls) == (1, False, [])
 
-    def test_default_returns_the_same_sample_as_enabled_for_a_readable_file(self, tmp_path: Path) -> None:
+    def test_default_returns_same_sample_as_enabled_for_readable_file(self, tmp_path: Path) -> None:
+        """A readable COCO image gives the same sample whether substitution is on or off."""
         annotation_file = _write_coco_dataset(tmp_path)
         image, target = CocoDetection(tmp_path, annotation_file, transforms=None)[2]
         enabled = CocoDetection(tmp_path, annotation_file, transforms=None, skip_unreadable=True)
@@ -336,6 +359,7 @@ class TestCocoDetectionUnreadableFile:
         assert (image.tobytes(), int(target["image_id"])) == (enabled_image.tobytes(), int(enabled_target["image_id"]))
 
     def test_broken_annotation_still_raises(self, tmp_path: Path) -> None:
+        """A COCO annotation without a bbox still raises a KeyError when substitution is on."""
         annotation_file = _write_coco_dataset(tmp_path)
         content = json.loads(annotation_file.read_text(encoding="utf-8"))
         del content["annotations"][1]["bbox"]
@@ -358,6 +382,7 @@ class TestCocoDetectionUnreadableFile:
             dataset[1]
 
     def test_all_unreadable_dataset_raises_runtime_error(self, tmp_path: Path) -> None:
+        """A COCO dataset whose images are all truncated raises a RuntimeError."""
         annotation_file = _write_coco_dataset(tmp_path)
         for index in range(4):
             _truncate(tmp_path / f"image{index}.jpg")
@@ -447,7 +472,8 @@ def _write_yolo_pose_dataset(root: Path, num_images: int = 3) -> tuple[Path, Pat
 class TestYoloDetectionUnreadableFile:
     """``YoloDetection`` on real files."""
 
-    def test_truncated_file_is_replaced_by_the_next_sample(self, tmp_path: Path) -> None:
+    def test_truncated_file_is_replaced_by_next_sample(self, tmp_path: Path) -> None:
+        """A truncated YOLO image is replaced by the next image together with that image's labels."""
         dataset = _yolo_dataset(tmp_path, skip_unreadable=True)
         _truncate(tmp_path / "images" / "image1.png")
 
@@ -456,6 +482,7 @@ class TestYoloDetectionUnreadableFile:
         assert (_gray_level(image), int(target["image_id"]), len(target["boxes"])) == (3, 2, 3)
 
     def test_truncated_file_logs_one_error_naming_its_path(self, tmp_path: Path, mocker: Any) -> None:
+        """A truncated YOLO image logs one error that contains the file path."""
         dataset = _yolo_dataset(tmp_path, skip_unreadable=True)
         _truncate(tmp_path / "images" / "image1.png")
         error = mocker.patch.object(io_utils.logger, "error")
@@ -465,7 +492,8 @@ class TestYoloDetectionUnreadableFile:
         (call,) = error.call_args_list
         assert str(tmp_path / "images" / "image1.png") in call.args[0] % call.args[1:]
 
-    def test_default_raises_value_error_naming_the_file(self, tmp_path: Path) -> None:
+    def test_default_raises_value_error_naming_file(self, tmp_path: Path) -> None:
+        """With substitution off, a truncated YOLO image raises a ValueError that names the file."""
         dataset = _yolo_dataset(tmp_path)
         _truncate(tmp_path / "images" / "image1.png")
 
@@ -485,6 +513,7 @@ class TestYoloDetectionUnreadableFile:
         assert (decode.call_count, sleep.called, log.method_calls) == (1, False, [])
 
     def test_all_unreadable_dataset_raises_runtime_error(self, tmp_path: Path) -> None:
+        """A YOLO dataset whose images are all truncated raises a RuntimeError."""
         dataset = _yolo_dataset(tmp_path, skip_unreadable=True)
         for index in range(3):
             _truncate(tmp_path / "images" / f"image{index}.png")
@@ -521,13 +550,15 @@ class TestYoloSegmentationUnreadableFile:
         _truncate(image_dir / "image1.png")
         return dataset
 
-    def test_truncated_file_is_replaced_by_the_box_of_the_next_sample(self, tmp_path: Path) -> None:
+    def test_truncated_file_is_replaced_by_box_of_next_sample(self, tmp_path: Path) -> None:
+        """A truncated polygon-labelled image brings the box of the next image with it."""
         image, target = self._dataset(tmp_path)[1]
 
         assert (_gray_level(image), int(target["image_id"])) == (3, 2)
         torch.testing.assert_close(target["boxes"], torch.tensor([[6.4, 4.8, 44.8, 33.6]]))
 
-    def test_truncated_file_is_replaced_by_the_mask_of_the_next_sample(self, tmp_path: Path) -> None:
+    def test_truncated_file_is_replaced_by_mask_of_next_sample(self, tmp_path: Path) -> None:
+        """A truncated polygon-labelled image brings the mask of the next image with it."""
         dataset = self._dataset(tmp_path)
 
         _, target = dataset[1]
@@ -559,7 +590,8 @@ class TestYoloPoseUnreadableFile:
         _truncate(image_dir / "image1.png")
         return dataset
 
-    def test_truncated_file_is_replaced_by_the_keypoints_of_the_next_sample(self, tmp_path: Path) -> None:
+    def test_truncated_file_is_replaced_by_keypoints_of_next_sample(self, tmp_path: Path) -> None:
+        """A truncated pose-labelled image brings the keypoints of the next image with it."""
         image, target = self._dataset(tmp_path)[1]
 
         assert (_gray_level(image), int(target["image_id"])) == (3, 2)
@@ -599,15 +631,18 @@ class TestYoloDetectionUnreadableHeader:
         _corrupt_header(image_dir / "image1.png")
         return YoloDetection(str(image_dir), str(label_dir), str(data_file), transforms=None, **kwargs)
 
-    def test_default_raises_from_the_constructor(self, tmp_path: Path, sleep: Any) -> None:
+    def test_default_raises_from_constructor(self, tmp_path: Path, sleep: Any) -> None:
+        """With substitution off, a corrupt YOLO image header makes the constructor raise without pausing."""
         with pytest.raises(OSError, match="cannot identify image file"):
             self._dataset(tmp_path)
         assert sleep.called is False
 
-    def test_construction_keeps_the_dataset_length(self, tmp_path: Path) -> None:
+    def test_construction_keeps_dataset_length(self, tmp_path: Path) -> None:
+        """With substitution on, a corrupt header does not shorten the dataset."""
         assert len(self._dataset(tmp_path, skip_unreadable=True)) == 3
 
-    def test_construction_logs_one_error_naming_the_file(self, tmp_path: Path, mocker: Any) -> None:
+    def test_construction_logs_one_error_naming_file(self, tmp_path: Path, mocker: Any) -> None:
+        """Building the dataset logs one error that names the image with the corrupt header."""
         error = mocker.patch.object(yolo.logger, "error")
 
         self._dataset(tmp_path, skip_unreadable=True)
@@ -615,7 +650,8 @@ class TestYoloDetectionUnreadableHeader:
         (call,) = error.call_args_list
         assert str(tmp_path / "images" / "image1.png") in call.args[0] % call.args[1:]
 
-    def test_unreadable_sample_is_replaced_by_the_next_sample(self, tmp_path: Path) -> None:
+    def test_unreadable_sample_is_replaced_by_next_sample(self, tmp_path: Path) -> None:
+        """The sample with the corrupt header is served from the next image and its labels."""
         dataset = self._dataset(tmp_path, skip_unreadable=True)
 
         image, target = dataset[1]
@@ -624,6 +660,7 @@ class TestYoloDetectionUnreadableHeader:
 
     @pytest.mark.parametrize("index", [0, 2])
     def test_other_samples_keep_their_index_and_labels(self, tmp_path: Path, index: int) -> None:
+        """Samples with a good header keep their own image and labels."""
         dataset = self._dataset(tmp_path, skip_unreadable=True)
 
         image, target = dataset[index]
@@ -639,7 +676,8 @@ class TestYoloDetectionUnreadableHeader:
 
         assert int(target["image_id"]) == 2
 
-    def test_malformed_label_of_the_unreadable_image_still_raises(self, tmp_path: Path) -> None:
+    def test_malformed_label_of_unreadable_image_still_raises(self, tmp_path: Path) -> None:
+        """A malformed label file still raises a ValueError when its image is the corrupt one."""
         image_dir, label_dir, data_file = _write_yolo_dataset(tmp_path)
         _corrupt_header(image_dir / "image1.png")
         (label_dir / "image1.txt").write_text("7 0.5 0.5 0.25 0.25\n", encoding="utf-8")
@@ -647,7 +685,8 @@ class TestYoloDetectionUnreadableHeader:
         with pytest.raises(ValueError, match="image1.txt"):
             YoloDetection(str(image_dir), str(label_dir), str(data_file), transforms=None, skip_unreadable=True)
 
-    def test_header_that_reads_on_retry_keeps_its_labels(self, tmp_path: Path, mocker: Any) -> None:
+    def test_header_reads_on_retry_keeps_its_labels(self, tmp_path: Path, mocker: Any) -> None:
+        """A header that fails once and then reads fine keeps its own image and labels."""
         image_dir, label_dir, data_file = _write_yolo_dataset(tmp_path)
         read_size = yolo._read_image_size
         failures = [OSError("short read")]
@@ -709,6 +748,7 @@ class TestBuilderWiring:
     """Builders turn substitution on only when ``TrainConfig`` asks for it, and only for the training split."""
 
     def test_train_config_default_is_off(self) -> None:
+        """TrainConfig leaves image substitution off by default."""
         assert TrainConfig(dataset_dir="/data").skip_unreadable_images is False
 
     # Every builder constructs its dataset in an ``if square_resize_div_64: ... else: ...`` pair with its own
@@ -721,6 +761,7 @@ class TestBuilderWiring:
     def test_roboflow_coco_builder(
         self, tmp_path: Path, image_set: str, enabled: bool, expected: bool, square_resize_div_64: bool
     ) -> None:
+        """The Roboflow COCO builder enables substitution only for the training split and only when asked."""
         args = _builder_args(
             _roboflow_coco_root(tmp_path), skip_unreadable_images=enabled, square_resize_div_64=square_resize_div_64
         )
@@ -735,6 +776,7 @@ class TestBuilderWiring:
     def test_roboflow_yolo_builder(
         self, tmp_path: Path, image_set: str, enabled: bool, expected: bool, square_resize_div_64: bool
     ) -> None:
+        """The Roboflow YOLO builder enables substitution only for the training split and only when asked."""
         args = _builder_args(
             _roboflow_yolo_root(tmp_path), skip_unreadable_images=enabled, square_resize_div_64=square_resize_div_64
         )
@@ -760,6 +802,7 @@ class TestBuilderWiring:
         expected: bool,
         square_resize_div_64: bool,
     ) -> None:
+        """The COCO and Objects365 builders enable substitution only for the training split and only when asked."""
         module, builder = module_and_builder
         dataset_class = mocker.patch.object(module, "CocoDetection")
         args = _builder_args(tmp_path, skip_unreadable_images=enabled, square_resize_div_64=square_resize_div_64)
@@ -768,7 +811,7 @@ class TestBuilderWiring:
 
         assert dataset_class.call_args.kwargs["skip_unreadable"] is expected
 
-    def test_namespace_without_the_field_keeps_it_off(self, tmp_path: Path) -> None:
+    def test_namespace_without_field_keeps_it_off(self, tmp_path: Path) -> None:
         """A hand-built namespace that predates the field keeps the ``TrainConfig`` default."""
         args = _builder_args(_roboflow_coco_root(tmp_path))
         del args.skip_unreadable_images
