@@ -1768,17 +1768,28 @@ class TestLoadPretrainWeightsNonSquareGrid(_PatchWeightsIO):
 
         torch.testing.assert_close(loaded, _resized(original, (24, 24), (18, 32)))
 
-    @pytest.mark.parametrize(
-        ("resolution", "warned"),
-        [pytest.param((288, 512), True, id="same-token-count"), pytest.param((320, 448), False, id="other-count")],
-    )
-    def test_warns_when_only_the_token_count_matches(
-        self, monkeypatch, captured: list[str], resolution: tuple[int, int], warned: bool
-    ) -> None:
+    def test_warns_when_only_the_token_count_matches(self, monkeypatch) -> None:
         """Reading an unrecorded grid as square is reported when the model's grid has the same token count."""
-        self._load(monkeypatch, resolution, (24, 24))
+        with pytest.warns(UserWarning, match="24x24 source grid.*18x32 target grid.*Pass source_pe_size"):
+            self._load(monkeypatch, (288, 512), (24, 24))
 
-        assert any("reading it as a square 24x24 grid" in message for message in captured) is warned
+    def test_warns_when_assuming_the_transposed_target_grid(self, monkeypatch) -> None:
+        """An unrecorded 20x28 checkpoint is assumed to have the target's 28x20 grid."""
+        original = _pe_state((20, 28))[_PE_KEY]
+
+        with pytest.warns(UserWarning, match="28x20 source grid.*28x20 target grid.*Pass source_pe_size"):
+            loaded = self._load(monkeypatch, (448, 320), (20, 28))
+
+        assert torch.equal(loaded, original)
+
+    def test_warns_when_inferred_square_grid_has_a_different_token_count(self, monkeypatch) -> None:
+        """An unrecorded 16x36 checkpoint is read as 24x24 before resizing to a 20x28 grid."""
+        original = _pe_state((16, 36))[_PE_KEY]
+
+        with pytest.warns(UserWarning, match="24x24 source grid.*20x28 target grid.*Pass source_pe_size"):
+            loaded = self._load(monkeypatch, (320, 448), (16, 36))
+
+        torch.testing.assert_close(loaded, _resized(original, (24, 24), (20, 28)))
 
     def test_non_square_checkpoint_loads_unchanged_into_the_same_grid(self, monkeypatch) -> None:
         """A checkpoint that records its 18x32 grid is not mistaken for a 24x24 one."""

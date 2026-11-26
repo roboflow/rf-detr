@@ -19,6 +19,7 @@ import copy
 import math
 import os
 import re
+import warnings
 from collections.abc import Mapping
 from typing import Any, cast
 
@@ -361,16 +362,16 @@ def interpolate_position_embeddings(
     modifying *checkpoint_state* in-place before ``load_state_dict`` is called.
 
     A token count does not identify a non-square grid: 576 tokens are a 24x24 grid, an 18x32 one or a 32x18 one.
-    Without *source_pe_size* a perfect-square count is read as a square grid, with a warning when the target is a
-    non-square grid of the same count, and any other count is left untouched when it equals the target's (the same
-    grid is assumed) and skipped with a warning when it differs.
+    Without *source_pe_size* a perfect-square count is read as a square grid. For other counts, the target grid is
+    assumed if the counts match, and interpolation is skipped with a warning if they differ. An inferred source grid
+    for a non-square target emits a warning once per call.
 
     Args:
         checkpoint_state: The ``"model"`` sub-dict from a loaded checkpoint.
         pe_size: Target grid in patches: a side length for a square grid, or ``(height, width)``. Typically
             ``model_config.positional_encoding_size``.
         source_pe_size: Grid the checkpoint's embeddings are laid out on, as a side length or ``(height, width)``.
-            Needed for a checkpoint with a non-square grid; ``None`` infers a square grid from the token count.
+            Use the actual source grid to disambiguate a checkpoint with a non-square grid.
 
     Raises:
         ValueError: If *source_pe_size* does not account for the number of tokens of a PE tensor.
@@ -378,7 +379,7 @@ def interpolate_position_embeddings(
     Examples:
         >>> import torch
         >>> state = {"backbone.0.encoder.encoder.embeddings.position_embeddings": torch.zeros(1, 4 * 4 + 1, 8)}
-        >>> interpolate_position_embeddings(state, (2, 6))
+        >>> interpolate_position_embeddings(state, (2, 6), source_pe_size=4)
         >>> state["backbone.0.encoder.encoder.embeddings.position_embeddings"].shape
         torch.Size([1, 13, 8])
     """
@@ -388,6 +389,7 @@ def interpolate_position_embeddings(
 
     h_tgt, w_tgt = as_pair(pe_size)
     n_target = h_tgt * w_tgt  # target number of patch tokens
+    warned_about_inferred_grid = False
     for key in pe_keys:
         ckpt_pe = checkpoint_state[key]  # [1, N_src+1, dim]
         n_source = ckpt_pe.shape[1] - 1  # exclude class token
@@ -407,15 +409,19 @@ def interpolate_position_embeddings(
                         f" grid size is not a perfect square (source {n_source}, target {n_target}),"
                         " so its (height, width) is unknown. Pass source_pe_size.",
                     )
-                continue
+                    continue
+                h_src, w_src = h_tgt, w_tgt
+            if h_tgt != w_tgt and not warned_about_inferred_grid:
+                warnings.warn(
+                    f"{key} has {n_source} patch tokens and no recorded grid. Inferring a {h_src}x{w_src} source grid"
+                    f" for the {h_tgt}x{w_tgt} target grid. Pass source_pe_size=(height, width) or load a checkpoint"
+                    " that records its model_config.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                warned_about_inferred_grid = True
         if (h_src, w_src) == (h_tgt, w_tgt):
             continue  # no mismatch — skip
-        if source_pe_size is None and n_source == n_target:
-            logger.warning(
-                f"{key} has the {n_source} patch tokens of the target {h_tgt}x{w_tgt} grid and no recorded grid;"
-                f" reading it as a square {h_src}x{w_src} grid and interpolating. If it was saved from a"
-                f" {h_tgt}x{w_tgt} model, pass source_pe_size or load a checkpoint that records its model_config.",
-            )
 
         dim = ckpt_pe.shape[-1]
         class_token = ckpt_pe[:, :1]  # [1, 1, dim] — keeps the sequence dimension

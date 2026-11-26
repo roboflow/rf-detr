@@ -111,7 +111,7 @@ For example, `RFDETRSegXLarge` uses `624x624`, which is valid because `624` is d
 
 ### Non-square resolution
 
-`resolution` also accepts a `(height, width)` pair, so that wide or tall imagery is not squashed into a square. Each side must be divisible by `patch_size * num_windows` for the selected model.
+`resolution` also accepts a `(height, width)` pair, so that wide or tall imagery is not squashed into a square. Each side must be divisible by `patch_size * num_windows` for the selected model. The `rfdetr` models (Nano, Small, Medium, Large, all segmentation sizes, and keypoints) support the pair form, while the Plus models (Atto, Femto, Pico, XLarge, and 2XLarge) from `rfdetr_plus` accept only an integer `resolution` for now.
 
 ```python
 from rfdetr import RFDETRMedium
