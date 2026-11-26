@@ -959,6 +959,80 @@ class TestChunkedForward:
         list(core.predict(context, images[:1], batch=1, stream=stream, tta=tta))
         assert rows == [4, 2, 2]
 
+    @staticmethod
+    def _peak_reserved(predictor: RFDETRInference, images: list[torch.Tensor], recipe: TTAConfig) -> tuple[int, Any]:
+        """Predict once from an empty allocator and return the peak reserved CUDA bytes and the result.
+
+        Examples:
+            >>> # The call below needs a CUDA device and a model, so the doctest skips it.
+            >>> TestChunkedForward._peak_reserved  # doctest: +SKIP
+        """
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+        (result,) = predictor.predict(images, tta=recipe, threshold=0.0)
+        torch.cuda.synchronize()
+        return torch.cuda.max_memory_reserved(), result
+
+    @pytest.mark.gpu
+    @_requires_cuda
+    @pytest.mark.parametrize(
+        "model_class", [pytest.param(RFDETRNano, id="detection"), pytest.param(RFDETRSegNano, id="segmentation")]
+    )
+    def test_real_cuda_out_of_memory_is_retried_with_fewer_views(
+        self, model_class: type, mocker: MockerFixture
+    ) -> None:
+        """Cap the allocator between the peak of one view and the peak of every view, so the grouped forward fails."""
+        torch.manual_seed(0)
+        model = model_class(pretrain_weights=None, device="cuda", num_queries=4, num_select=4, num_classes=2)
+        predictor = RFDETRInference(model)
+        images = [_square_image(16)]
+        recipe = TTAConfig(shift=7, zoom=(1.5,))
+        forward_rows: list[int] = []
+        grouped_outputs: list[Any] = []
+        run_forward, run_views = model._run_inference_batch, core._run_views
+
+        def record_forward(batch: torch.Tensor, *args: Any, **kwargs: Any) -> Any:
+            """Run the model and note the rows of every forward that finished."""
+            outputs = run_forward(batch, *args, **kwargs)
+            forward_rows.append(batch.shape[0])
+            return outputs
+
+        def record_views(*args: Any, **kwargs: Any) -> Any:
+            """Run the views and keep what they returned, ``None`` for a forward that ran out of memory."""
+            outputs = run_views(*args, **kwargs)
+            grouped_outputs.append(outputs)
+            return outputs
+
+        mocker.patch.object(model, "_run_inference_batch", side_effect=record_forward)
+        mocker.patch.object(core, "_run_views", side_effect=record_views)
+        # A budget of one pixel gives one view per forward; a huge one gives the CUDA policy of every view at once.
+        mocker.patch.object(core, "_MAX_PIXELS_PER_FORWARD", 1)
+        self._peak_reserved(predictor, images, recipe)  # warm up kernels and workspaces before measuring
+        forward_rows.clear()
+        one_view_peak, reference = self._peak_reserved(predictor, images, recipe)
+        views = len(forward_rows)
+        mocker.patch.object(core, "_MAX_PIXELS_PER_FORWARD", 1 << 40)
+        every_view_peak, _ = self._peak_reserved(predictor, images, recipe)
+        if every_view_peak < 1.5 * one_view_peak:
+            pytest.skip(f"no room between one view ({one_view_peak} B) and every view ({every_view_peak} B) to cap")
+
+        forward_rows.clear()
+        grouped_outputs.clear()
+        device = torch.cuda.current_device()
+        cap = (one_view_peak + every_view_peak) // 2
+        torch.cuda.empty_cache()
+        torch.cuda.set_per_process_memory_fraction(cap / torch.cuda.get_device_properties(device).total_memory, device)
+        try:
+            (actual,) = predictor.predict(images, tta=recipe, threshold=0.0)
+        finally:
+            torch.cuda.set_per_process_memory_fraction(1.0, device)
+            torch.cuda.empty_cache()
+
+        assert any(outputs is None for outputs in grouped_outputs), "the capped allocator never ran out of memory"
+        assert max(forward_rows) < views, "a forward of every view finished under the cap"
+        assert sum(forward_rows) == views, "a view ran twice or not at all"
+        TestGroupedForward._assert_cuda_result(actual, reference, masks=model.model_config.segmentation_head)
+
 
 class TestMaskSizeReduction:
     """The size every view's mask logits are resampled to, whatever the model's mask downsample ratio."""
