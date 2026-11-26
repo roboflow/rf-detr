@@ -33,14 +33,14 @@ from tests._markers import _requires_simplejpeg
 from tests.datasets.helpers import (
     _COCO_IMAGE_SIZES,
     _coco_box,
+    _patch_retry_sleep,
     _path_of,
     _Reader,
     _write_coco_dataset,
     _write_yolo_dataset,
-    patch_retry_sleep,
 )
 
-sleep = pytest.fixture(autouse=True)(patch_retry_sleep)
+sleep = pytest.fixture(autouse=True)(_patch_retry_sleep)
 
 
 def _read(reader: _Reader, index: int, num_samples: int = 10) -> tuple[int, str]:

@@ -36,9 +36,9 @@ from rfdetr.datasets.io_utils import (
     read_image_with_retries,
 )
 from rfdetr.datasets.yolo import YoloDetection
-from tests.datasets.helpers import _path_of, _Reader, _write_coco_dataset, _write_yolo_dataset, patch_retry_sleep
+from tests.datasets.helpers import _patch_retry_sleep, _path_of, _Reader, _write_coco_dataset, _write_yolo_dataset
 
-sleep = pytest.fixture(autouse=True)(patch_retry_sleep)
+sleep = pytest.fixture(autouse=True)(_patch_retry_sleep)
 
 # The datasets of this module hold three PNG images, which its tests overwrite by file name.
 _write_coco_dataset = partial(_write_coco_dataset, extension="png", num_images=3)

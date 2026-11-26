@@ -25,12 +25,12 @@ from pytest_mock import MockerFixture
 from rfdetr.datasets import io_utils, yolo
 from rfdetr.datasets.io_utils import _MAX_SUBSTITUTIONS
 from rfdetr.datasets.yolo import YoloDetection
-from tests.datasets.helpers import patch_retry_sleep
+from tests.datasets.helpers import _patch_retry_sleep
 
 _CORRUPT_BYTES = b"not an image"
 
 
-sleep = pytest.fixture(autouse=True)(patch_retry_sleep)
+sleep = pytest.fixture(autouse=True)(_patch_retry_sleep)
 
 
 def _write_yolo_images(root: Path, num_images: int, corrupt: set[int] | None = None) -> tuple[Path, Path, Path]:

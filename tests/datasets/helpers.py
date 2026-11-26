@@ -10,8 +10,8 @@ fake reader and the on-disk dataset writers exist once.  Import with an absolute
 
     from tests.datasets.helpers import _Reader, _path_of, _write_coco_dataset, _write_yolo_dataset
 
-The retry pause is patched by :func:`patch_retry_sleep`.  A module that needs it applies it explicitly, as
-``sleep = pytest.fixture(autouse=True)(patch_retry_sleep)``; it is never made autouse for all dataset tests.
+The retry pause is patched by :func:`_patch_retry_sleep`.  A module that needs it applies it explicitly, as
+``sleep = pytest.fixture(autouse=True)(_patch_retry_sleep)``; it is never made autouse for all dataset tests.
 """
 
 from __future__ import annotations
@@ -26,10 +26,10 @@ from PIL import Image
 from rfdetr.datasets import io_utils
 
 
-def patch_retry_sleep(mocker: Any) -> Any:
+def _patch_retry_sleep(mocker: Any) -> Any:
     """Replace the retry pause so the tests do not wait, and return the mock for tests that check the pauses.
 
-    Apply it per module with ``sleep = pytest.fixture(autouse=True)(patch_retry_sleep)``.
+    Apply it per module with ``sleep = pytest.fixture(autouse=True)(_patch_retry_sleep)``.
 
     Args:
         mocker: The ``pytest-mock`` fixture, or any object whose ``patch.object`` patches an attribute.
@@ -44,7 +44,7 @@ def patch_retry_sleep(mocker: Any) -> Any:
         ...         return patcher.start()
         >>> class _Mocker:
         ...     patch = _Patch()
-        >>> sleep = patch_retry_sleep(_Mocker())
+        >>> sleep = _patch_retry_sleep(_Mocker())
         >>> _ = io_utils.time.sleep(5)
         >>> sleep.call_args_list
         [call(5)]
