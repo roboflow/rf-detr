@@ -512,7 +512,8 @@ wrap-descriptions = 120
 
 [tool.pytest.ini_options]
 addopts = [
-    "-v",                   # verbose output
+    # No "-v": with -n it prints two lines per test (~25k lines on the CPU job) and buries
+    # failures and warnings. Pass -v on the command line when a per-test trail is wanted.
     "--color=yes",          # colored output
     "--doctest-plus",       # run doctests from all modules (pytest-doctestplus)
 ]
@@ -564,6 +565,22 @@ filterwarnings = [
     # the module's top-level statements appear uncovered.
     "ignore:.*was instantiated with pretrain_weights=None:UserWarning",
     "ignore:.*was instantiated with overrides that differ from the variant:UserWarning",
+    # Expected warnings that dozens of tests trigger incidentally. Each is asserted by its dedicated
+    # test with `pytest.warns` or `catch_warnings` + `simplefilter("always")`, which override these
+    # filters, so silencing them here only removes repeats from the warnings summary.
+    "ignore:Calling train\\(\\) on a model that has already been trained:UserWarning",
+    "ignore:RF-DETR has changed the default training augmentation backend:UserWarning",
+    "ignore:.* export is experimental and work-in-progress:UserWarning",
+    "ignore:`(TRTInference|OpenVINOInference)` was deprecated in v:FutureWarning",
+    # Third-party noise we cannot fix. Message regexes, not class paths, for the same coverage
+    # reason as above.
+    "ignore:the float32 number .* will be truncated:UserWarning:onnxconverter_common",
+    "ignore:Converting a tensor to a Python (boolean|integer) might cause the trace to be incorrect",
+    "ignore:`torch.jit.(script|trace)` is deprecated:FutureWarning",
+    "ignore:You are using the legacy TorchScript-based ONNX export:DeprecationWarning",
+    "ignore:__array__ implementation doesn't accept a copy keyword:DeprecationWarning:pycocotools",
+    "ignore:Checkpoint directory .* exists and is not empty",
+    "ignore:Be aware that when using `ckpt_path`, callbacks used to create the checkpoint",
 ]
 
 [tool.codespell]
