@@ -1504,15 +1504,59 @@ class TestSplitAugConfigForGpu:
     @pytest.mark.parametrize(
         "params",
         [
-            {"translate_px": 4, "p": 1.0},
             {"scale": (0.9, 1.1), "rotate": (0.0, 0.0), "p": 1.0},
+            {"translate_percent": (-0.05, 0.05), "p": 1.0},
         ],
     )
-    def test_pure_translation_or_scale_affine_stays_on_gpu(self, params: dict[str, Any]) -> None:
-        """An Affine without rotation or shear stays on the GPU."""
+    def test_pure_scale_or_percent_translation_affine_stays_on_gpu(self, params: dict[str, Any]) -> None:
+        """An Affine with only scale or a fractional translation stays on the GPU."""
         config = {"Affine": params}
 
         assert split_aug_config_for_gpu(config) == ({}, config)
+
+    def test_translate_px_affine_runs_before_resize(self) -> None:
+        """A whole-pixel translate_px offset is in source-image pixels, so it runs before the resize.
+
+        On the GPU path the same offset would be applied after the resize, in resized-image pixels — for an
+        800-pixel-wide image resized to 576, a fixed 100-pixel shift would be 72 output pixels on the CPU path
+        but 100 on the GPU path.
+        """
+        config = {"Affine": {"translate_px": 4, "p": 1.0}}
+
+        assert split_aug_config_for_gpu(config) == (config, {})
+
+    def test_flip_before_rotation_keeps_configured_order(self) -> None:
+        """A flip configured before a rotation stays before it on the GPU path.
+
+        The split is a prefix cut, not a partition by key: a partition would run the rotation before the resize
+        and the flip after it, reversing the tilt relative to the CPU path, where flips do not commute with
+        rotations.
+        """
+        config = {"HorizontalFlip": {"p": 1.0}, "Rotate": {"limit": 30, "p": 1.0}}
+
+        assert split_aug_config_for_gpu(config) == (config, {})
+
+    def test_entries_before_last_geometric_entry_run_before_resize(self) -> None:
+        """The prefix runs through the last geometric entry, in configured order."""
+        config = {
+            "ColorJitter": {"p": 0.5},
+            "Rotate": {"limit": 30, "p": 1.0},
+            "HorizontalFlip": {"p": 0.5},
+        }
+
+        pre_resize, gpu = split_aug_config_for_gpu(config)
+
+        assert list(pre_resize) == ["ColorJitter", "Rotate"]
+        assert list(gpu) == ["HorizontalFlip"]
+
+    def test_unknown_key_after_rotation_stays_on_gpu(self) -> None:
+        """An unknown key inside the prefix stays on the GPU so the pipeline still raises for it."""
+        config = {"Rotate": {"limit": 30, "p": 1.0}, "NoSuchTransform": {"p": 1.0}}
+
+        pre_resize, gpu = split_aug_config_for_gpu(config)
+
+        assert set(pre_resize) == {"Rotate"}
+        assert set(gpu) == {"NoSuchTransform"}
 
     def test_reporter_config_splits_rotation_from_flip_and_pixel_transforms(self) -> None:
         """The reporter's aug_config keeps only the flip and brightness/contrast on the GPU."""

@@ -2437,6 +2437,88 @@ class TestAugmentBeforeResize:
         assert aug_index < resize_index
         assert not any(isinstance(t, Normalize) for t in pipeline.transforms)
 
+    _TRANSLATE_PX = 100
+
+    def _translated_bar_centroid(self, pipeline: Compose) -> float:
+        """Run a non-square image with one white vertical bar through *pipeline* and return the bar's x-centroid.
+
+        Args:
+            pipeline: Train transform pipeline built with a fixed 100-pixel ``Affine`` x-translation.
+
+        Returns:
+            The output x-centroid of the white bar, in output pixels.
+        """
+        width, height = 800, 600
+        image = Image.new("RGB", (width, height))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle([(200, 0), (209, height - 1)], fill=(255, 255, 255))
+        target = {
+            "boxes": torch.zeros((0, 4)),
+            "labels": torch.zeros((0,), dtype=torch.int64),
+            "image_id": torch.tensor(1),
+            "orig_size": torch.tensor([height, width]),
+            "size": torch.tensor([height, width]),
+        }
+        output, _ = pipeline(image, target)
+        if any(isinstance(t, Normalize) for t in pipeline.transforms):
+            mean = torch.tensor([0.485, 0.456, 0.406])[:, None, None]
+            std = torch.tensor([0.229, 0.224, 0.225])[:, None, None]
+            output = output * std + mean
+        gray = output.clamp(0, 1).mean(dim=0).numpy()
+        xs = np.where(gray > 0.5)[1]
+        return float(xs.mean())
+
+    def test_translate_px_shifts_by_source_pixels_on_both_backends(self):
+        """A fixed translate_px shift is in source-image pixels on the CPU and the GPU path.
+
+        The 10-pixel bar starts centred at x=204.5 on an 800-pixel-wide image and shifts 100 source pixels before
+        the square resize to 576, so its output centroid is (204.5 + 100) * 576 / 800 = 219.2. A shift applied after
+        the resize would be 100 resized pixels (centroid 247.6), and the old split dropped it from the CPU pipeline
+        entirely, leaving the centroid at 147.2.
+        """
+        aug_config = {"Affine": {"translate_px": {"x": self._TRANSLATE_PX}, "p": 1.0}}
+        cpu_pipeline = make_coco_transforms_square_div_64(
+            "train",
+            576,
+            aug_config=aug_config,
+            scale_jitter=False,
+        )
+        gpu_pipeline = make_coco_transforms_square_div_64(
+            "train",
+            576,
+            aug_config=aug_config,
+            scale_jitter=False,
+            gpu_postprocess=True,
+        )
+
+        assert self._translated_bar_centroid(cpu_pipeline) == pytest.approx(219.2, abs=6.0)
+        assert self._translated_bar_centroid(gpu_pipeline) == pytest.approx(219.2, abs=6.0)
+
+    def test_gpu_postprocess_keeps_flip_before_rotation(self):
+        """With gpu_postprocess a flip configured before a rotation still runs before it.
+
+        Flips do not commute with rotations, so the split must be a prefix cut in configured order: a partition by
+        key would run the rotation on the CPU before the resize and the flip on the GPU after it, reversing the tilt
+        relative to the CPU path.
+        """
+        pipeline = make_coco_transforms_square_div_64(
+            "train",
+            576,
+            aug_config={"HorizontalFlip": {"p": 1.0}, "Rotate": {"limit": (30, 30), "p": 1.0}},
+            scale_jitter=False,
+            gpu_postprocess=True,
+        )
+        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+        flip_index = next(i for i, w in enumerate(wrappers) if "HorizontalFlip" in _transform_leaf_names(w.transform))
+        rotate_index = next(i for i, w in enumerate(wrappers) if "Rotate" in _transform_leaf_names(w.transform))
+        resize_index = next(
+            i
+            for i, t in enumerate(pipeline.transforms)
+            if type(t).__name__ in {"RandomChoice", "RandomResize", "RandomSelect"}
+        )
+
+        assert flip_index < rotate_index < resize_index
+
 
 @_requires_albumentations
 class TestMakeCocoTransformsOutputSize:

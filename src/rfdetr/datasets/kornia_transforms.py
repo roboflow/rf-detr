@@ -1119,8 +1119,9 @@ def _affine_has_rotation_or_shear(params: dict[str, Any]) -> bool:
     """Return whether an ``Affine`` aug_config entry rotates or shears.
 
     Rotation and shear do not commute with the anisotropic square resize, so such an entry must run on the CPU before
-    the resize (roboflow/rf-detr#1769). Pure translation and (per-axis) scale commute with the resize, so an ``Affine``
-    without rotation or shear stays on the GPU — that is also where the whole-pixel ``translate_px`` path lives.
+    the resize (roboflow/rf-detr#1769). A pure scale or a ``translate_percent`` offset (a fraction of the image size)
+    commutes with the resize, but a ``translate_px`` offset is absolute pixels and does not — so it is routed before
+    the resize separately, by :func:`split_aug_config_for_gpu`, not by this helper.
 
     Args:
         params: The ``Affine`` aug_config params. An unset or ``None`` ``rotate`` or ``shear`` is the identity.
@@ -1144,6 +1145,39 @@ def _affine_has_rotation_or_shear(params: dict[str, Any]) -> bool:
     return False
 
 
+def _runs_before_resize(name: str, params: dict[str, Any]) -> bool:
+    """Return whether an aug_config entry must run on the CPU before the resize.
+
+    ``Rotate``, ``ShiftScaleRotate`` and ``Perspective`` never commute with the anisotropic square resize. An
+    ``Affine`` entry must also run before the resize when it rotates or shears — or when it sets ``translate_px``:
+    a whole-pixel offset is in source-image pixels on the CPU path but resized-image pixels on the GPU path, so a
+    fixed shift would land in a different place on each backend. Pure scale and ``translate_percent`` (a fraction of
+    the image size) commute with the resize and stay on the GPU.
+
+    Args:
+        name: The aug_config transform name.
+        params: The transform's aug_config params.
+
+    Returns:
+        ``True`` when the entry must run on the CPU before the resize.
+
+    Examples:
+        >>> _runs_before_resize("Rotate", {"limit": 45, "p": 0.5})
+        True
+        >>> _runs_before_resize("Affine", {"translate_px": 4, "p": 1.0})
+        True
+        >>> _runs_before_resize("Affine", {"scale": (0.9, 1.1), "p": 1.0})
+        False
+        >>> _runs_before_resize("HorizontalFlip", {"p": 0.5})
+        False
+    """
+    if name in _ALWAYS_PRE_RESIZE_AUG_KEYS:
+        return True
+    if name != "Affine":
+        return False
+    return _affine_has_rotation_or_shear(params) or params.get("translate_px") is not None
+
+
 def split_aug_config_for_gpu(
     aug_config: dict[str, dict[str, Any]],
 ) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
@@ -1155,9 +1189,16 @@ def split_aug_config_for_gpu(
     pixel-level transforms stay on the Kornia GPU pipeline:
 
     * ``Rotate``, ``ShiftScaleRotate`` and ``Perspective`` always run before the resize.
-    * ``Affine`` runs before the resize only when it rotates or shears; pure translation/scale stays on the GPU.
+    * ``Affine`` runs before the resize when it rotates, shears, or sets ``translate_px`` (absolute pixels change
+      meaning across the resize); pure scale / ``translate_percent`` stays on the GPU.
     * Every other key stays on the GPU. Unknown keys are kept there too, so :func:`build_kornia_pipeline` still
       raises its ``ValueError`` for them.
+
+    The split is a prefix cut, not a partition by key: everything up to and including the last entry that must run
+    before the resize runs on the CPU, in configured order, and the rest runs on the GPU. A partition would reorder
+    the transform sequence — a flip configured before a rotation would execute after it on the GPU path, reversing
+    the tilt relative to the CPU path. Entries before the last pre-resize entry run through the Albumentations CPU
+    wrappers rather than Kornia, matching the CPU backend exactly.
 
     Args:
         aug_config: Mapping of augmentation names to parameter dicts, as accepted by :func:`build_kornia_pipeline`.
@@ -1171,19 +1212,28 @@ def split_aug_config_for_gpu(
         >>> split_aug_config_for_gpu({"Affine": {"rotate": (-15, 15)}, "HorizontalFlip": {"p": 0.5}})
         ({'Affine': {'rotate': (-15, 15)}}, {'HorizontalFlip': {'p': 0.5}})
         >>> split_aug_config_for_gpu({"Affine": {"translate_px": 4}, "HorizontalFlip": {"p": 0.5}})
-        ({}, {'Affine': {'translate_px': 4}, 'HorizontalFlip': {'p': 0.5}})
+        ({'Affine': {'translate_px': 4}}, {'HorizontalFlip': {'p': 0.5}})
+        >>> split_aug_config_for_gpu({"HorizontalFlip": {"p": 1.0}, "Rotate": {"limit": 30, "p": 1.0}})
+        ({'HorizontalFlip': {'p': 1.0}, 'Rotate': {'limit': 30, 'p': 1.0}}, {})
         >>> split_aug_config_for_gpu({})
         ({}, {})
     """
+    items = list(aug_config.items())
+    last_pre_resize = -1
+    for index, (name, params) in enumerate(items):
+        if _runs_before_resize(name, params):
+            last_pre_resize = index
+    if last_pre_resize < 0:
+        return {}, aug_config
     pre_resize: dict[str, dict[str, Any]] = {}
     gpu: dict[str, dict[str, Any]] = {}
-    for name, params in aug_config.items():
-        if name in _ALWAYS_PRE_RESIZE_AUG_KEYS or (name == "Affine" and _affine_has_rotation_or_shear(params)):
+    for index, (name, params) in enumerate(items):
+        # Unknown keys stay on the GPU even inside the prefix, so build_kornia_pipeline still raises for them
+        # instead of the CPU wrappers silently skipping them as unbuildable.
+        if index <= last_pre_resize and name in _REGISTRY:
             pre_resize[name] = params
         else:
             gpu[name] = params
-    if not pre_resize:
-        return {}, aug_config
     return pre_resize, gpu
 
 

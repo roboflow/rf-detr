@@ -1122,8 +1122,9 @@ class RFDETRDataModule(LightningDataModule):
         The pipeline holds only the GPU entries of the aug_config: geometric entries that rotate, shear or displace
         corners run on the CPU before the resize instead (roboflow/rf-detr#1769) — the dataset builders apply them
         there via :func:`rfdetr.datasets.kornia_transforms.split_aug_config_for_gpu` — because applying them on the
-        GPU after the square resize would produce shapes no camera produces. Pure-translation/scale ``Affine``
-        entries stay here, as does the whole-pixel ``translate_px`` path.
+        GPU after the square resize would produce shapes no camera produces. Pure-scale and ``translate_percent``
+        ``Affine`` entries stay here; a ``translate_px`` entry runs on the CPU before the resize instead, because a
+        whole-pixel offset is in source-image pixels there and resized-image pixels here.
 
         ``self._resolved_augmentation_backend`` (set by :meth:`setup` just before this call) is the concrete backend
         returned by :func:`rfdetr.datasets.kornia_transforms.resolve_augmentation_backend`.
