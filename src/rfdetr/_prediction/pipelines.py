@@ -30,6 +30,7 @@ from rfdetr._prediction.core import (
     _PrefetchedImage,
     _prepare_batch,
     _PreparedBatch,
+    _ViewRetryState,
 )
 from rfdetr._prediction.sources import has_only_finite_images, iter_source_batches
 from rfdetr._prediction.tta import view_count
@@ -126,7 +127,8 @@ def _predict_stream(
     gpu_device = context.device if on_cuda and not include_source_image else None
     batches = source_batches if pool is None else _decode_ahead(source_batches, pool, gpu_device)
     try:
-        if _may_prepare_ahead(prepare_ahead, context.device.type, finite, 1 if tta is None else view_count(tta)):
+        views = 1 if tta is None else view_count(tta)
+        if _may_prepare_ahead(prepare_ahead, context.device.type, finite, views):
             prepare = functools.partial(
                 _prepare_batch,
                 context_factory,
@@ -139,9 +141,18 @@ def _predict_stream(
             in_worker = context.runtime_info.get("backend") != "pytorch"
             yield from _predict_prepared_ahead(batches, prepare, context.device, in_worker=in_worker)
             return
+        view_retry = _ViewRetryState() if views > 1 else None
         for image_batch in batches:
             results = _predict_batch(
-                context_factory, image_batch, threshold, shape, patch_size, include_source_image, antialias, tta=tta
+                context_factory,
+                image_batch,
+                threshold,
+                shape,
+                patch_size,
+                include_source_image,
+                antialias,
+                tta=tta,
+                view_retry=view_retry,
             )
             yield from cast("list[_PredictionResult]", results)
     finally:
