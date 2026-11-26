@@ -167,6 +167,11 @@ class TestTransposedResolution:
         assert embeddings.patch_grid_size == (28, 20)
         assert model._prediction_context().default_shape == (448, 320)
 
+        with torch.no_grad():
+            outputs = model.model.model.eval()(torch.rand(1, 3, 448, 320))
+        assert outputs["pred_boxes"].shape == (1, model.model_config.num_queries, 4)
+        assert torch.isfinite(outputs["pred_boxes"]).all()
+
     def test_transposed_input_is_interpolated_not_served_from_the_stored_table(
         self, non_square_model: RFDETRNano
     ) -> None:
@@ -259,13 +264,31 @@ class TestEvaluateNonSquare:
     """``evaluate()`` runs a non-square model, at its own shape or at an overriding pair."""
 
     @pytest.mark.parametrize(
-        "override",
-        [pytest.param({}, id="model-resolution"), pytest.param({"resolution": (448, 320)}, id="transposed-override")],
+        ("override", "expected_resolution"),
+        [
+            pytest.param({}, _RESOLUTION, id="model-resolution"),
+            pytest.param({"resolution": (448, 320)}, (448, 320), id="transposed-override"),
+        ],
     )
     def test_evaluate_returns_metrics_and_leaves_the_model_unchanged(
-        self, synthetic_shape_dataset_dir: Path, tmp_path: Path, override: dict[str, tuple[int, int]]
+        self,
+        synthetic_shape_dataset_dir: Path,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        override: dict[str, tuple[int, int]],
+        expected_resolution: tuple[int, int],
     ) -> None:
         """Evaluation builds its copy on the requested grid; the live model keeps its resolution and weights."""
+        from rfdetr.training import RFDETRModelModule
+
+        built_resolutions: list[object] = []
+        original_init = RFDETRModelModule.__init__
+
+        def _record_resolution(self: RFDETRModelModule, model_config: object, *args: object, **kwargs: object) -> None:
+            built_resolutions.append(model_config.resolution)
+            original_init(self, model_config, *args, **kwargs)
+
+        monkeypatch.setattr(RFDETRModelModule, "__init__", _record_resolution)
         annotations = json.loads((synthetic_shape_dataset_dir / "train" / "_annotations.coco.json").read_text())
         torch.manual_seed(0)
         model = RFDETRNano(
@@ -285,6 +308,7 @@ class TestEvaluateNonSquare:
         )
 
         assert "test/mAP_50_95" in metrics
+        assert built_resolutions == [expected_resolution]
         assert model.model_config.resolution == _RESOLUTION
         assert model.model_config.positional_encoding_size == (20, 28)
         assert model.model.resolution == _RESOLUTION
@@ -294,20 +318,22 @@ class TestEvaluateNonSquare:
 class TestSquareResolutionUnchanged:
     """An ``int`` resolution keeps its ``int`` form everywhere it is stored."""
 
-    def test_int_resolution_stays_int(self) -> None:
+    @pytest.mark.parametrize("side", [320, 384])
+    def test_int_resolution_stays_int(self, side: int) -> None:
         """Config, context and position-embedding size stay ints, and the defaults are the square pair."""
-        model = _build(320)
+        model = _build(side)
 
         assert type(model.model_config.resolution) is int
         assert type(model.model_config.positional_encoding_size) is int
         assert type(model.model.resolution) is int
-        assert model._prediction_context().default_shape == (320, 320)
+        assert model._prediction_context().default_shape == (side, side)
         assert model._runtime_info()["input_shape"] == (None, 3, None, None)
 
-    def test_square_pair_builds_the_same_weights_as_the_int(self) -> None:
-        """``resolution=(320, 320)`` initializes the same weights as ``resolution=320`` for one seed."""
-        from_int = _build(320).model.model.state_dict()
-        from_pair = _build((320, 320)).model.model.state_dict()
+    @pytest.mark.parametrize("side", [320, 384])
+    def test_square_pair_builds_the_same_weights_as_the_int(self, side: int) -> None:
+        """``resolution=(side, side)`` initializes the same weights as ``resolution=side`` for one seed."""
+        from_int = _build(side).model.model.state_dict()
+        from_pair = _build((side, side)).model.model.state_dict()
 
         assert from_int.keys() == from_pair.keys()
         for name, expected in from_int.items():
