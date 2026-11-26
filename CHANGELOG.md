@@ -18,6 +18,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 - `RFDETRInference.predict(..., tta=TTAConfig(...))` fuses shifted and zoomed views of each image, opt-in and off by default. `TTAConfig()` runs one native-scale view and three zooms. When `zoom` is omitted, `shift > 1` suppresses the default zooms. CUDA groups views of the same canvas shape and can split groups across forwards. MPS and CPU run one forward per view. Detection and segmentation models; keypoint models, `inference()` snapshots and exported runtimes refuse several views. On COCO val2017 the default recipe added 4.02, 3.11 and 1.96 box AP to Nano, Small and Large at 3 to 4 times the latency of one plain call, and eight shift views added 3.65 (Atto) to 1.09 (2XLarge) box AP.
 
+- `TrainConfig.min_class_support` and `TrainConfig.class_agnostic_eval`, two opt-in evaluation settings for long-tailed datasets. Both are off by default, and the default metrics, logged keys and console tables are unchanged. ([#1762](https://github.com/roboflow/rf-detr/pull/1762))
+
+    - `min_class_support=N` logs `<split>/mAP_50_95_gated` (with `ema_` and, for segmentation, `segm_` variants): the mean per-class AP over classes with at least `N` ground-truth instances in the evaluated split. The confidence-threshold sweep maximises macro-F1 over the same classes, and with `best_model_metric="map"` best-checkpoint selection and early stopping monitor the gated key, so a class with a handful of instances cannot decide which checkpoint is kept. With `log_per_class_metrics=True`, classes below the floor still get per-class rows and `<split>/AP/<class>` keys, and the per-class table gains a `Support` column.
+    - `class_agnostic_eval=True` also evaluates boxes with every label collapsed to one class, logged as `<split>/mAP_50_95_agnostic` and `<split>/mAP_50_agnostic` for validation and test, to separate whether an object was found from whether it was named correctly.
+
 ### Documentation
 
 - Cookbook for joint training on three RF100-VL datasets 20x apart in size, with `WeightedMultiSourceBatchSampler` weights computed automatically as the inverse of each source's measured size (`docs/cookbooks/multi-source-rf100vl.ipynb`).
