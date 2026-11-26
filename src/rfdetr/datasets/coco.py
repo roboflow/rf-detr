@@ -45,7 +45,13 @@ from rfdetr.datasets._torchvision import (
 )
 from rfdetr.datasets.aug_configs import AUG_CONFIG
 from rfdetr.datasets.io_utils import _warn_if_labels_follow_stored_pixels, decode_pil_image
-from rfdetr.datasets.kornia_transforms import is_gpu_postprocess, resolve_backend_for_build, split_aug_config_for_gpu
+from rfdetr.datasets.kornia_transforms import (
+    KorniaPreResize,
+    _pixel_affine_requires_albumentations,
+    is_gpu_postprocess,
+    resolve_backend_for_build,
+    split_aug_config_for_gpu,
+)
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from rfdetr.utilities.logger import get_logger
 
@@ -1118,6 +1124,36 @@ def _build_train_resize_transforms(
     return RandomSelect(resize, resize_b)
 
 
+def _pad_small_crops(transform: Any) -> Any:
+    """Pad only when a fixed-size Albumentations crop is selected and the image is too small."""
+    children = getattr(transform, "transforms", None)
+    if children is not None:
+        transform.transforms = [_pad_small_crops(child) for child in children]
+        return transform
+
+    name = type(transform).__name__
+    if name in {"RandomCrop", "CenterCrop", "CropNonEmptyMaskIfExists"}:
+        height, width = transform.height, transform.width
+    elif name == "Crop":
+        height, width = transform.y_max, transform.x_max
+    elif name == "RandomSizedCrop":
+        height = transform.min_max_height[1]
+        width = int(height * transform.w2h_ratio)
+    else:
+        return transform
+    if getattr(transform, "pad_if_needed", False):
+        return transform
+
+    # A container shares the crop's probability so padding is skipped whenever the crop is skipped.
+    import albumentations as alb
+
+    probability = transform.p
+    transform.p = 1.0
+    return alb.Sequential(
+        [alb.PadIfNeeded(min_height=height, min_width=width, border_mode=0, p=1.0), transform], p=probability
+    )
+
+
 def _build_albumentations_pipeline(
     image_set: str,
     resolution: int,
@@ -1136,11 +1172,8 @@ def _build_albumentations_pipeline(
         resolution: Target resolution.
         scales: Candidate train resize scales.
         square: Whether to use square resize.
-        aug_config: Custom Albumentations config. On the train split the augmentation wrappers run *before* the
-            resize wrappers: a geometric augmentation applied after the square resize acts on the squashed image, so
-            a rotation becomes a rigid turn in the network input, a shape no camera produces
-            (roboflow/rf-detr#1769). Running the augmentations on the image as loaded keeps the camera-realistic
-            slant the resize then preserves.
+        aug_config: Custom Albumentations config. Augmentations run before resizing in source geometry; fixed-size
+            crops pad images that are too small before cropping.
         scale_jitter: If ``True`` (default), the training resize pipeline randomly picks between
             a direct resize (Option A) and a resize → crop → resize sequence (Option B). Set to
             ``False`` to use Option A only — no random crop.
@@ -1169,8 +1202,10 @@ def _build_albumentations_pipeline(
                 aug_config if aug_config is not None else AUG_CONFIG,
                 keypoint_flip_pairs=keypoint_flip_pairs,
             )
-            pipeline += [*aug_wrappers]
-        pipeline += [*resize_wrappers]
+            for wrapper in aug_wrappers:
+                wrapper.transform = _pad_small_crops(wrapper.transform)
+            pipeline += aug_wrappers
+        pipeline += resize_wrappers
         pipeline += [to_image, to_float]
         if not gpu_postprocess:
             pipeline += [normalize]
@@ -1216,10 +1251,7 @@ def _build_torchvision_pipeline(
             ``False`` to use Option A only — no random crop.
         gpu_postprocess: Whether GPU augmentation/normalization will run later.
         keypoint_flip_pairs: Keypoint left/right swap pairs.
-        pre_resize_aug_config: Albumentations aug_config entries to run on the CPU *before* the resize, on the
-            train split only. This is the Kornia GPU path's geometric entries (see :func:`_route_transforms`):
-            they cannot run on the GPU after the square resize without producing shapes no camera produces
-            (roboflow/rf-detr#1769). Requires the optional Albumentations install when non-empty.
+        pre_resize_aug_config: Kornia augmentation prefix to apply on the CPU before resizing, on the train split only.
 
     Returns:
         Transform pipeline.
@@ -1244,12 +1276,18 @@ def _build_torchvision_pipeline(
             )
         pipeline: list[Any] = []
         if pre_resize_aug_config:
-            # Kornia GPU path (#1769): these geometric entries cannot run on the GPU after the square resize, so
-            # they run here on the CPU, before the resize, through the Albumentations wrappers.
-            pipeline += AlbumentationsWrapper.from_config(
-                pre_resize_aug_config,
-                keypoint_flip_pairs=keypoint_flip_pairs,
-            )
+            # Keep Kornia semantics unless the pixel-affine options need Albumentations' richer implementation.
+            if _pixel_affine_requires_albumentations(pre_resize_aug_config):
+                config = dict(pre_resize_aug_config)
+                if "ToGray" in config:
+                    config["ToGray"] = {
+                        key: value
+                        for key, value in config["ToGray"].items()
+                        if key not in {"method", "num_output_channels"}
+                    }
+                pipeline += AlbumentationsWrapper.from_config(config, keypoint_flip_pairs=keypoint_flip_pairs)
+            else:
+                pipeline.append(KorniaPreResize(pre_resize_aug_config, resolution, keypoint_flip_pairs))
         pipeline.append(
             _build_train_resize_transforms(
                 scales,
@@ -1323,7 +1361,7 @@ def _route_transforms(
             gpu_postprocess=gpu_postprocess,
             keypoint_flip_pairs=keypoint_flip_pairs,
         )
-    if image_set == "train" and gpu_postprocess and aug_config not in (None, {}):
+    if image_set == "train" and gpu_postprocess and aug_config is not None and aug_config != {}:
         pre_resize_aug_config, _gpu_aug_config = split_aug_config_for_gpu(aug_config)
         return _build_torchvision_pipeline(
             image_set,
@@ -1369,8 +1407,8 @@ def make_coco_transforms(
 
     For the ``"train"`` split the pipeline uses a two-branch ``OneOf`` between a direct resize and a resize →
     random-crop → resize sequence (built via :func:`_build_train_resize_config`); the Albumentations augmentation
-    stack runs before that resize (roboflow/rf-detr#1769), and normalisation comes last.  For ``"val"``, ``"test"``,
-    and ``"val_speed"`` only resize and normalisation are applied — no augmentation.
+    stack runs before that resize, and fixed-size crops pad small images before cropping. Normalisation comes last.
+    For ``"val"``, ``"test"``, and ``"val_speed"`` only resize and normalisation are applied — no augmentation.
 
     When *gpu_postprocess* is ``True``, both the Albumentations augmentation wrappers and the ``Normalize`` step are
     omitted from the ``"train"`` pipeline. The ``RFDETRDataModule`` then applies

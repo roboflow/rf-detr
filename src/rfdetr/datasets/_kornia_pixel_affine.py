@@ -136,3 +136,26 @@ class PixelTranslatedAffine(RandomAffine):  # type: ignore[misc]
             translations = translations[self._params["batch_prob"] > 0.5]
         params = {**self._params, "translations": -translations}
         return self.apply_transform(input, params, flags, transform)
+
+
+class PixelTranslatedGeneralAffine(PixelTranslatedAffine):
+    """Apply affine geometry with whole-pixel translations through Kornia's resampling path."""
+
+    def __init__(
+        self,
+        translation_bounds: tuple[tuple[int, int], tuple[int, int]],
+        *,
+        degrees: Any,
+        scale: Any,
+        shear: Any,
+        p: float,
+        padding_mode: str,
+    ) -> None:
+        """Construct affine geometry with inclusive x/y translation bounds."""
+        RandomAffine.__init__(
+            self, degrees=degrees, scale=scale, shear=shear, padding_mode=padding_mode, align_corners=True, p=p
+        )
+        self.translation_bounds = translation_bounds
+
+    apply_transform = RandomAffine.apply_transform
+    inverse_transform = RandomAffine.inverse_transform
