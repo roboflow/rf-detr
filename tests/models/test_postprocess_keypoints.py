@@ -400,6 +400,37 @@ class TestMasksAndKeypointsTogether:
         keypoint_query = (result["keypoints"][:, 0, 0] / 4 * 10).round().long() - 1
         torch.testing.assert_close(mask_query, keypoint_query)
 
+    def test_batch_scales_keypoints_to_each_images_own_size(self) -> None:
+        """In a batch of two, keypoints and masks of each image follow that image's target size."""
+        postprocess = PostProcess(num_select=3, num_keypoints_per_class=[2])
+        single = _mask_and_keypoint_outputs()
+        outputs = {key: torch.cat([value, value]) for key, value in single.items()}
+
+        small, large = postprocess(outputs, torch.tensor([[4, 4], [8, 16]]))
+
+        torch.testing.assert_close(large["keypoints"][..., 0], small["keypoints"][..., 0] * 4)
+        assert small["masks"].shape == (3, 1, 4, 4)
+        assert large["masks"].shape == (3, 1, 8, 16)
+
+    def test_zero_keypoint_class_keeps_its_row_with_zero_keypoints(self) -> None:
+        """A class with no keypoints still gets a mask row, with zeroed keypoints, next to a class that has them."""
+        postprocess = PostProcess(num_select=3, num_keypoints_per_class=[0, 2])
+        outputs = {
+            "pred_logits": torch.tensor([[[3.0, -3.0], [-3.0, 2.0], [-3.0, 1.0]]]),
+            "pred_boxes": torch.tensor([[[0.5, 0.5, 0.2, 0.2]] * 3]),
+            "pred_masks": torch.zeros(1, 3, 4, 4),
+            "pred_keypoints": torch.zeros(1, 3, 4, 8),
+        }
+        outputs["pred_keypoints"][..., 0] = 0.5
+
+        (result,) = postprocess(outputs, torch.tensor([[4, 4]]))
+
+        no_keypoint_rows = result["labels"] == 0
+        assert no_keypoint_rows.sum().item() == 1
+        assert result["masks"].shape[0] == 3
+        assert (result["keypoints"][no_keypoint_rows] == 0).all()
+        torch.testing.assert_close(result["keypoints"][~no_keypoint_rows][..., 0], torch.full((2, 2), 2.0))
+
     def test_threshold_uses_fused_scores(self) -> None:
         """A row whose raw score passes the threshold but whose fused score does not is dropped."""
         postprocess = PostProcess(num_select=3, num_keypoints_per_class=[2])

@@ -13,6 +13,7 @@ from unittest.mock import MagicMock, call, patch
 import numpy as np
 import pytest
 import torch
+from faster_coco_eval import COCO
 from pytest_mock import MockerFixture
 from torch.utils.data import DistributedSampler, SequentialSampler
 
@@ -2836,3 +2837,166 @@ class TestComputeAndLogEmaResetPath:
 
         assert should_compute_ema is True
         assert cb._ema_has_updates is False
+
+
+def _make_both_heads_gt() -> COCO:
+    """Return a one-image COCO ground truth with a box, a full-image polygon mask and two keypoints.
+
+    Examples:
+        >>> gt = _make_both_heads_gt()
+        >>> list(gt.imgs), len(gt.anns)
+        ([1], 1)
+    """
+    dataset = {
+        "images": [{"id": 1, "width": 8, "height": 8, "file_name": "img.jpg"}],
+        "categories": [{"id": 1, "name": "obj", "keypoints": ["kp0", "kp1"], "skeleton": []}],
+        "annotations": [
+            {
+                "id": 1,
+                "image_id": 1,
+                "category_id": 1,
+                "bbox": [0.0, 0.0, 8.0, 8.0],
+                "area": 64.0,
+                "iscrowd": 0,
+                "segmentation": [[0.0, 0.0, 8.0, 0.0, 8.0, 8.0, 0.0, 8.0]],
+                "keypoints": [2.0, 2.0, 2.0, 5.0, 5.0, 2.0],
+                "num_keypoints": 2,
+            }
+        ],
+    }
+    coco_gt = COCO()
+    coco_gt.dataset = dataset
+    coco_gt.createIndex()
+    return coco_gt
+
+
+def _make_both_heads_outputs() -> dict[str, list[dict[str, torch.Tensor]]]:
+    """Return one step's ``results``/``targets`` for a model with both heads that matches the ground truth exactly.
+
+    Examples:
+        >>> outputs = _make_both_heads_outputs()
+        >>> outputs["results"][0]["masks"].shape, outputs["results"][0]["keypoints"].shape
+        (torch.Size([1, 1, 8, 8]), torch.Size([1, 2, 3]))
+    """
+    results = [
+        {
+            "boxes": torch.tensor([[0.0, 0.0, 8.0, 8.0]]),
+            "scores": torch.tensor([0.9]),
+            "labels": torch.tensor([1]),
+            "masks": torch.ones(1, 1, 8, 8, dtype=torch.bool),
+            "keypoints": torch.tensor([[[2.0, 2.0, 1.0], [5.0, 5.0, 1.0]]]),
+        }
+    ]
+    targets = [
+        {
+            "image_id": torch.tensor([1]),
+            "boxes": torch.tensor([[0.5, 0.5, 1.0, 1.0]]),
+            "labels": torch.tensor([1]),
+            "orig_size": torch.tensor([8, 8]),
+            "masks": torch.ones(1, 8, 8, dtype=torch.bool),
+        }
+    ]
+    return {"results": results, "targets": targets}
+
+
+def _make_both_heads_callback(
+    stage: str = "fit", callbacks: list[object] | None = None, **kwargs
+) -> tuple[COCOEvalCallback, MagicMock, MagicMock]:
+    """Return a set-up segmentation + keypoint callback with its trainer and module.
+
+    Examples:
+        >>> cb, trainer, module = _make_both_heads_callback(eval_interval=2)
+        >>> cb._keypoint_mode, cb._use_segm_metrics, cb._eval_interval
+        (True, True, 2)
+    """
+    cb = COCOEvalCallback(segmentation=True, keypoint_oks_sigmas=[0.05, 0.05], **kwargs)
+    datamodule = SimpleNamespace(_dataset_train=object(), _dataset_val=object(), _dataset_test=object())
+    trainer = _make_trainer(datamodule=datamodule, callbacks=callbacks)
+    trainer.callback_metrics = {}
+    module = _cpu_module()
+    module.model_config = SimpleNamespace(use_grouppose_keypoints=True)
+    cb.setup(trainer, module, stage=stage)
+    return cb, trainer, module
+
+
+class TestBothHeadsEvaluationFlows:
+    """Validation, EMA, test and skipped-epoch flows of a model with mask and keypoint heads.
+
+    The mask mAP and OKS keypoint metrics are real; only the ground-truth lookup is pointed at a one-image COCO file.
+    A prediction identical to the ground truth must score 1.0 on every metric, so a flow that drops one head is caught.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _coco_gt_behind_every_split(self, mocker: MockerFixture) -> None:
+        """Make every split's dataset resolve to the one-image ground truth.
+
+        Examples:
+            >>> _coco_gt_behind_every_split  # doctest: +SKIP
+            A pytest fixture.
+        """
+        mocker.patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", return_value=_make_both_heads_gt())
+
+    def test_validation_epoch_logs_segm_and_keypoint_metrics(self) -> None:
+        """A validation epoch logs mask mAP and OKS keypoint AP together for the base model."""
+        cb, trainer, module = _make_both_heads_callback()
+        cb.on_validation_epoch_start(trainer, module)
+
+        cb.on_validation_batch_end(trainer, module, _make_both_heads_outputs(), (torch.zeros(1), None), 0)
+        cb.on_validation_epoch_end(trainer, module)
+
+        assert trainer.callback_metrics["val/segm_mAP_50_95"].item() == pytest.approx(1.0)
+        assert trainer.callback_metrics["val/keypoint_map_50_95"].item() == pytest.approx(1.0)
+
+    def test_ema_epoch_logs_ema_segm_and_keypoint_metrics(self) -> None:
+        """The EMA track logs ``val/ema_*`` mask and keypoint metrics and mirrors them onto the primary keys."""
+        cb, trainer, module = _make_both_heads_callback(callbacks=[_ema_callback(MagicMock(name="ema_model"))])
+        cb.on_validation_epoch_start(trainer, module)
+
+        cb.on_validation_batch_end(trainer, module, _make_both_heads_outputs(), (torch.zeros(1), None), 0)
+        cb.on_validation_epoch_end(trainer, module)
+
+        assert trainer.callback_metrics["val/ema_segm_mAP_50_95"].item() == pytest.approx(1.0)
+        assert trainer.callback_metrics["val/ema_keypoint_map_50_95"].item() == pytest.approx(1.0)
+        assert trainer.callback_metrics["val/segm_mAP_50_95"].item() == pytest.approx(1.0)
+        assert trainer.callback_metrics["val/keypoint_map_50_95"].item() == pytest.approx(1.0)
+
+    def test_test_epoch_logs_test_prefixed_segm_and_keypoint_metrics(self) -> None:
+        """``trainer.test()`` logs mask and keypoint metrics under ``test/`` and nothing under ``val/``."""
+        cb, trainer, module = _make_both_heads_callback(stage="test")
+        cb.on_test_epoch_start(trainer, module)
+
+        cb.on_test_batch_end(trainer, module, _make_both_heads_outputs(), (torch.zeros(1), None), 0)
+        cb.on_test_epoch_end(trainer, module)
+
+        logged_keys = {call.args[0] for call in module.log.call_args_list}
+        assert {"test/segm_mAP_50_95", "test/keypoint_map_50_95"} <= logged_keys
+        assert not any(key.startswith("val/") for key in logged_keys)
+        assert trainer.callback_metrics["test/keypoint_map_50_95"].item() == pytest.approx(1.0)
+
+    @pytest.mark.parametrize(("current_epoch", "expect_logged"), [(0, False), (1, True)])
+    def test_eval_interval_gates_both_head_metrics(self, current_epoch: int, expect_logged: bool) -> None:
+        """With ``eval_interval=2`` epoch 1 (0-based 0) logs neither head and epoch 2 logs both."""
+        cb, trainer, module = _make_both_heads_callback(eval_interval=2)
+        trainer.current_epoch = current_epoch
+        trainer.max_epochs = 10
+        cb.on_validation_epoch_start(trainer, module)
+
+        cb.on_validation_batch_end(trainer, module, _make_both_heads_outputs(), (torch.zeros(1), None), 0)
+        cb.on_validation_epoch_end(trainer, module)
+
+        logged_keys = {call.args[0] for call in module.log.call_args_list}
+        assert ("val/segm_mAP_50_95" in logged_keys) is expect_logged
+        assert ("val/keypoint_map_50_95" in logged_keys) is expect_logged
+
+    def test_skipped_epoch_clears_both_metrics_for_the_next_epoch(self) -> None:
+        """A skipped epoch leaves no accumulated mask or keypoint predictions behind."""
+        cb, trainer, module = _make_both_heads_callback(eval_interval=2)
+        trainer.current_epoch = 0
+        trainer.max_epochs = 10
+        cb.on_validation_epoch_start(trainer, module)
+        cb.on_validation_batch_end(trainer, module, _make_both_heads_outputs(), (torch.zeros(1), None), 0)
+
+        cb.on_validation_epoch_end(trainer, module)
+
+        assert cb._keypoint_oks_metrics["val"].has_updates is False
+        assert cb.map_metric.has_updates is False
