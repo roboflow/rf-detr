@@ -263,6 +263,7 @@ class PostProcess(nn.Module):
         upsample_masks_to_image_size: bool = True,
         *,
         score_threshold: float | None = None,
+        selections: list[torch.Tensor] | None = None,
     ) -> list[dict[str, torch.Tensor]]:
         """Attach segmentation masks for selected detections.
 
@@ -287,6 +288,10 @@ class PostProcess(nn.Module):
                 below it are dropped before the gather, so no mask the caller discards is ever gathered, resized or
                 thresholded. Applies to both ``upsample_masks_to_image_size`` branches. ``None`` (the default) keeps
                 every selected detection.
+            selections: Optional list that receives, when ``score_threshold`` is set, one index tensor per image
+                holding the positions of the kept rows among the selected ones, in result order. Lets a caller trim
+                its own per-row tensors to the same rows without computing the selection again. Left untouched when
+                ``score_threshold`` is ``None``.
 
         Returns:
             One result dict per image containing scores, labels, boxes, and boolean masks —
@@ -306,6 +311,8 @@ class PostProcess(nn.Module):
                 sel = (scores_i > score_threshold).nonzero(as_tuple=True)[0]
                 scores_i, labels_i = scores_i[sel], labels_i[sel]
                 boxes_i, k_idx = boxes_i[sel], k_idx[sel]
+                if selections is not None:
+                    selections.append(sel)
             res_i = {"scores": scores_i, "labels": labels_i, "boxes": boxes_i}
             # `index_select` picks whole mask planes without materialising the [K, Hm, Wm] int64
             # index tensor a `gather` needs (84 MiB at K=300, 192x192 masks).
@@ -386,6 +393,9 @@ class PostProcess(nn.Module):
         """
         keypoint_results = self._postprocess_keypoints(out_keypoints, scores, labels, boxes, topk_boxes, target_sizes)
         fused_scores = torch.stack([result["scores"] for result in keypoint_results])
+        # Filled with the rows the masks keep, one index tensor per image, so the keypoints are trimmed to the same rows
+        # without a second `nonzero` (each one waits for a CUDA device).
+        selections: list[torch.Tensor] = []
         results = self._postprocess_masks(
             out_masks,
             fused_scores,
@@ -395,12 +405,12 @@ class PostProcess(nn.Module):
             target_sizes,
             self.upsample_masks_to_image_size,
             score_threshold=score_threshold,
+            selections=selections,
         )
-        for result, keypoint_result, scores_i in zip(results, keypoint_results, fused_scores):
+        for image_index, (result, keypoint_result) in enumerate(zip(results, keypoint_results)):
             keypoints, precision = keypoint_result["keypoints"], keypoint_result["keypoint_precision_cholesky"]
             if score_threshold is not None:
-                # Same predicate as `_postprocess_masks`, so the rows stay aligned with its masks.
-                sel = (scores_i > score_threshold).nonzero(as_tuple=True)[0]
+                sel = selections[image_index]
                 keypoints, precision = keypoints[sel], precision[sel]
             result["keypoints"] = keypoints
             result["keypoint_precision_cholesky"] = precision
@@ -430,9 +440,11 @@ class PostProcess(nn.Module):
         Returns:
             One result dict per image containing postprocessed object scores,
             labels, boxes, pixel-space keypoints, and raw precision-Cholesky
-            parameters. When ``trace_alpha > 0``, scores for valid keypoint
-            classes are fused with uncertainty from the active keypoints of the
-            predicted class and normalized to ``[0, 1)``.
+            parameters. When ``trace_alpha > 0``, scores for classes with at
+            least one keypoint are fused with uncertainty from the active
+            keypoints of the predicted class and normalized to ``[0, 1)``.
+            Rows of a class with zero keypoints, or whose label lies past the
+            schema, keep their raw score.
         """
         results = []
         max_num_keypoints = max(self.num_keypoints_per_class, default=0)
@@ -604,14 +616,21 @@ class PostProcess(nn.Module):
                 detections.
 
         Returns:
-            A score tensor where valid keypoint detections are multiplied by
-            ``exp(-trace_alpha * log_mean_trace)`` and then normalized to
-            ``[0, 1)``. The trace is the findability-weighted mean expected
-            squared localization error implied by the predicted
-            precision-Cholesky parameters.
+            A score tensor where detections whose class has at least one
+            keypoint are multiplied by ``exp(-trace_alpha * log_mean_trace)``
+            and then normalized to ``[0, 1)``. The trace is the
+            findability-weighted mean expected squared localization error
+            implied by the predicted precision-Cholesky parameters. Detections
+            of a class with zero keypoints keep their raw score.
         """
         num_keypoint_classes = len(self.num_keypoints_per_class)
         log_mean_traces = selected_keypoints.new_zeros(selected_labels.shape[0])
+        # A slot with no keypoints has no uncertainty to fuse, so its rows keep their raw score, as rows whose label
+        # lies past the schema do; fusing a zero trace would give s / (1 + s), which never exceeds 0.5. Collected
+        # on the device from the class masks the loop builds anyway (no host read), and only when the static schema
+        # has such a slot, so an all-active schema runs as before.
+        has_zero_count_slot = any(count <= 0 for count in self.num_keypoints_per_class)
+        fused_rows = torch.zeros_like(selected_labels, dtype=torch.bool) if has_zero_count_slot else None
         # Iterate over the small set of classes rather than per detection — the
         # per-detection loop required `.item()` on every iteration (GPU->CPU
         # stream sync) and a final `torch.stack` over a Python list. Grouping by
@@ -622,11 +641,12 @@ class PostProcess(nn.Module):
         for class_idx in range(num_keypoint_classes):
             num_active_keypoints = self.num_keypoints_per_class[class_idx]
             if num_active_keypoints <= 0:
-                # Defaults to 0.0 from `new_zeros` above — matches the legacy
-                # per-detection branch that appended a 0 tensor.
+                # Left out of `fused_rows`, so these rows keep their raw score below.
                 continue
 
             class_mask = selected_labels == class_idx
+            if fused_rows is not None:
+                fused_rows |= class_mask
             if num_keypoint_classes > 1 and not class_mask.any():
                 continue
             active_keypoints = selected_keypoints[class_mask, :num_active_keypoints]
@@ -634,14 +654,18 @@ class PostProcess(nn.Module):
             log_mean_traces[class_mask] = self._keypoint_log_mean_trace(active_keypoints).to(log_mean_traces.dtype)
 
         scores_i = scores_i.clone()
-        log_fused_scores = torch.log(scores_i[valid_indices]) - self.trace_alpha * log_mean_traces
+        valid_scores = scores_i[valid_indices]
+        log_fused_scores = torch.log(valid_scores) - self.trace_alpha * log_mean_traces
         normalized_scores = torch.sigmoid(log_fused_scores)
         # Keep the public contract strictly below 1.0 even when the log-fused score saturates.
         max_score = torch.nextafter(
             torch.ones_like(normalized_scores),
             torch.zeros_like(normalized_scores),
         )
-        scores_i[valid_indices] = torch.minimum(normalized_scores, max_score)
+        fused_scores = torch.minimum(normalized_scores, max_score)
+        if fused_rows is not None:
+            fused_scores = torch.where(fused_rows, fused_scores, valid_scores.to(fused_scores.dtype))
+        scores_i[valid_indices] = fused_scores
         return scores_i
 
     @staticmethod

@@ -3073,9 +3073,7 @@ class RFDETR:
         :class:`~rfdetr.config.KeypointTrainConfig`, or :class:`~rfdetr.config.SegmentationKeypointTrainConfig` when
         it also has a segmentation head, whatever its variant class declares.
         """
-        # Test shims may omit model_config; the variant's declared class then applies unchanged.
-        model_config = getattr(self, "model_config", None)
-        return _resolve_train_config_class(self._train_config_class, model_config)(**kwargs)
+        return _resolve_train_config_class(self._train_config_class, self.model_config)(**kwargs)
 
     def get_model(self, config: ModelConfig, *, trust_checkpoint: bool = False) -> ModelContext:
         """Retrieve a model context from the provided architecture configuration.
@@ -3145,6 +3143,8 @@ class RFDETR:
             "backend": "pytorch",
             "device": str(self.model.device),
             "task": _task_of(config),
+            # `task` gives segmentation precedence; this flag finds the keypoints a two-head model also returns.
+            "has_keypoints": bool(config.use_grouppose_keypoints),
             "input_shape": (batch_size, config.num_channels, spatial_size, spatial_size),
             "default_shape": (self.model.resolution, self.model.resolution),
             "batch_size": batch_size,
@@ -3329,8 +3329,11 @@ class RFDETR:
             ``source_image`` is stored as per-object data until Supervision exposes collection-level metadata for
             ``KeyPoints``. A model with both a segmentation head and a keypoint head returns
             :class:`~supervision.Detections` with ``mask`` set, ``detections.data["keypoints"]`` as a
-            ``(num_detections, num_keypoints, 3)`` array of pixel ``x``, ``y`` and per-keypoint confidence, and
-            ``detections.data["keypoint_precision_cholesky"]`` with the raw precision parameters.
+            ``(num_detections, num_keypoints, 3)`` array of pixel ``x``, ``y`` and per-keypoint confidence,
+            ``detections.data["keypoint_precision_cholesky"]`` with the raw precision parameters, and
+            ``detections.data["covariance"]`` with the same pixel-space covariance matrices a keypoint model returns.
+            It has no ``visible`` field; ``detections.data["keypoints"][..., 2] > 0`` is what ``key_points.visible``
+            holds for a keypoint model.
 
         Note:
             For ``Detections`` outputs, ``source_image`` moved from ``detections.data`` to ``detections.metadata``.

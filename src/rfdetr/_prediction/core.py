@@ -1724,7 +1724,7 @@ def _decode_batch(prepared: _PreparedBatch, predictions: dict[str, torch.Tensor]
 
     _class_id_to_name = context.class_id_to_name
     num_logit_slots = context.num_classes
-    _is_legacy_bgfirst_keypoint = _is_bg_first_schema(context.num_keypoints_per_class)
+    _is_legacy_bgfirst_keypoint = _is_bg_first_schema(context.num_keypoints_per_class, context.class_names)
     # Rounded to the score dtype on the CPU, once: the float form rounds `t` to the score dtype, so `[t] * n` then
     # compares exactly as `t` does, where a float32 table would compare a float16 score at float32 precision (or a
     # float64 score at float32 precision). On CUDA the copy is non-blocking, so it adds no stream synchronization;
@@ -1867,6 +1867,18 @@ def _decode_batch(prepared: _PreparedBatch, predictions: dict[str, torch.Tensor]
         _bg_sentinel = 0 if _is_legacy_bgfirst_keypoint else num_logit_slots
         detections.data["class_name"] = _class_names(class_ids, _class_id_to_name, _bg_sentinel)
 
+        # Shared by both keypoint results below: the keypoint-only KeyPoints copies `detections.data`, and a model with
+        # both heads returns `detections` itself, so either carries the same pixel covariance.
+        raw_precision = detections.data.get("keypoint_precision_cholesky")
+        raw_source_shape = detections.data.get("source_shape")
+        if keypoints_array is not None and raw_precision is not None and raw_source_shape is not None:
+            precision = np.asarray(raw_precision, dtype=np.float32)
+            source_shape = np.asarray(raw_source_shape, dtype=np.float32)
+            if precision.shape[:2] == keypoints_array.shape[:2] and source_shape.shape == (len(detections), 2):
+                detections.data["covariance"] = precision_cholesky_to_pixel_covariance(
+                    precision_cholesky=precision, source_shape=source_shape
+                )
+
         if has_keypoints and keypoints_array is not None and masks_cpu is not None:
             # KeyPoints cannot carry masks: a model with both heads returns Detections with (N, K, 3) keypoints.
             detections.data["keypoints"] = keypoints_array.astype(np.float32, copy=False)
@@ -1876,15 +1888,6 @@ def _decode_batch(prepared: _PreparedBatch, predictions: dict[str, torch.Tensor]
             keypoint_data["xyxy"] = detections.xyxy.astype(np.float32)
             if include_source_image:
                 keypoint_data["source_image"] = [source_images[i] for _ in range(len(detections))]
-            raw_precision = keypoint_data.get("keypoint_precision_cholesky")
-            raw_source_shape = keypoint_data.get("source_shape")
-            if raw_precision is not None and raw_source_shape is not None:
-                precision = np.asarray(raw_precision, dtype=np.float32)
-                source_shape = np.asarray(raw_source_shape, dtype=np.float32)
-                if precision.shape[:2] == keypoints_array.shape[:2] and source_shape.shape == (len(detections), 2):
-                    keypoint_data["covariance"] = precision_cholesky_to_pixel_covariance(
-                        precision_cholesky=precision, source_shape=source_shape
-                    )
             keypoints_array = keypoints_array.astype(np.float32, copy=False)
             keypoint_confidence = keypoints_array[:, :, 2]
             key_points = KeyPoints(

@@ -35,6 +35,24 @@ class TestIsBgFirstSchema:
         """is_bg_first_schema returns expected bool for each schema form."""
         assert _is_bg_first_schema(schema) == expected
 
+    @pytest.mark.parametrize(
+        ("schema", "class_names", "expected"),
+        [
+            pytest.param([0, 17], ["person"], True, id="legacy-one-slot-more-than-names"),
+            pytest.param([0, 17, 4], ["person", "car"], True, id="legacy-multi-class"),
+            pytest.param([0, 17], ["helmet", "person"], False, id="named-leading-zero-slot"),
+            pytest.param([0, 17, 4], ["helmet", "person", "car"], False, id="named-leading-zero-multi-class"),
+            pytest.param([0], ["helmet"], False, id="single-named-class-without-keypoints"),
+            pytest.param([17, 4], ["person", "car"], False, id="active-first-ignores-names"),
+            pytest.param([0, 17], [], True, id="no-names-keeps-legacy-meaning"),
+        ],
+    )
+    def test_class_names_disambiguate_leading_zero(
+        self, schema: list[int], class_names: list[str], expected: bool
+    ) -> None:
+        """A leading zero with one slot per class name is a named class, not the background sentinel."""
+        assert _is_bg_first_schema(schema, class_names) == expected
+
 
 class TestToActiveFirst:
     """Group: to_active_first — strip leading background slot."""

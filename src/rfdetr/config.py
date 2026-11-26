@@ -1955,6 +1955,11 @@ class SegmentationKeypointTrainConfig(KeypointTrainConfig, SegmentationTrainConf
     skip_best_epochs: int = Field(default=0, ge=0)
 
 
+# Classes a variant declares itself: replacing one of these by the class covering the model's heads is the feature,
+# so only a class outside this set (a user subclass) warrants a warning when it is replaced.
+_STOCK_TRAIN_CONFIG_CLASSES = (TrainConfig, SegmentationTrainConfig, KeypointTrainConfig)
+
+
 def _resolve_train_config_class(config_class: type[TrainConfig], model_config: ModelConfig | None) -> type[TrainConfig]:
     """Return the train config class matching the model's segmentation and keypoint heads.
 
@@ -1965,6 +1970,10 @@ def _resolve_train_config_class(config_class: type[TrainConfig], model_config: M
     Returns:
         *config_class* unless the model has a keypoint head it does not cover: then
         :class:`KeypointTrainConfig`, or :class:`SegmentationKeypointTrainConfig` with a segmentation head too.
+
+    Warns:
+        UserWarning: When a class that is not one of the stock train configs (a user subclass) is replaced; the
+            message names the base classes it lacks. Replacing a stock class stays silent.
 
     Examples:
         >>> from rfdetr.config import RFDETRNanoConfig, RFDETRSegNanoConfig
@@ -1982,7 +1991,17 @@ def _resolve_train_config_class(config_class: type[TrainConfig], model_config: M
     required = (KeypointTrainConfig, SegmentationTrainConfig) if with_masks else (KeypointTrainConfig,)
     if all(issubclass(config_class, base) for base in required):
         return config_class
-    return SegmentationKeypointTrainConfig if with_masks else KeypointTrainConfig
+    resolved = SegmentationKeypointTrainConfig if with_masks else KeypointTrainConfig
+    if config_class not in _STOCK_TRAIN_CONFIG_CLASSES:
+        missing = ", ".join(base.__name__ for base in required if not issubclass(config_class, base))
+        warnings.warn(
+            f"{config_class.__name__} does not subclass {missing}, which a model with these heads needs; "
+            f"training with {resolved.__name__} instead, so the defaults and fields of {config_class.__name__} "
+            f"are not used. Subclass {resolved.__name__} to keep them.",
+            UserWarning,
+            stacklevel=3,
+        )
+    return resolved
 
 
 def _resolve_amp_dtype(

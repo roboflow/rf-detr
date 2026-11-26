@@ -259,6 +259,25 @@ class TestBuildTrainerReturnType:
         assert isinstance(build_trainer(_tc(tmp_path), _mc()), Trainer)
 
 
+class TestBuildTrainerConfigCompatibility:
+    """Verify that a model with both heads requires both sets of training settings."""
+
+    @pytest.mark.parametrize(
+        "config_cls",
+        [
+            pytest.param(KeypointTrainConfig, id="keypoint-only"),
+            pytest.param(SegmentationTrainConfig, id="segmentation-only"),
+        ],
+    )
+    def test_dual_head_model_rejects_single_head_config(self, tmp_path: Path, config_cls: type[TrainConfig]) -> None:
+        """Reject either single-head config and name the config that covers both heads."""
+        model_config = _mc(segmentation_head=True, use_grouppose_keypoints=True, num_keypoints_per_class=[2])
+        train_config = _tc(tmp_path, config_cls=config_cls)
+
+        with pytest.raises(ValueError, match=r"Pass SegmentationKeypointTrainConfig\b"):
+            build_trainer(train_config, model_config, accelerator="cpu")
+
+
 class TestBuildTrainerCallbacks:
     """build_trainer() must wire the correct callback set."""
 

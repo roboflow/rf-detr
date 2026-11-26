@@ -31,11 +31,13 @@ except ImportError:  # pragma: no cover - exercised in unit tests via monkeypatc
 from rfdetr.config import (
     KeypointTrainConfig,
     ModelConfig,
+    SegmentationTrainConfig,
     TrainConfig,
     _cuda_bf16_supported_on_devices,
     _cuda_native_bf16_on_devices,
     _cuda_training_device_indices,
     _resolve_amp_dtype,
+    _resolve_train_config_class,
 )
 from rfdetr.training.callbacks import (
     BestModelCallback,
@@ -597,6 +599,9 @@ def build_trainer(
 
     Returns:
         A configured ``pytorch_lightning.Trainer`` instance.
+
+    Raises:
+        ValueError: If the training config is incompatible with the model's heads.
     """
     tc = train_config
     if accelerator is None:
@@ -774,11 +779,15 @@ def build_trainer(
         # optimization find_unused_parameters handling has no validated XLA equivalent.
         strategy = "xla"
     strategy_name = strategy.strip().lower() if isinstance(strategy, str) else None
-    if isinstance(tc, KeypointTrainConfig) != has_keypoints:
+    config_class = type(tc)
+    required_config_class = _resolve_train_config_class(config_class, model_config)
+    if not has_keypoints and isinstance(tc, KeypointTrainConfig):
+        required_config_class = SegmentationTrainConfig if model_config.segmentation_head else TrainConfig
+    if config_class is not required_config_class:
         raise ValueError(
-            f"Config/model mismatch: isinstance(tc, KeypointTrainConfig)={isinstance(tc, KeypointTrainConfig)} "
-            f"but model_config.use_grouppose_keypoints={model_config.use_grouppose_keypoints}. "
-            "Pass KeypointTrainConfig for keypoint models and TrainConfig for detection models."
+            f"Config/model mismatch: {config_class.__name__} is incompatible with "
+            f"segmentation_head={model_config.segmentation_head} and use_grouppose_keypoints={has_keypoints}. "
+            f"Pass {required_config_class.__name__}."
         )
     distributed_requested = (
         _is_distributed_strategy_requested(str(strategy))

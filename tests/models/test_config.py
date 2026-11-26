@@ -281,7 +281,7 @@ class TestTrainConfigRejectsUnknownKwargs:
 
     def test_get_train_config_raises_for_typo_kwarg(self, tmp_path) -> None:
         """The public RFDETR.get_train_config path surfaces the typo instead of swallowing it."""
-        stub = SimpleNamespace(_train_config_class=TrainConfig)
+        stub = SimpleNamespace(_train_config_class=TrainConfig, model_config=RFDETRNanoConfig(pretrain_weights=None))
         with pytest.raises(ValidationError) as exc_info:
             RFDETR.get_train_config(stub, dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
 
@@ -347,6 +347,55 @@ class TestTrainConfigClassSelection:
         model_config = RFDETRNanoConfig(pretrain_weights=None, segmentation_head=True, use_grouppose_keypoints=True)
 
         assert _resolve_train_config_class(_Custom, model_config) is _Custom
+
+    @pytest.mark.parametrize(
+        ("model_kwargs", "base", "expected", "missing"),
+        [
+            pytest.param(
+                {"use_grouppose_keypoints": True},
+                TrainConfig,
+                KeypointTrainConfig,
+                "KeypointTrainConfig",
+                id="detection-keypoints",
+            ),
+            pytest.param(
+                {"segmentation_head": True, "use_grouppose_keypoints": True},
+                SegmentationTrainConfig,
+                SegmentationKeypointTrainConfig,
+                "KeypointTrainConfig",
+                id="seg-keypoints",
+            ),
+        ],
+    )
+    def test_replacing_custom_subclass_warns_naming_missing_bases(
+        self,
+        model_kwargs: dict[str, bool],
+        base: type[TrainConfig],
+        expected: type[TrainConfig],
+        missing: str,
+    ) -> None:
+        """A user subclass the model's heads force out is replaced with a warning that names the missing bases."""
+
+        class _Custom(base):
+            pass
+
+        model_config = RFDETRNanoConfig(pretrain_weights=None, **model_kwargs)
+
+        with pytest.warns(UserWarning, match=f"_Custom does not subclass .*{missing}") as record:
+            resolved = _resolve_train_config_class(_Custom, model_config)
+
+        assert resolved is expected
+        assert expected.__name__ in str(record[0].message)
+
+    def test_replacing_stock_class_is_silent(self) -> None:
+        """Upgrading a stock declared class to the one covering the model's heads is the feature, not a warning."""
+        model_config = RFDETRNanoConfig(pretrain_weights=None, segmentation_head=True, use_grouppose_keypoints=True)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            resolved = _resolve_train_config_class(SegmentationTrainConfig, model_config)
+
+        assert resolved is SegmentationKeypointTrainConfig
 
     def test_get_train_config_uses_model_heads(self, tmp_path) -> None:
         """RFDETR.get_train_config builds the keypoint class for a detection variant with a keypoint head."""

@@ -95,8 +95,17 @@ class TestPredictReturnTypes:
         assert isinstance(batch, list)
         assert all(isinstance(result, sv.KeyPoints) for result in batch)
 
-    @pytest.mark.parametrize("use_snapshot", [False, True])
-    def test_segmentation_model_with_keypoint_head_returns_masks_and_keypoints(self, use_snapshot: bool) -> None:
+    @pytest.mark.parametrize(
+        "inference_kwargs",
+        [
+            pytest.param(None, id="live-model"),
+            pytest.param({"compile": False}, id="snapshot-eager"),
+            pytest.param({}, id="snapshot-default-compile"),
+        ],
+    )
+    def test_segmentation_model_with_keypoint_head_returns_masks_and_keypoints(
+        self, inference_kwargs: dict[str, bool] | None
+    ) -> None:
         """A real model with both heads returns ``sv.Detections`` carrying masks and keypoints for the same rows.
 
         The ``inference()`` snapshot runs the export forward, whose tuple holds masks and keypoints in that order.
@@ -109,7 +118,7 @@ class TestPredictReturnTypes:
             use_grouppose_keypoints=True,
             num_keypoints_per_class=[2],
         )
-        predictor = model.inference(compile=False) if use_snapshot else model
+        predictor = model if inference_kwargs is None else model.inference(**inference_kwargs)
 
         detections = predictor.predict(img, threshold=0.0)
 
@@ -1134,6 +1143,16 @@ class TestPredictKeypointClassNameMapping:
             ),
             pytest.param(
                 ["person", "bicycle"], [2], [0, 17, 4], "bicycle", id="bg-first-multi-class-slot-2-maps-to-bicycle"
+            ),
+            # Leading zero with one slot per name: slot 0 is a named class without keypoints, not the background
+            pytest.param(
+                ["helmet", "person"], [0], [0, 17], "helmet", id="named-leading-zero-slot-0-maps-to-first-class"
+            ),
+            pytest.param(
+                ["helmet", "person"], [1], [0, 17], "person", id="named-leading-zero-slot-1-maps-to-second-class"
+            ),
+            pytest.param(
+                ["helmet", "person"], [2], [0, 17], "__background__", id="named-leading-zero-no-object-slot"
             ),
             # Active-first schemas (no leading zero) — fallback path must stay correct
             pytest.param(["person"], [0], [25], "person", id="active-first-single-class-slot-0-maps-to-person"),
