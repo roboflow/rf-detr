@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-25T14:12:27">
+  <meta property="article:modified_time" content="2026-11-26T09:33:17">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-25T14:12:27",
+    "dateModified": "2026-11-26T09:33:17",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -4063,13 +4063,13 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </div>
 <div class="jp-InputArea jp-Cell-inputArea"><div class="jp-InputPrompt jp-InputArea-prompt">
 </div><div class="jp-RenderedHTMLCommon jp-RenderedMarkdown jp-MarkdownOutput" data-mime-type="text/markdown">
-<h1 id="test-time-augmentation-views-what-they-cost-and-what-they-buy">Test-Time Augmentation Views: What They Cost and What They Buy<a class="anchor-link" href="#test-time-augmentation-views-what-they-cost-and-what-they-buy">¶</a></h1><p><code>RFDETRInference.predict(images, tta=TTAConfig(...))</code> runs the same network on several <em>views</em> of each image, maps every view's detections back to the image, and averages the matching ones. A view is a copy of the image that is moved by a fraction of a backbone patch (<code>shift</code>), mirrored (<code>flip</code>) or resized (<code>zoom</code>). TTA is opt-in: without <code>tta</code> the call is the plain prediction. <code>TTAConfig()</code> runs one native-scale view and three zooms on padded canvases. CUDA combines views by canvas shape and can split each group across several forwards.</p>
+<h1 id="test-time-augmentation-views-what-they-cost-and-what-they-buy">Test-Time Augmentation Views: What They Cost and What They Buy<a class="anchor-link" href="#test-time-augmentation-views-what-they-cost-and-what-they-buy">¶</a></h1><p><code>RFDETRInference.predict(images, tta=TTAConfig(...))</code> runs the same network on several <em>views</em> of each image, maps every view's detections back to the image, and averages the matching ones. A view is a copy of the image that is moved by a fraction of a backbone patch (<code>shift</code>) or resized (<code>zoom</code>). TTA is opt-in: without <code>tta</code> the call is the plain prediction. <code>TTAConfig()</code> runs one native-scale view and three zooms on padded canvases. CUDA combines views by canvas shape and can split each group across several forwards.</p>
 <p>This notebook runs every released detection size on full COCO val2017 and answers two questions on your own hardware:</p>
 <ol>
 <li>How much box AP do <code>V</code> views add for each model size, for shift views (<code>V</code> = 1, 2, 4, 6, 8) and for the default zoom views (<code>V</code> = 2, 4), and how far does that gain move between disjoint folds of the data?</li>
 <li>What does one prediction cost in latency at one image per call and at eight images per call, and does a smaller model with views ever beat a larger model without them?</li>
 </ol>
-<p>The docs page <em>Test-Time Augmentation</em>, under Learn, holds the full study, including the flip and shift+zoom recipes, per-stage cost, memory and runtime switches, measured with an extended version of this notebook.</p>
+<p>The docs page <em>Test-Time Augmentation</em>, under Learn, holds the full study, including the shift+zoom recipes, per-stage cost, memory and runtime switches, measured with an extended version of this notebook.</p>
 <blockquote>
 <p><strong>Note:</strong> Nothing here is a published result. Every number comes from the run you start, on the device and package versions printed in the footer at the end. Copy numbers into other docs only together with that footer.</p>
 </blockquote>
@@ -4148,7 +4148,6 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="kn">import</span><span class="w"> </span><span class="nn">hashlib</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">importlib.metadata</span>
-<span class="kn">import</span><span class="w"> </span><span class="nn">itertools</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">json</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">platform</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">asdict</span>
@@ -4174,12 +4173,11 @@ span.linenos.special { color: #000000; background-color: #ffffc0; padding-left: 
     <span class="n">cpu_brand</span><span class="p">,</span>
     <span class="n">evaluate_coco_predictions</span><span class="p">,</span>
     <span class="n">fetch_coco_val2017</span><span class="p">,</span>
-    <span class="n">measure_latency</span><span class="p">,</span>
+    <span class="n">time_predict_call</span><span class="p">,</span>
 <span class="p">)</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-2">import hashlib
 import importlib.metadata
-import itertools
 import json
 import platform
 from dataclasses import asdict
@@ -4205,7 +4203,7 @@ from rfdetr.export._benchmark import (
     cpu_brand,
     evaluate_coco_predictions,
     fetch_coco_val2017,
-    measure_latency,
+    time_predict_call,
 )</div>
 </div>
 </div>
@@ -4816,29 +4814,33 @@ print(f"Loaded {len(pool)} images.")</div>
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="k">def</span><span class="w"> </span><span class="nf">time_call</span><span class="p">(</span><span class="n">predictor</span><span class="p">:</span> <span class="n">RFDETRInference</span><span class="p">,</span> <span class="n">arm</span><span class="p">:</span> <span class="n">Arm</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]:</span>
 <span class="w">    </span><span class="sd">"""Return the median and 95th-percentile time of one call of ``batch_size`` images, in milliseconds."""</span>
-    <span class="k">assert</span> <span class="mi">1</span> <span class="o">&lt;=</span> <span class="n">batch_size</span> <span class="o">&lt;=</span> <span class="nb">len</span><span class="p">(</span><span class="n">pool</span><span class="p">),</span> <span class="s2">"The timing pool must contain at least one full batch."</span>
-    <span class="n">batches</span> <span class="o">=</span> <span class="n">itertools</span><span class="o">.</span><span class="n">cycle</span><span class="p">([</span><span class="n">pool</span><span class="p">[</span><span class="n">i</span> <span class="p">:</span> <span class="n">i</span> <span class="o">+</span> <span class="n">batch_size</span><span class="p">]</span> <span class="k">for</span> <span class="n">i</span> <span class="ow">in</span> <span class="nb">range</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="nb">len</span><span class="p">(</span><span class="n">pool</span><span class="p">)</span> <span class="o">-</span> <span class="n">batch_size</span> <span class="o">+</span> <span class="mi">1</span><span class="p">,</span> <span class="n">batch_size</span><span class="p">)])</span>
-
-    <span class="k">def</span><span class="w"> </span><span class="nf">call</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">object</span><span class="p">:</span>
-        <span class="k">return</span> <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="nb">next</span><span class="p">(</span><span class="n">batches</span><span class="p">),</span> <span class="n">threshold</span><span class="o">=</span><span class="n">LATENCY_THRESHOLD</span><span class="p">,</span> <span class="n">include_source_image</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span> <span class="n">tta</span><span class="o">=</span><span class="n">arm</span><span class="o">.</span><span class="n">config</span><span class="p">)</span>
-
-    <span class="n">timing</span> <span class="o">=</span> <span class="n">measure_latency</span><span class="p">(</span>
-        <span class="n">call</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">arm</span><span class="o">.</span><span class="n">recipe</span><span class="si">}</span><span class="s2"> V=</span><span class="si">{</span><span class="n">arm</span><span class="o">.</span><span class="n">views</span><span class="si">}</span><span class="s2"> B=</span><span class="si">{</span><span class="n">batch_size</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device_kind</span><span class="p">,</span> <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP</span><span class="p">,</span> <span class="n">runs</span><span class="o">=</span><span class="n">RUNS</span>
+    <span class="k">return</span> <span class="n">time_predict_call</span><span class="p">(</span>
+        <span class="n">predictor</span><span class="p">,</span>
+        <span class="n">pool</span><span class="p">,</span>
+        <span class="n">batch_size</span><span class="p">,</span>
+        <span class="n">label</span><span class="o">=</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">arm</span><span class="o">.</span><span class="n">recipe</span><span class="si">}</span><span class="s2"> V=</span><span class="si">{</span><span class="n">arm</span><span class="o">.</span><span class="n">views</span><span class="si">}</span><span class="s2"> B=</span><span class="si">{</span><span class="n">batch_size</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span>
+        <span class="n">device</span><span class="o">=</span><span class="n">device_kind</span><span class="p">,</span>
+        <span class="n">warmup</span><span class="o">=</span><span class="n">WARMUP</span><span class="p">,</span>
+        <span class="n">runs</span><span class="o">=</span><span class="n">RUNS</span><span class="p">,</span>
+        <span class="n">threshold</span><span class="o">=</span><span class="n">LATENCY_THRESHOLD</span><span class="p">,</span>
+        <span class="n">include_source_image</span><span class="o">=</span><span class="kc">False</span><span class="p">,</span>
+        <span class="n">tta</span><span class="o">=</span><span class="n">arm</span><span class="o">.</span><span class="n">config</span><span class="p">,</span>
     <span class="p">)</span>
-    <span class="k">return</span> <span class="p">{</span><span class="s2">"call_ms"</span><span class="p">:</span> <span class="n">timing</span><span class="o">.</span><span class="n">median_ms</span><span class="p">,</span> <span class="s2">"call_p95_ms"</span><span class="p">:</span> <span class="n">timing</span><span class="o">.</span><span class="n">p95_ms</span><span class="p">}</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-12">def time_call(predictor: RFDETRInference, arm: Arm, batch_size: int) -&gt; dict[str, float]:
     """Return the median and 95th-percentile time of one call of ``batch_size`` images, in milliseconds."""
-    assert 1 &lt;= batch_size &lt;= len(pool), "The timing pool must contain at least one full batch."
-    batches = itertools.cycle([pool[i : i + batch_size] for i in range(0, len(pool) - batch_size + 1, batch_size)])
-
-    def call() -&gt; object:
-        return predictor.predict(next(batches), threshold=LATENCY_THRESHOLD, include_source_image=False, tta=arm.config)
-
-    timing = measure_latency(
-        call, label=f"{arm.recipe} V={arm.views} B={batch_size}", device=device_kind, warmup=WARMUP, runs=RUNS
-    )
-    return {"call_ms": timing.median_ms, "call_p95_ms": timing.p95_ms}</div>
+    return time_predict_call(
+        predictor,
+        pool,
+        batch_size,
+        label=f"{arm.recipe} V={arm.views} B={batch_size}",
+        device=device_kind,
+        warmup=WARMUP,
+        runs=RUNS,
+        threshold=LATENCY_THRESHOLD,
+        include_source_image=False,
+        tta=arm.config,
+    )</div>
 </div>
 </div>
 </div>
@@ -5580,7 +5582,7 @@ plt.show()</div>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 25, 2026 14:12:27 UTC">2026-11-25 14:12:27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 26, 2026 09:33:17 UTC">2026-11-26 09:33:17</span>
   </span>
 
     

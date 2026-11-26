@@ -6,7 +6,7 @@
       <meta charset="utf-8">
       <meta name="viewport" content="width=device-width,initial-scale=1">
       
-        <meta name="description" content="Test-time augmentation for RF-DETR detection and segmentation. How to turn on shifted, zoomed and mirrored views, what they add in box AP for every model size on COCO val2017, what they cost in latency and memory, which recipe to choose, and when a larger model is the better use of the time.">
+        <meta name="description" content="Test-time augmentation for RF-DETR detection and segmentation. How to turn on shifted and zoomed views, what they add in box AP for every model size on COCO val2017, what they cost in latency and memory, which recipe to choose, and when a larger model is the better use of the time.">
       
       
         <meta name="author" content="Roboflow">
@@ -87,7 +87,7 @@
   
   
   <meta property="og:title" content="Test-Time Augmentation - RF-DETR">
-  <meta property="og:description" content="Test-time augmentation for RF-DETR detection and segmentation. How to turn on shifted, zoomed and mirrored views, what they add in box AP for every model size on COCO val2017, what they cost in latency and memory, which recipe to choose, and when a larger model is the better use of the time.">
+  <meta property="og:description" content="Test-time augmentation for RF-DETR detection and segmentation. How to turn on shifted and zoomed views, what they add in box AP for every model size on COCO val2017, what they cost in latency and memory, which recipe to choose, and when a larger model is the better use of the time.">
   <meta property="og:type" content="article">
   <meta property="og:url" content="https://rfdetr.roboflow.com/develop/learn/tta/">
   <meta property="og:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
@@ -98,21 +98,21 @@
   <meta name="twitter:card" content="summary_large_image">
   <meta name="twitter:site" content="@roboflow">
   <meta name="twitter:title" content="Test-Time Augmentation - RF-DETR">
-  <meta name="twitter:description" content="Test-time augmentation for RF-DETR detection and segmentation. How to turn on shifted, zoomed and mirrored views, what they add in box AP for every model size on COCO val2017, what they cost in latency and memory, which recipe to choose, and when a larger model is the better use of the time.">
+  <meta name="twitter:description" content="Test-time augmentation for RF-DETR detection and segmentation. How to turn on shifted and zoomed views, what they add in box AP for every model size on COCO val2017, what they cost in latency and memory, which recipe to choose, and when a larger model is the better use of the time.">
   <meta name="twitter:image" content="https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png">
 
   
   
   
   
-  <meta property="article:modified_time" content="2026-11-25T14:12:27">
+  <meta property="article:modified_time" content="2026-11-26T09:33:17">
   
   <script type="application/ld+json">
   {
     "@context": "https://schema.org",
     "@type": "TechArticle",
     "headline": "Test-Time Augmentation",
-    "description": "Test-time augmentation for RF-DETR detection and segmentation. How to turn on shifted, zoomed and mirrored views, what they add in box AP for every model size on COCO val2017, what they cost in latency and memory, which recipe to choose, and when a larger model is the better use of the time.",
+    "description": "Test-time augmentation for RF-DETR detection and segmentation. How to turn on shifted and zoomed views, what they add in box AP for every model size on COCO val2017, what they cost in latency and memory, which recipe to choose, and when a larger model is the better use of the time.",
     "url": "https://rfdetr.roboflow.com/develop/learn/tta/",
     "isPartOf": {"@id": "https://rfdetr.roboflow.com/develop#website"},
     "about": {"@id": "https://rfdetr.roboflow.com/develop#software"},
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-25T14:12:27",
+    "dateModified": "2026-11-26T09:33:17",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3718,7 +3718,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </span><span id="__span-0-4"><a id="__codelineno-0-4" name="__codelineno-0-4" href="#__codelineno-0-4"></a>
 </span><span id="__span-0-5"><a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="n">detections</span> <span class="o">=</span> <span class="n">predictor</span><span class="o">.</span><span class="n">predict</span><span class="p">(</span><span class="s2">"image.jpg"</span><span class="p">,</span> <span class="n">threshold</span><span class="o">=</span><span class="mf">0.5</span><span class="p">,</span> <span class="n">tta</span><span class="o">=</span><span class="n">TTAConfig</span><span class="p">())</span>
 </span></code></pre></div>
-<p><code>TTAConfig()</code> is the recommended recipe: one native-scale view and three zooms on padded canvases. Ask for another mix with explicit fields. Views add up, they do not multiply, and flip doubles the total.</p>
+<p><code>TTAConfig()</code> is the recommended recipe: one native-scale view and three zooms on padded canvases. Ask for another mix with explicit fields. Views add up, they do not multiply: four shifts and three zooms are seven views.</p>
 <table>
 <thead>
 <tr>
@@ -3749,24 +3749,19 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>two shifts and two zooms</td>
 </tr>
 <tr>
-<td><code>TTAConfig(shift=2, flip=True)</code></td>
-<td>4</td>
-<td>two shifts, each also mirrored left to right</td>
-</tr>
-<tr>
 <td><code>TTAConfig(zoom=())</code></td>
 <td>1</td>
 <td>the plain prediction</td>
 </tr>
 </tbody>
 </table>
-<p>With <code>zoom</code> omitted, <code>shift &gt; 1</code> or <code>flip=True</code> suppresses the default zooms. Explicit <code>shift=1</code> or <code>flip=False</code> with the other default retains the three zooms. Pass <code>zoom=()</code> with the default shift and flip values for plain prediction.</p>
+<p>With <code>zoom</code> omitted, <code>shift &gt; 1</code> suppresses the default zooms. An explicit <code>shift=1</code> retains the three zooms. Pass <code>zoom=()</code> with the default shift for plain prediction.</p>
 <ul>
 <li><strong>Cost:</strong> every view adds a row on a padded canvas. Larger zooms can increase canvas size and cost per row.</li>
 <li><strong>Batching:</strong> on CUDA, views with the same canvas size can share a forward pass. On MPS and CPU each view is its own pass, so latency grows about linearly with the view count.</li>
 <li><strong>Fusion:</strong> a detection of one view matches a detection of another when both have the same class and a box IoU above 0.6. The fused box is the mean box, and the fused score is the sum of the matched scores divided by the number of views, so a view that missed the object counts as 0. <code>threshold</code> applies only to the fused score. Fused scores sit a little lower than single-view ones, so choose the threshold with TTA on. Segmentation masks keep the pixels that at least half of the matched masks cover.</li>
-<li><strong>Limits:</strong> keypoint models, an <code>inference()</code> snapshot and exported runtimes refuse several views before any image is read, because they fix their resolution or batch size. Mirroring assumes an object keeps its class when the image is flipped; do not use <code>flip</code> for arrows or turn signs.</li>
-<li><strong>Related:</strong> <code>RFDETR.predict(..., shift_tta=N)</code> is the older option that averages <code>N</code> shifted passes. It uses the same CUDA batching rules and is described on the <a href="../run/detection/#steadier-scores-with-shift-test-time-augmentation">Detection page</a>.</li>
+<li><strong>Limits:</strong> keypoint models, an <code>inference()</code> snapshot and exported runtimes refuse several views before any image is read, because they fix their resolution or batch size.</li>
+<li><strong>Related:</strong> the <a href="../run/detection/#steadier-scores-with-test-time-augmentation">Detection page</a> shows a shift-only recipe on a fine-tuned dataset and how it changes the keep-or-drop decision.</li>
 </ul>
 <h2 id="how-the-views-become-a-batch">How the Views Become a Batch<a class="headerlink" href="#how-the-views-become-a-batch" title="Permanent link">&para;</a></h2>
 <p>A call to <code>predict</code> takes one image or a list of images, and every image gets its own views. On CUDA the views of one canvas size go through the network together, so the views are rows of a batch.</p>
@@ -3782,9 +3777,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <ul>
 <li><strong>Accuracy:</strong> box AP at confidence threshold 0.001, scored through <code>RFDETRInference.predict</code> and the stored predictions. The images are also split into 5 interleaved folds. The gain of a recipe over the plain prediction is paired, scored on the same images, and its error is the fold-to-fold standard error, so a gain well inside it is not a gain.</li>
 <li><strong>Latency:</strong> the median of 50 calls after 10 warm-up calls at threshold 0.5, in milliseconds, for two call shapes: <code>predict</code> with one image, and <code>predict</code> with a list of eight images. A call covers preprocessing, the forward pass, mapping back and fusing. The eight-image time is divided by 8, so both settings are the time per image.</li>
-<li><strong>Recipes:</strong> the shift sweep covers all nine sizes with 1, 2, 4, 6 and 8 views. The flip, zoom and shift + zoom recipes and the runtime switches were measured for Nano, Small and Large, and the cost breakdown and memory for Atto to 2XLarge.</li>
+<li><strong>Recipes:</strong> the shift sweep covers all nine sizes with 1, 2, 4, 6 and 8 views. The zoom and shift + zoom recipes and the runtime switches were measured for Nano, Small and Large, and the cost breakdown and memory for Atto to 2XLarge.</li>
 </ul>
-<p>The <a href="../../cookbooks/tta-latency-accuracy/">cookbook</a> reruns the shift sweep, the two zoom recipes and both figures on your hardware. The flip and shift plus zoom recipes, the stage timers, memory and the runtime switches come from the extended version of the same notebook at commit <code>e0131796</code>.</p>
+<p>The <a href="../../cookbooks/tta-latency-accuracy/">cookbook</a> reruns the shift sweep, the two zoom recipes and both figures on your hardware. The shift plus zoom recipes, the stage timers, memory and the runtime switches come from the extended version of the same notebook at commit <code>e0131796</code>.</p>
 <h2 id="accuracy-what-views-add">Accuracy: What Views Add<a class="headerlink" href="#accuracy-what-views-add" title="Permanent link">&para;</a></h2>
 <p>Shift views add box AP for every size. The gain is large for the small models, shrinks with size, and has mostly arrived by four views.</p>
 <table>
@@ -4009,116 +4004,182 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p><strong>Memory.</strong> The peak extra CUDA memory of one call grows with the rows in flight and stays small. For one image per call it rises from 7 MiB (Atto, 1 view) to 74 MiB at eight views, and from 146 MiB (2XLarge, 1 view) to 1364 MiB at eight views. In the measured shift sweep with eight images per call, peak extra memory leveled off between 0.35 and 1.7 GiB as the scheduler split views across forwards.</p>
 <p><strong>Where the time goes.</strong> At eight views the work around the network is about 2.1 ms per call whatever the model: placing the views 0.17 to 0.20 ms, mapping boxes back 0.47 to 0.50, decoding 0.48 to 0.52 and fusing 0.80 to 0.98. That is 26 percent of an Atto call and 4 percent of a 2XLarge call. The rest of the cost over plain batching is the larger canvas: V views of one image take 0.2 to 2.0 ms more than a batch of V images up to Medium, and 1.2 to 7.2 ms more for Large to 2XLarge.</p>
 <h2 id="ablation-which-views-to-use">Ablation: Which Views to Use<a class="headerlink" href="#ablation-which-views-to-use" title="Permanent link">&para;</a></h2>
-<p>The same number of views can be shifts, mirrored copies, zoomed copies or a mix. Gain over the plain prediction in box AP points, with latency of one image per call in brackets.</p>
+<p>The same number of views can be shifts, zoomed copies or a mix. The two tabs show the same rows: the accuracy and the latency of one image per call.</p>
+<div class="tabbed-set tabbed-alternate" data-tabs="1:2"><input checked="checked" id="__tabbed_1_1" name="__tabbed_1" type="radio" /><input id="__tabbed_1_2" name="__tabbed_1" type="radio" /><div class="tabbed-labels"><label for="__tabbed_1_1">AP</label><label for="__tabbed_1_2">Latency</label></div>
+<div class="tabbed-content">
+<div class="tabbed-block">
+<p>Box AP in points: the plain row is the absolute AP, every other row is the gain over it.</p>
 <table>
 <thead>
 <tr>
 <th>Views</th>
 <th>Recipe</th>
-<th>Nano</th>
-<th>Small</th>
-<th>Medium</th>
-<th>Large</th>
+<th>Nano [AP]</th>
+<th>Small [AP]</th>
+<th>Medium [AP]</th>
+<th>Large [AP]</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td>1</td>
 <td>plain</td>
-<td>48.02 AP (5.7 ms)</td>
-<td>52.82 AP (6.2 ms)</td>
-<td>54.69 AP (6.8 ms)</td>
-<td>56.56 AP (7.9 ms)</td>
-</tr>
-<tr>
-<td>2</td>
-<td>flip</td>
-<td>+0.75 (8.2 ms)</td>
-<td>+0.85 (9.1 ms)</td>
-<td>not measured</td>
-<td>+0.48 (11.8 ms)</td>
+<td>48.02</td>
+<td>52.82</td>
+<td>54.69</td>
+<td>56.56</td>
 </tr>
 <tr>
 <td>2</td>
 <td>shift</td>
-<td>+1.33 (7.2 ms)</td>
-<td>+1.35 (8.8 ms)</td>
-<td>+0.94 (9.8 ms)</td>
-<td>+0.86 (11.8 ms)</td>
+<td>+1.33</td>
+<td>+1.35</td>
+<td>+0.94</td>
+<td>+0.86</td>
 </tr>
 <tr>
 <td>2</td>
 <td>zoom <code>(1.25,)</code></td>
-<td>+2.83 (11.7 ms)</td>
-<td>+2.41 (14.0 ms)</td>
-<td>not measured</td>
-<td>+1.30 (17.5 ms)</td>
+<td>+2.83</td>
+<td>+2.41</td>
+<td>+1.81</td>
+<td>+1.30</td>
 </tr>
 <tr>
 <td>4</td>
 <td>shift</td>
-<td>+2.20 (8.6 ms)</td>
-<td>+1.87 (10.7 ms)</td>
-<td>+1.43 (11.8 ms)</td>
-<td>+1.21 (16.0 ms)</td>
-</tr>
-<tr>
-<td>4</td>
-<td>shift + flip</td>
-<td>+2.21 (8.5 ms)</td>
-<td>+2.05 (10.8 ms)</td>
-<td>not measured</td>
-<td>+1.37 (16.1 ms)</td>
+<td>+2.20</td>
+<td>+1.87</td>
+<td>+1.43</td>
+<td>+1.21</td>
 </tr>
 <tr>
 <td>4</td>
 <td>zoom, the default</td>
-<td>+4.02 (17.1 ms)</td>
-<td>+3.11 (21.6 ms)</td>
-<td>not measured</td>
-<td>+1.96 (30.9 ms)</td>
+<td>+4.02</td>
+<td>+3.11</td>
+<td>+2.58</td>
+<td>+1.96</td>
 </tr>
 <tr>
 <td>4</td>
 <td>shift + zoom</td>
-<td>+4.28 (16.8 ms)</td>
-<td>+3.46 (21.4 ms)</td>
-<td>not measured</td>
-<td>+2.05 (30.9 ms)</td>
+<td>+4.28</td>
+<td>+3.46</td>
+<td>+2.73</td>
+<td>+2.05</td>
 </tr>
 <tr>
 <td>8</td>
 <td>shift</td>
-<td>+2.43 (10.6 ms)</td>
-<td>+2.12 (14.8 ms)</td>
-<td>+1.65 (17.3 ms)</td>
-<td>+1.31 (25.2 ms)</td>
-</tr>
-<tr>
-<td>8</td>
-<td>shift + flip</td>
-<td>+2.77 (10.6 ms)</td>
-<td>+2.51 (15.0 ms)</td>
-<td>not measured</td>
-<td>+1.59 (25.3 ms)</td>
+<td>+2.43</td>
+<td>+2.12</td>
+<td>+1.65</td>
+<td>+1.31</td>
 </tr>
 <tr>
 <td>8</td>
 <td>shift + zoom</td>
-<td>+3.97 (23.4 ms)</td>
-<td>+3.15 (29.4 ms)</td>
-<td>not measured</td>
-<td>+1.95 (44.0 ms)</td>
+<td>+3.97</td>
+<td>+3.15</td>
+<td>+2.59</td>
+<td>+1.95</td>
 </tr>
 </tbody>
 </table>
-<p>Medium was swept with shift views only in the extended run, so its flip and zoom cells are empty; the cookbook measures its zoom recipes. Standard errors of the paired gains are 0.05 to 0.18 points. The recipes are <code>shift=2, flip=True</code> and <code>shift=4, flip=True</code> for shift + flip, <code>zoom=(0.85, 1.25, 1.5)</code> for the default, <code>shift=2, zoom=(1.25, 1.5)</code> and <code>shift=4, zoom=(0.85, 1.15, 1.3, 1.5)</code> for shift + zoom.</p>
+</div>
+<div class="tabbed-block">
+<p>Median time of one call with one image, in milliseconds.</p>
+<table>
+<thead>
+<tr>
+<th>Views</th>
+<th>Recipe</th>
+<th>Nano [ms]</th>
+<th>Small [ms]</th>
+<th>Medium [ms]</th>
+<th>Large [ms]</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>plain</td>
+<td>5.7</td>
+<td>6.2</td>
+<td>6.8</td>
+<td>7.9</td>
+</tr>
+<tr>
+<td>2</td>
+<td>shift</td>
+<td>7.2</td>
+<td>8.8</td>
+<td>9.8</td>
+<td>11.8</td>
+</tr>
+<tr>
+<td>2</td>
+<td>zoom <code>(1.25,)</code></td>
+<td>11.7</td>
+<td>14.0</td>
+<td>15.2</td>
+<td>17.5</td>
+</tr>
+<tr>
+<td>4</td>
+<td>shift</td>
+<td>8.6</td>
+<td>10.7</td>
+<td>11.8</td>
+<td>16.0</td>
+</tr>
+<tr>
+<td>4</td>
+<td>zoom, the default</td>
+<td>17.1</td>
+<td>21.6</td>
+<td>25.1</td>
+<td>30.9</td>
+</tr>
+<tr>
+<td>4</td>
+<td>shift + zoom</td>
+<td>16.8</td>
+<td>21.4</td>
+<td>25.0</td>
+<td>30.9</td>
+</tr>
+<tr>
+<td>8</td>
+<td>shift</td>
+<td>10.6</td>
+<td>14.8</td>
+<td>17.3</td>
+<td>25.2</td>
+</tr>
+<tr>
+<td>8</td>
+<td>shift + zoom</td>
+<td>23.4</td>
+<td>29.4</td>
+<td>35.6</td>
+<td>44.0</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+</div>
+<p>The extended run swept Medium with shift views only, so the Medium zoom cells come from the <a href="../../cookbooks/tta-ablation-study/">ablation cookbook</a> run with <code>MODEL_SIZE = "Medium"</code> on the same GPU model, a second Colab instance with a later install of the branch. That run reproduces the Medium shift cells of the main run: gains +0.94, +1.43 and +1.65 in both, plain 6.8 ms in both, and shift latencies of 9.9, 12.2 and 18.3 ms against 9.8, 11.8 and 17.3 ms, up to 6 percent apart. Standard errors of the paired gains are 0.05 to 0.18 points. The recipes are <code>zoom=(0.85, 1.25, 1.5)</code> for the default, <code>shift=2, zoom=(1.25, 1.5)</code> and <code>shift=4, zoom=(0.85, 1.15, 1.3, 1.5)</code> for shift + zoom.</p>
 <ul>
 <li><strong>Zoom beats shift per view.</strong> At the same view count zoom adds about twice the AP of shifts, +4.02 against +2.20 on Nano at four views. A plausible reason is that a zoomed view shows objects at another scale, while a shift only changes where an object falls inside a patch; this was not tested separately. It is why zoom is the default.</li>
 <li><strong>Zoom costs about twice as much.</strong> Four zoom views take 17.1 ms on Nano against 8.6 ms for four shifts, because the canvas is larger. Per millisecond added, shifts buy more AP. At a similar latency zoom is still ahead by 0.05 to 0.4 points: two zoom views on Nano take 11.7 ms for +2.83, and eight shift views take 10.6 ms for +2.43.</li>
-<li><strong>Flip alone is weak.</strong> One mirrored copy adds 0.5 to 0.9 points, less than one shifted copy. Mirroring the shifts doubles the views at no extra latency in the rows above and adds 0.0 to 0.4 points over the same number of unmirrored shifts, a small gain, and only for classes that survive mirroring.</li>
+<li><strong>Mirrored views were tried and dropped.</strong> One mirrored copy added 0.5 to 0.9 points, less than one shifted copy, and mirroring the shifts added 0.0 to 0.4 points over the same number of unmirrored shifts on Nano, Small and Large. The gain was too small for a public option that also splits classes with a left-right meaning (arrows, turn signs).</li>
 <li><strong>Shift plus zoom is the best four-view recipe, by a little.</strong> It beats the default by 0.09 to 0.35 points at the same latency. The default is the simpler one to state and explain.</li>
-<li><strong>More views can lower AP.</strong> Eight shift + zoom views are worse than four on all three sizes (3.97 against 4.28 on Nano, 1.95 against 2.05 on Large). The fused score is the mean over all views with a missed view counting as 0, so a weak view dilutes a strong one. Stop at four views for zoom recipes.</li>
+<li><strong>Zoom-out views add nothing on Medium.</strong> The sweep of single zoom scales gave -0.59 for 0.75, +0.10 for 0.85, +1.27 for 1.1, +1.81 for 1.25 and +2.49 for 1.5, so the 0.85 view of the default costs latency and adds little, and resizing the zoom-out views with antialiasing changed AP by 0.02 or less. The gain is still rising at 1.5, the largest scale <code>TTAConfig</code> accepts, so a larger scale may do better; that was not measured.</li>
+<li><strong>Zoom recipes passed the gate on Medium.</strong> Each beat the same number of shift views by at least 0.3 box AP on every one of folds 1 to 4 (mean +0.83 to +1.41), and raised <code>RFDETRSegMedium</code> mask AP by 0.51 to 0.82 over four shift views.</li>
+<li><strong>More views can lower AP.</strong> Eight shift + zoom views are worse than four on all four sizes (3.97 against 4.28 on Nano, 2.59 against 2.73 on Medium, 1.95 against 2.05 on Large). The fused score is the mean over all views with a missed view counting as 0, so a weak view dilutes a strong one. Stop at four views for zoom recipes.</li>
 </ul>
 <h2 id="should-you-use-a-larger-model-instead">Should You Use a Larger Model Instead?<a class="headerlink" href="#should-you-use-a-larger-model-instead" title="Permanent link">&para;</a></h2>
 <p>For a single image per call, usually yes. At one image per call and at eight, no smaller model with views is both faster and more accurate than a larger model without them. Plain Femto (37.64 AP, 6.5 ms) beats Atto with eight views (34.32 AP, 7.4 ms), plain Small (52.82 AP, 6.2 ms) beats Nano with shift + zoom at four views (52.30 AP, 16.8 ms), and plain XLarge (58.69 AP, 10.0 ms) beats Large with the default zooms (58.53 AP, 30.9 ms). The plain models from Atto to 2XLarge form the whole latency and accuracy frontier up to 2XLarge. The only points beyond it are 2XLarge with views, reaching 61.18 AP at 51.8 ms with eight shift views.</p>
@@ -4132,18 +4193,19 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li><strong>Measure steadiness at your threshold.</strong> The study reports score spread for detections selected separately by each shift recipe. Measure threshold crossings on matched detections if those crossings affect your use case.</li>
 <li><strong>Do not go past four views.</strong> Four shift views give 84 to 92 percent of the eight-view gain, and eight shift + zoom views are worse than four.</li>
 <li><strong>Re-tune the threshold.</strong> Fused scores are lower than single-view ones. Pick <code>threshold</code> with TTA on.</li>
-<li><strong>Check flip on your classes.</strong> Skip it for anything with a left-right meaning.</li>
 <li><strong>Measure on your hardware.</strong> Run the <a href="../../cookbooks/tta-latency-accuracy/">cookbook</a> with your device, and compare against the next larger model before committing.</li>
 </ul>
 <h2 id="what-is-not-established">What Is Not Established<a class="headerlink" href="#what-is-not-established" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Behavior on a GPU limited by arithmetic, such as a T4, and on a CPU, where views are not batched.</li>
-<li>Zoom, flip and shift + zoom recipes for XLarge and 2XLarge, and for segmentation models.</li>
-<li>A comparison with the older sequential <code>shift_tta</code> path on <code>develop</code>, and a padded zero-offset control that separates the effect of the larger canvas from the effect of the shift.</li>
+<li>Behavior on a CPU, where views are not batched, and on a GPU other than the RTX PRO 6000.</li>
+<li>Zoom and shift + zoom recipes for XLarge and 2XLarge, and mask AP for segmentation sizes other than Medium.</li>
+<li>Zoom scales above 1.5, and whether the default zooms are the best choice for Medium.</li>
+<li>A comparison with the sequential shift implementation that <code>develop</code> had before batching, and a padded zero-offset control that separates the effect of the larger canvas from the effect of the shift.</li>
 <li>Accuracy on fine-tuned datasets. All AP numbers are the pretrained COCO checkpoints on COCO val2017.</li>
 </ul>
 <h2 id="run-details">Run Details<a class="headerlink" href="#run-details" title="Permanent link">&para;</a></h2>
 <p>Hardware: NVIDIA RTX PRO 6000 Blackwell Server Edition (Colab) | <code>rfdetr</code> 1.13.0.dev0 at commit <code>e0131796</code> | <code>rfdetr_plus</code> 1.3.0 | PyTorch 2.14.1+cu130 | supervision 0.32.1 | faster-coco-eval 1.8.1 | Python 3.13.16 | run started 2026-11-24 23:05 UTC | box AP on 5000 COCO val2017 images at threshold 0.001 in 5 folds, latency at threshold 0.5, median of 50 timed calls after 10 warm-up calls, eager PyTorch FP32 path with <code>RFDETRInference</code> on the live model.</p>
+<p>Medium zoom cells of the ablation table: NVIDIA RTX PRO 6000 Blackwell Server Edition (Colab) | <code>rfdetr</code> 1.13.0.dev0 from the <code>feat/tta-followup</code> branch, commit not recorded | PyTorch 2.14.1+cu130 | supervision 0.32.2 | faster-coco-eval 1.8.1 | Python 3.13.16 | run started 2026-11-25 21:43 UTC | same protocol as above; the mask AP run on <code>RFDETRSegMedium</code> used folds 1 to 4.</p>
 
 
 
@@ -4164,7 +4226,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 25, 2026 14:12:27 UTC">2026-11-25 14:12:27</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 26, 2026 09:33:17 UTC">2026-11-26 09:33:17</span>
   </span>
 
     
