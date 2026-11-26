@@ -2934,7 +2934,10 @@ class TestBothHeadsEvaluationFlows:
             >>> _coco_gt_behind_every_split  # doctest: +SKIP
             A pytest fixture.
         """
-        mocker.patch("rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset", return_value=_make_both_heads_gt())
+        mocker.patch(
+            "rfdetr.training.callbacks.coco_eval.get_coco_api_from_dataset",
+            return_value=_make_both_heads_gt(),
+        )
 
     def test_validation_epoch_logs_segm_and_keypoint_metrics(self) -> None:
         """A validation epoch logs mask mAP and OKS keypoint AP together for the base model."""
