@@ -9,7 +9,6 @@ import contextlib
 import importlib
 import json
 import ntpath
-import operator
 import os
 import pickle
 import tempfile
@@ -515,12 +514,12 @@ def _restore_resolution_on_failure(
     @wraps(method)
     def wrapper(self: RFDETR, *args: _P.args, **kwargs: _P.kwargs) -> _R:
         """Snapshot resolution metadata and restore it if the method raises."""
-        model_config = self.model_config
-        resolution = model_config.resolution
-        positional_encoding_size = model_config.positional_encoding_size
+        missing: Any = object()
+        model_config = getattr(self, "model_config", None)
+        resolution = getattr(model_config, "resolution", missing)
+        positional_encoding_size = getattr(model_config, "positional_encoding_size", missing)
         model = getattr(self, "model", None)
         model_args = getattr(model, "args", None) if model is not None else None
-        missing: Any = object()
         model_resolution = getattr(model, "resolution", missing)
         args_resolution = getattr(model_args, "resolution", missing)
         args_pe = getattr(model_args, "positional_encoding_size", missing)
@@ -528,8 +527,10 @@ def _restore_resolution_on_failure(
         try:
             return method(self, *args, **kwargs)
         except BaseException:
-            model_config.resolution = resolution
-            model_config.positional_encoding_size = positional_encoding_size
+            if resolution is not missing:
+                model_config.resolution = resolution
+            if positional_encoding_size is not missing:
+                model_config.positional_encoding_size = positional_encoding_size
             if model is not None:
                 if model_resolution is not missing and hasattr(model, "resolution"):
                     model.resolution = model_resolution
@@ -554,9 +555,9 @@ def _prepare_run_config(
     Handles the kwargs that are not plain ``TrainConfig`` fields: ``device`` (mapped to PyTorch Lightning
     accelerator/devices), and
     ``resolution`` (a ``ModelConfig`` field applied to ``detector.model_config`` in place, with the positional-encoding
-    size and cached inference context kept in sync). Remaining kwargs are forwarded to
-    :meth:`RFDETR.get_train_config`; ``batch_size="auto"`` is resolved by auto-batch probing (skipped when
-    ``for_eval=True`` — see below).
+    size and cached inference context kept in sync). Square resolutions are stored as a single side length.
+    Remaining kwargs are forwarded to :meth:`RFDETR.get_train_config`. Auto-batch probing resolves
+    ``batch_size="auto"`` for training.
     ``model_config.model_name`` is set to the concrete subclass name.
 
     Defined at module scope (rather than as a method) so that :meth:`RFDETR.train` / :meth:`RFDETR.evaluate`, which are
@@ -594,23 +595,13 @@ def _prepare_run_config(
     # here to avoid it being silently ignored by TrainConfig.
     _resolution = kwargs.pop("resolution", None)
     if _resolution is not None:
-        _resolution_error = "resolution must be a positive integer or a (height, width) pair of positive integers"
-        if isinstance(_resolution, bool):
-            raise ValueError(_resolution_error)
         try:
-            # A side length stays an int, so a square override is stored exactly as before.
-            _resolution = operator.index(_resolution)
-        except TypeError:
-            try:
-                _sides = tuple(_resolution)
-                if len(_sides) != 2 or any(isinstance(side, bool) for side in _sides):
-                    raise TypeError(_resolution_error)
-                _resolution = (operator.index(_sides[0]), operator.index(_sides[1]))
-            except TypeError as error:
-                raise ValueError(_resolution_error) from error
-        _height, _width = (_resolution, _resolution) if isinstance(_resolution, int) else _resolution
-        if _height <= 0 or _width <= 0:
-            raise ValueError(_resolution_error)
+            _height, _width = as_pair(_resolution)
+        except ValueError as error:
+            raise ValueError(
+                "resolution must be a positive integer or a (height, width) pair of positive integers"
+            ) from error
+        _resolution = _height if _height == _width else (_height, _width)
         block_size = detector.model_config.patch_size * detector.model_config.num_windows
         if _height % block_size != 0 or _width % block_size != 0:
             raise ValueError(

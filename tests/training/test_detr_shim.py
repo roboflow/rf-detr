@@ -722,13 +722,16 @@ class TestResolutionKwarg:
         assert mock_self.model.args.positional_encoding_size == (height // 16, width // 16)
 
     @pytest.mark.usefixtures("patch_lit")
-    def test_square_pair_keeps_int_positional_encoding_size(self, tmp_path):
-        """A pair with equal sides derives the grid in its ``int`` form."""
+    def test_square_pair_keeps_int_resolution_and_positional_encoding_size(self, tmp_path: Path) -> None:
+        """A pair with equal sides stores the resolution and grid as side lengths."""
         mock_self = _make_rfdetr_self(tmp_path)
         mock_self.model_config = RFDETRSmallConfig(pretrain_weights=None, num_classes=3, device="cpu")
 
         RFDETR.train(mock_self, resolution=(672, 672))
 
+        assert mock_self.model_config.resolution == 672
+        assert mock_self.model.resolution == 672
+        assert mock_self.model.args.resolution == 672
         assert mock_self.model_config.positional_encoding_size == 42
 
     @pytest.mark.usefixtures("patch_lit")

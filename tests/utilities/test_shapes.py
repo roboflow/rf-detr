@@ -27,7 +27,6 @@ class TestAsPair:
             pytest.param([448, 320], (448, 320), id="list"),
             pytest.param(np.int64(384), (384, 384), id="numpy-int"),
             pytest.param((np.int32(320), torch.tensor(448)), (320, 448), id="numpy-and-torch-ints"),
-            pytest.param(np.array([320, 448]), (320, 448), id="numpy-array"),
         ],
     )
     def test_returns_height_width_tuple(self, value: Any, expected: tuple[int, int]) -> None:
@@ -56,8 +55,8 @@ class TestAsPair:
 
     @pytest.mark.parametrize("value", [448.0, 320.75, None])
     def test_rejects_a_scalar_that_is_not_an_integer(self, value: Any) -> None:
-        """A scalar that is neither an integer nor an iterable is a ``TypeError``, an integral float included."""
-        with pytest.raises(TypeError, match="Expected an int or a"):
+        """A scalar that is not an integer is refused, an integral float included."""
+        with pytest.raises(ValueError, match="Expected an int or a"):
             as_pair(value)
 
     @pytest.mark.parametrize(
@@ -66,10 +65,14 @@ class TestAsPair:
             pytest.param((320,), id="one-item"),
             pytest.param((320, 448, 3), id="three-items"),
             pytest.param("64", id="two-character-string"),
+            pytest.param(b" @", id="two-bytes"),
+            pytest.param({32: 0, 64: 0}, id="dict-with-two-integer-keys"),
+            pytest.param({32, 64}, id="set-with-two-integers"),
+            pytest.param(np.array([320, 448]), id="numpy-array"),
         ],
     )
     def test_rejects_anything_but_an_int_or_a_pair(self, value: Any) -> None:
-        """An iterable that is not a pair of sizes is refused, a string of two digits included."""
+        """Only a tuple or list can supply two side lengths."""
         with pytest.raises(ValueError, match="Expected an int or a"):
             as_pair(value)
 

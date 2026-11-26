@@ -1114,10 +1114,12 @@ class TestNonSquareResolution:
         assert cfg.resolution == resolution
         assert cfg.positional_encoding_size == expected_pe
 
-    def test_square_pair_resolution_derives_int_positional_encoding_size(self) -> None:
-        """A pair with equal sides keeps the grid in its ``int`` form."""
+    def test_square_pair_resolution_stores_int_resolution_and_positional_encoding_size(self) -> None:
+        """A pair with equal sides stores the resolution and grid as side lengths."""
         cfg = RFDETRNanoConfig(resolution=(416, 416), pretrain_weights=None)
 
+        assert cfg.resolution == 416
+        assert cfg.model_dump()["resolution"] == 416
         assert cfg.positional_encoding_size == 26
 
     def test_int_resolution_stays_int(self) -> None:
@@ -1144,23 +1146,32 @@ class TestNonSquareResolution:
         assert cfg.positional_encoding_size == 37
 
     @pytest.mark.parametrize(
-        "resolution",
+        ("resolution", "message"),
         [
-            pytest.param((320, 450), id="width-indivisible"),
-            pytest.param((330, 448), id="height-indivisible"),
-            pytest.param((0, 448), id="zero-height"),
-            pytest.param((320, -448), id="negative-width"),
+            pytest.param((320, 450), "both divisible by", id="width-indivisible"),
+            pytest.param((330, 448), "both divisible by", id="height-indivisible"),
+            pytest.param((0, 448), "Sizes must be positive", id="zero-height"),
+            pytest.param((320, -448), "Sizes must be positive", id="negative-width"),
         ],
     )
-    def test_pair_resolution_must_be_divisible_on_both_sides(self, resolution: tuple[int, int]) -> None:
+    def test_pair_resolution_requires_positive_divisible_sides(self, resolution: tuple[int, int], message: str) -> None:
         """Each side of a pair must be a positive multiple of ``patch_size * num_windows`` (32 for Nano)."""
-        with pytest.raises(ValidationError, match="both divisible by"):
+        with pytest.raises(ValidationError, match=message):
             RFDETRNanoConfig(resolution=resolution, pretrain_weights=None)
 
     def test_resolution_with_three_sides_is_rejected(self) -> None:
         """A resolution is one side length or exactly two."""
         with pytest.raises(ValidationError):
             RFDETRNanoConfig(resolution=(320, 448, 3), pretrain_weights=None)
+
+    @pytest.mark.parametrize(
+        "resolution",
+        [pytest.param((384.0, 672), id="integral-float"), pytest.param((True, 672), id="bool")],
+    )
+    def test_resolution_rejects_non_integer_sides(self, resolution: tuple[float | bool, int]) -> None:
+        """Resolution rejects floats and booleans before divisibility validation."""
+        with pytest.raises(ValidationError, match="Expected an int or a"):
+            RFDETRNanoConfig(resolution=resolution, pretrain_weights=None)
 
 
 class TestDetectDevice:

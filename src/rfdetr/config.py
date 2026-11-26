@@ -657,8 +657,8 @@ class ModelConfig(BaseConfig):
             provided by concrete subclass.
         dim_feedforward: Hidden width of the decoder feed-forward layers. Defaults to ``2048``.
         resolution: Input resolution in pixels: a side length for a square input, or ``(height, width)``. Each
-            side of a ``(height, width)`` pair must be divisible by ``patch_size * num_windows``. Must be provided by
-            concrete subclass.
+            side of a ``(height, width)`` pair must be divisible by ``patch_size * num_windows``. A pair with equal
+            sides is stored as a single side length. Must be provided by concrete subclass.
         positional_encoding_size: Size (in patches) of the backbone's positional-embedding grid: a side length for
             a square grid, or ``(height, width)``. Must be provided by concrete subclass.
         num_queries: Number of object queries used during inference (and per group during
@@ -756,9 +756,30 @@ class ModelConfig(BaseConfig):
         ),
     )
 
+    @field_validator("resolution", mode="before")
+    @classmethod
+    def _parse_resolution(cls, value: Any) -> int | tuple[int, int]:
+        """Parse a resolution before Pydantic can coerce its sides.
+
+        Args:
+            value: The raw resolution supplied to the config.
+
+        Returns:
+            A side length or a pair of side lengths for window divisibility validation.
+
+        Raises:
+            ValueError: If the resolution does not contain positive integer side lengths in a supported form.
+
+        Examples:
+            >>> RFDETRNanoConfig._parse_resolution([320, 448])
+            (320, 448)
+        """
+        height, width = as_pair(value)
+        return height if isinstance(value, int) else (height, width)
+
     @model_validator(mode="after")
-    def _validate_non_square_resolution(self) -> "ModelConfig":
-        """Reject a ``(height, width)`` resolution the windowed backbone cannot split into whole windows.
+    def _validate_pair_resolution(self) -> "ModelConfig":
+        """Validate window divisibility for pairs and store square pairs as a side length.
 
         The backbone splits the input into ``num_windows`` x ``num_windows`` windows of whole patches, so each side must
         be divisible by ``patch_size * num_windows``. An ``int`` resolution is not checked here: it keeps being checked
@@ -769,11 +790,14 @@ class ModelConfig(BaseConfig):
 
         block_size = self.patch_size * self.num_windows
         height, width = self.resolution
-        if height <= 0 or width <= 0 or height % block_size != 0 or width % block_size != 0:
+        if height % block_size != 0 or width % block_size != 0:
             raise ValueError(
                 f"resolution={self.resolution} must have a positive height and width that are both divisible by "
                 f"patch_size ({self.patch_size}) * num_windows ({self.num_windows}) = {block_size}."
             )
+        if height == width:
+            # The pair has already been validated. Assigning through Pydantic here would rerun model validators.
+            object.__setattr__(self, "resolution", height)
         return self
 
     @model_validator(mode="after")

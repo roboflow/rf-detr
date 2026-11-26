@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import operator
-from collections.abc import Iterable
 from typing import Any
 
 __all__ = ["as_pair"]
@@ -29,23 +28,21 @@ def _as_int(side: Any) -> int | None:
         return None
 
 
-def as_pair(value: int | Iterable[int]) -> tuple[int, int]:
+def as_pair(value: int | tuple[int, int] | list[int]) -> tuple[int, int]:
     """Normalize a size to an explicit ``(height, width)`` pair.
 
     Integers are read with ``operator.index``, so NumPy and PyTorch integer scalars are accepted; a ``bool``, a
     ``float`` (integral or not) and a string are not.
 
     Args:
-        value: A single integer, read as the square ``(value, value)``, or an iterable of exactly two integers ordered
-            ``(height, width)``.
+        value: A positive side length for a square, or two positive side lengths in ``(height, width)`` order
+            supplied as a tuple or list.
 
     Returns:
         The size as a ``(height, width)`` tuple of ints.
 
     Raises:
-        TypeError: If *value* is neither an integer nor an iterable.
-        ValueError: If *value* is a ``bool``, an iterable whose length is not 2 or whose items are not integers, or if
-            a side is not positive.
+        ValueError: If *value* has a different form or a side is not a positive integer. Booleans are invalid.
 
     Examples:
         >>> as_pair(384)
@@ -60,22 +57,17 @@ def as_pair(value: int | Iterable[int]) -> tuple[int, int]:
         Traceback (most recent call last):
             ...
         ValueError: Expected an int or a (height, width) pair of ints, got (320.75, 448).
+        >>> as_pair(384.0)
+        Traceback (most recent call last):
+            ...
+        ValueError: Expected an int or a (height, width) pair of ints, got 384.0.
     """
-    message = f"Expected an int or a (height, width) pair of ints, got {value!r}."
-    side = _as_int(value)
-    if side is not None:
-        pair = (side, side)
-    else:
-        if isinstance(value, (bool, str, bytes)):
-            raise ValueError(message)
-        try:
-            items = tuple(value)
-        except TypeError:
-            raise TypeError(message) from None
-        sides = [_as_int(item) for item in items]
-        if len(sides) != 2 or sides[0] is None or sides[1] is None:
-            raise ValueError(message)
-        pair = (sides[0], sides[1])
-    if pair[0] <= 0 or pair[1] <= 0:
+    pair = (value, value) if _as_int(value) is not None else value
+    if not isinstance(pair, (tuple, list)) or len(pair) != 2:
+        raise ValueError(f"Expected an int or a (height, width) pair of ints, got {value!r}.")
+    height, width = _as_int(pair[0]), _as_int(pair[1])
+    if height is None or width is None:
+        raise ValueError(f"Expected an int or a (height, width) pair of ints, got {value!r}.")
+    if height <= 0 or width <= 0:
         raise ValueError(f"Sizes must be positive, got {value!r}.")
-    return pair
+    return height, width
