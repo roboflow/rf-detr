@@ -1469,9 +1469,9 @@ class TestResolveBackendForBuild:
 class TestSplitAugConfigForGpu:
     """split_aug_config_for_gpu routes geometric entries to the CPU pre-resize step (#1769).
 
-    A rotation, shear or perspective applied on the GPU after the square resize turns rigidly in the network input,
-    a shape no camera produces, so those entries run on the CPU before the resize while flips and pixel-level
-    transforms stay on the Kornia GPU pipeline.
+    A rotation, shear or perspective applied on the GPU after the square resize turns rigidly in the network input, a
+    shape no camera produces, so those entries run on the CPU before the resize while flips and pixel-level transforms
+    stay on the Kornia GPU pipeline.
     """
 
     def test_rotate_perspective_and_shift_scale_rotate_run_before_resize(self) -> None:
