@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1000" height="612" viewBox="0 0 1000 612" role="img" aria-labelledby="title desc">
   <!-- Illustrative scores, box errors and a missed dog in pass 2. Generated; regenerate rather than hand-edit. -->
   <title id="title">Plain prediction against shift test-time augmentation</title>
-  <desc id="desc">Two pages that flip. Page 1: a plain prediction runs the network once on the whole input image, which holds a person and a small dog, and returns a bounding box with a score for each: person 0.91 and dog 0.70, both kept. Page 2: with shift_tta=4 the same input is moved down and right by 0, a quarter, a half and three quarters of a patch on a canvas one patch larger, so nothing is cropped. Each snapshot goes through the same network once and returns its own boxes and scores. The network finds the person in every pass but misses the dog in one, so that pass counts as 0. The boxes are mapped back by subtracting each offset, grouped when they have the same class and an IoU above 0.6, and averaged into one box per object. In the combine panel the steps play in order: the boxes of each pass slide back by their offset, boxes of the same object are grouped, each group becomes one mean box, and its score is built from one quarter of every pass score, where a pass with no box adds nothing. The person gets 0.91 and the dog gets 0.54, and both are kept. Masks keep the pixels that at least half of the matched masks cover. Scores are illustrative.</desc>
+  <desc id="desc">Two pages that flip. Page 1: a plain prediction runs the network once on the whole input image, which holds a person and a small dog, and returns a bounding box with a score for each: person 0.91 and dog 0.70, both kept. Page 2: with tta=TTAConfig(shift=4) the same input is moved down and right by 0, a quarter, a half and three quarters of a patch on a canvas one patch larger, so nothing is cropped. Each snapshot goes through the same network once and returns its own boxes and scores. The network finds the person in every pass but misses the dog in one, so that pass counts as 0. The boxes are mapped back by subtracting each offset, grouped when they have the same class and an IoU above 0.6, and averaged into one box per object. In the combine panel the steps play in order: the boxes of each pass slide back by their offset, boxes of the same object are grouped, each group becomes one mean box, and its score is built from one quarter of every pass score, where a pass with no box adds nothing. The person gets 0.91 and the dog gets 0.54, and both are kept. Masks keep the pixels that at least half of the matched masks cover. Scores are illustrative.</desc>
   <style>
     text { font-family: "CMU Serif", "Latin Modern Roman", Georgia, "Times New Roman", serif; fill: #ECECEC; }
     .h { font-size: 24px; } .s { font-size: 15px; fill: #B8B8B8; } .lbl { font-size: 18px; } .t { font-size: 13px; fill: #B8B8B8; }
@@ -138,11 +138,11 @@
   <g class="run" style="animation-name: r7">
   <text class="s" x="60" y="522">One pass gives one box and one score per object.</text>
   <text class="s" x="60" y="544">A score depends a little on where the object sits in the patch grid, and a small object can even be missed.</text>
-  <text class="s" x="60" y="566">Next page: shift_tta predicts shifted snapshots of the same input and combines them.</text>
+  <text class="s" x="60" y="566">Next page: shift TTA predicts shifted snapshots of the same input and combines them.</text>
   </g>
   </g>
   <g class="page run" style="animation-name: pageB">
-  <text class="lbl" x="60" y="122">predict(shift_tta=4)</text>
+  <text class="lbl" x="60" y="122">TTAConfig(shift=4)</text>
   <text class="s" x="60" y="140">the same input, moved down and right by 0, ¼, ½ and ¾ of a patch: four snapshots, four passes</text>
   <text class="t end" x="940" y="122">page 2 of 2 (plain predict() gave person 0.91, dog 0.70)</text>
   <svg x="60" y="331.2" width="126" height="57.6" viewBox="0 0 140 64">

@@ -30,12 +30,15 @@ from rfdetr._prediction.core import (
     _PrefetchedImage,
     _prepare_batch,
     _PreparedBatch,
+    _ViewRetryState,
 )
 from rfdetr._prediction.sources import has_only_finite_images, iter_source_batches
+from rfdetr._prediction.tta import view_count
 from rfdetr._prediction.types import _ImageInput, _PredictionInput, _ThresholdInput
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
+    from rfdetr._prediction.tta import TTAConfig
     from rfdetr._prediction.types import _PredictionResult
 
 logger = get_logger()
@@ -55,6 +58,7 @@ def _predict_stream(
     stream_buffer: bool,
     warn_on_live: bool,
     prepare_ahead: bool,
+    tta: TTAConfig | None = None,
 ) -> Generator[_PredictionResult, None, None]:
     """Expand sources into bounded batches and predict each lazily, releasing capture on every exit path.
 
@@ -87,7 +91,9 @@ def _predict_stream(
         warn_on_live: Warn about memory growth from live sources and large finite sources; set for eager callers, whose
             results accumulate.
         prepare_ahead: Let a CUDA context build the next batch's input while the current batch runs; set only when the
-            predictor owns its model or runtime.
+            predictor owns its model or runtime. A request with several ``tta`` views never does: prepare-ahead runs the
+            forward pass itself and would return the plain prediction.
+        tta: The test-time augmentation views to fuse for every batch, or ``None``.
 
     Yields:
         One result per input image or frame, in source order.
@@ -121,7 +127,8 @@ def _predict_stream(
     gpu_device = context.device if on_cuda and not include_source_image else None
     batches = source_batches if pool is None else _decode_ahead(source_batches, pool, gpu_device)
     try:
-        if prepare_ahead and on_cuda and finite:
+        views = 1 if tta is None else view_count(tta)
+        if _may_prepare_ahead(prepare_ahead, context.device.type, finite, views):
             prepare = functools.partial(
                 _prepare_batch,
                 context_factory,
@@ -134,9 +141,18 @@ def _predict_stream(
             in_worker = context.runtime_info.get("backend") != "pytorch"
             yield from _predict_prepared_ahead(batches, prepare, context.device, in_worker=in_worker)
             return
+        view_retry = _ViewRetryState() if views > 1 else None
         for image_batch in batches:
             results = _predict_batch(
-                context_factory, image_batch, threshold, shape, patch_size, include_source_image, antialias
+                context_factory,
+                image_batch,
+                threshold,
+                shape,
+                patch_size,
+                include_source_image,
+                antialias,
+                tta=tta,
+                view_retry=view_retry,
             )
             yield from cast("list[_PredictionResult]", results)
     finally:
@@ -144,6 +160,28 @@ def _predict_stream(
             # Decodes already queued for a batch nobody will read are dropped; running ones finish first.
             pool.shutdown(wait=True, cancel_futures=True)
         source_batches.close()
+
+
+def _may_prepare_ahead(prepare_ahead: bool, device_type: str, finite: bool, views: int) -> bool:
+    """Return whether batches build their model input ahead of the running batch.
+
+    Prepare-ahead calls ``context.run`` itself and never reaches the multi-view path of :func:`_predict_batch`, so a
+    request with several views takes the batch loop instead.
+
+    Args:
+        prepare_ahead: The predictor owns its model or runtime.
+        device_type: The context device type.
+        finite: The source has no live input.
+        views: The number of test-time augmentation views; 1 is the plain prediction.
+
+    Returns:
+        ``True`` for an owned CUDA context with a finite source and one view.
+
+    Examples:
+        >>> _may_prepare_ahead(True, "cuda", True, 1), _may_prepare_ahead(True, "cuda", True, 4)
+        (True, False)
+    """
+    return prepare_ahead and device_type == "cuda" and finite and views == 1
 
 
 #: Worker threads decoding the next batch's image files. File reads and torchvision's decoder release the GIL.
