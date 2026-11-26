@@ -1035,18 +1035,19 @@ class TestPatchEmbeddingAsMatmul:
     ) -> None:
         """The MatMul rewrite produces the same features as the convolution, with and without bias."""
         import onnxruntime as ort
+        from onnx.reference import ReferenceEvaluator
 
         model = _patch_embedding(channels=channels, patch=patch, height=height, width=width, batch=batch, bias=bias)
         image = np.random.default_rng(1).standard_normal((batch, channels, height, width)).astype(np.float32)
-        expected = ort.InferenceSession(model.SerializeToString(), providers=["CPUExecutionProvider"]).run(
-            None, {"image": image}
-        )[0]
+        # The ORT 1.24.3 CPU Conv on macOS arm64 can return a bias-dependent offset
+        # after running another Conv session. Use the ONNX reference as the oracle.
+        expected = ReferenceEvaluator(model).run(None, {"image": image})[0]
         assert quantize._patch_embedding_as_matmul(model) == 1
         actual = ort.InferenceSession(model.SerializeToString(), providers=["CPUExecutionProvider"]).run(
             None, {"image": image}
         )[0]
         # The convolution and the matrix multiply add up a patch's float32 products (768 in the first case) in a
-        # different order: macOS differed by 4e-5 on outputs of about 40. A wrong permutation, kernel layout or bias is
+        # different order. A wrong permutation, kernel layout or bias is
         # off by whole units.
         np.testing.assert_allclose(actual, expected, rtol=1e-5, atol=1e-4)
 

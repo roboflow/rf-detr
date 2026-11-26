@@ -412,6 +412,22 @@ class TestDecodeDetections:
 
         assert decoded.query_index.tolist() == [0]
 
+    @pytest.mark.parametrize("dtype", ["float16", "float32"])
+    def test_narrow_boxes_match_native_pixel_coordinates(self, dtype: str) -> None:
+        """Preserve the width of a narrow box when converting to pixel corners."""
+        boxes = np.array([[0.875, 0.5, 1.5 / 4096, 0.125]], dtype=dtype)
+        logits = np.array([[2.0]], dtype=dtype)
+
+        decoded = decode_detections(boxes, logits, (4096, 2160), num_select=1)
+        native = PostProcess(num_select=1)(
+            {"pred_logits": torch.from_numpy(logits)[None], "pred_boxes": torch.from_numpy(boxes)[None]},
+            torch.tensor([[2160, 4096]]),
+        )[0]["boxes"]
+
+        expected = np.array([[3583.25, 945, 3584.75, 1215]], dtype=np.float32)
+        np.testing.assert_array_equal(native.numpy(), expected, strict=True)
+        np.testing.assert_array_equal(decoded.xyxy, expected, strict=True)
+
     @pytest.mark.parametrize("dtype", ["float32", "float16"])
     def test_default_keeps_final_coco_slot_like_predict(self, dtype: str) -> None:
         """With the default, slot 90 of a 91-slot COCO head survives and matches ``PostProcess`` (``predict()``).
