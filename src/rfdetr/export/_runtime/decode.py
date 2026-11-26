@@ -139,7 +139,11 @@ def decode_detections(
         else:
             logger.debug("Scores stats: empty — detections above threshold %.2f: %d", threshold, int(scores.shape[0]))
 
-    cx, cy, bw, bh = boxes_cwh[query_idx].T
+    boxes = boxes_cwh[query_idx]
+    # Widen selected half-precision coordinates before rounding either corner.
+    if boxes.dtype.type == np.float16:
+        boxes = boxes.astype(np.float32)
+    cx, cy, bw, bh = boxes.T
     width, height = image_size
     scale = np.array([width, height, width, height], dtype=np.float32)
     xyxy = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1)
