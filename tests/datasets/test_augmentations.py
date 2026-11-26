@@ -2497,8 +2497,8 @@ class TestAugmentBeforeResize:
     def test_gpu_postprocess_keeps_flip_before_rotation(self):
         """With gpu_postprocess a flip configured before a rotation still runs before it.
 
-        Flips do not commute with rotations, so the split must be a prefix cut in configured order: a partition by
-        key would run the rotation on the CPU before the resize and the flip on the GPU after it, reversing the tilt
+        Flips do not commute with rotations, so the split must be a prefix cut in configured order: a partition by key
+        would run the rotation on the CPU before the resize and the flip on the GPU after it, reversing the tilt
         relative to the CPU path.
         """
         pipeline = make_coco_transforms_square_div_64(

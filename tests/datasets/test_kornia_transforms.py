@@ -1517,9 +1517,9 @@ class TestSplitAugConfigForGpu:
     def test_translate_px_affine_runs_before_resize(self) -> None:
         """A whole-pixel translate_px offset is in source-image pixels, so it runs before the resize.
 
-        On the GPU path the same offset would be applied after the resize, in resized-image pixels — for an
-        800-pixel-wide image resized to 576, a fixed 100-pixel shift would be 72 output pixels on the CPU path
-        but 100 on the GPU path.
+        On the GPU path the same offset would be applied after the resize, in resized-image pixels — for an 800-pixel-
+        wide image resized to 576, a fixed 100-pixel shift would be 72 output pixels on the CPU path but 100 on the GPU
+        path.
         """
         config = {"Affine": {"translate_px": 4, "p": 1.0}}
 
@@ -1528,9 +1528,8 @@ class TestSplitAugConfigForGpu:
     def test_flip_before_rotation_keeps_configured_order(self) -> None:
         """A flip configured before a rotation stays before it on the GPU path.
 
-        The split is a prefix cut, not a partition by key: a partition would run the rotation before the resize
-        and the flip after it, reversing the tilt relative to the CPU path, where flips do not commute with
-        rotations.
+        The split is a prefix cut, not a partition by key: a partition would run the rotation before the resize and the
+        flip after it, reversing the tilt relative to the CPU path, where flips do not commute with rotations.
         """
         config = {"HorizontalFlip": {"p": 1.0}, "Rotate": {"limit": 30, "p": 1.0}}
 
