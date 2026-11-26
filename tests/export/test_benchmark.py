@@ -24,6 +24,7 @@ import pytest
 import supervision as sv
 import torch
 from PIL import Image
+from pytest_mock import MockerFixture
 
 from rfdetr.assets.coco_classes import COCO_CLASSES
 from rfdetr.export._benchmark import (
@@ -43,6 +44,7 @@ from rfdetr.export._benchmark import (
     measure_memory,
     parity,
     time_folder,
+    time_predict_call,
     visualize_detections,
 )
 
@@ -766,6 +768,62 @@ class TestTimeFolder:
 
         with pytest.raises(ValueError, match="expected 4"):
             time_folder(predictor, Path("images"), 4, 1)
+
+
+class TestTimePredictCall:
+    """Check the per-call timing the TTA cookbooks share."""
+
+    def test_cycles_through_full_batches_of_distinct_images(self) -> None:
+        """Four images in batches of two give calls on images 0-1, 2-3 and then 0-1 again."""
+        predictor = Mock(predict=Mock(return_value=[]))
+
+        time_predict_call(predictor, [0, 1, 2, 3], 2, label="x", device="cpu", warmup=0, runs=3)
+
+        assert [invocation.args[0] for invocation in predictor.predict.call_args_list] == [[0, 1], [2, 3], [0, 1]]
+
+    def test_never_times_a_trailing_partial_batch(self) -> None:
+        """Five images in batches of two leave image 4 out, because a call of one image would time a different shape."""
+        predictor = Mock(predict=Mock(return_value=[]))
+
+        time_predict_call(predictor, [0, 1, 2, 3, 4], 2, label="x", device="cpu", warmup=0, runs=4)
+
+        assert [invocation.args[0] for invocation in predictor.predict.call_args_list] == [
+            [0, 1],
+            [2, 3],
+            [0, 1],
+            [2, 3],
+        ]
+
+    def test_passes_the_keywords_to_every_predict_call(self) -> None:
+        """Warm-up and timed calls all get the caller's prediction keywords."""
+        predictor = Mock(predict=Mock(return_value=[]))
+
+        time_predict_call(predictor, [0, 1], 1, label="x", device="cpu", warmup=1, runs=2, threshold=0.5, tta=None)
+
+        assert predictor.predict.call_count == 3
+        assert all(
+            invocation.kwargs == {"threshold": 0.5, "tta": None} for invocation in predictor.predict.call_args_list
+        )
+
+    def test_returns_the_median_and_the_95th_percentile_of_the_calls(self, mocker: MockerFixture) -> None:
+        """The row is the median and 95th percentile of the timed calls, named for the notebook tables."""
+        measured = BenchmarkResult("x", 2.0, 1.0, (1.0, 2.0, 3.0))
+        timer = mocker.patch("rfdetr.export._benchmark.measure_latency", return_value=measured)
+
+        timing = time_predict_call(Mock(), [0, 1], 1, label="arm B=1", device="cpu", warmup=4, runs=7)
+
+        assert timing == {"call_ms": measured.median_ms, "call_p95_ms": measured.p95_ms}
+        assert timer.call_args.kwargs == {"label": "arm B=1", "device": "cpu", "warmup": 4, "runs": 7}
+
+    @pytest.mark.parametrize("batch_size", [0, 3])
+    def test_rejects_a_batch_the_pool_cannot_fill(self, batch_size: int) -> None:
+        """An empty batch or a pool shorter than one batch stops the timing before any call."""
+        predictor = Mock()
+
+        with pytest.raises(ValueError, match="full batch"):
+            time_predict_call(predictor, [0, 1], batch_size, label="x", device="cpu", warmup=0, runs=1)
+
+        predictor.predict.assert_not_called()
 
 
 class TestExportCached:
