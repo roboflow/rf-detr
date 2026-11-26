@@ -5,8 +5,8 @@
 # ------------------------------------------------------------------------
 """Tests for the WebDataset shard pack and streaming-load package.
 
-Cover the packer (standard library only), the shard index contract, epoch planning arithmetic, and — behind a ``skipif``
-decorator on the optional ``data`` extra — streaming, sizing and parity against the loose-file
+Cover the packer (standard library only), the shard index contract, epoch planning arithmetic, and — behind a
+``skipif`` decorator on the optional ``data`` extra — streaming, sizing and parity against the loose-file
 :class:`~rfdetr.datasets.coco.CocoDetection` the shards were packed from.
 """
 
@@ -1065,9 +1065,10 @@ class TestStreamingShuffle:
         Regression test for the root cause behind the PR's own reported 2-3x seed-to-seed accuracy variance:
         ``webdataset``'s ``nodesplitter``/``workersplitter`` run on the shard-URL list's existing order, *before* its
         own shard-order shuffler (verified against the pinned ``webdataset==1.0.2`` source), so leaving that list
-        unshuffled gave every worker the same fixed shard subset every epoch — only the order *within* that fixed subset
-        varied. The test above stays a partition either way (it would pass against the pre-fix code too), so it cannot
-        tell the two apart; this one checks the actual set one worker sees, which the pre-fix code could not change.
+        unshuffled gave every worker the same fixed shard subset every epoch — only the order *within* that fixed
+        subset varied. The test above stays a partition either way (it would pass against the pre-fix code too), so it
+        cannot tell the two apart; this one checks the actual set one worker sees, which the pre-fix code could not
+        change.
         """
         dataset = WebDatasetDetection(_pack(tmp_path, count=24), "train", transforms=None, shard_shuffle=4)
         monkeypatch.setattr(
