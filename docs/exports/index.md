@@ -45,17 +45,17 @@ All numbers are batch 1 unless stated, `RFDETRSmall`, `rfdetr` `develop`, end to
 
 <!-- COPIES: the "NVIDIA L4" row repeats docs/exports/tensorrt.md, "Latency Across NVIDIA GPUs" (L4, Small, .trt INT8), and "Fastest route across NVIDIA GPUs" below uses the same source. Update them together. -->
 
-| Hardware                             | Fastest route          | Precision | end2end [ms]   | FPS [img/s] | mAP@50:95 [%] | Full table                                                                           |
-| ------------------------------------ | ---------------------- | --------- | -------------- | ----------- | ------------- | ------------------------------------------------------------------------------------ |
-| NVIDIA L4                            | TensorRT `.trt` engine | int8      | 3.45           | 290         | —             | [TensorRT](tensorrt.md#latency-across-nvidia-gpus)                                   |
-| Apple M4 Max (40-core GPU)           | `inference()` inductor | fp16      | 10.3           | 97.4        | 56.4          | [Baseline](#pytorch-baseline), [CoreML](coreml.md#measured-latency-on-apple-silicon) |
-| x86 CPU (Colab, 4 cores / 8 threads) | OpenVINO IR            | fp32      | 373.65 ± 61.10 | 2.7         | 56.5          | [OpenVINO](openvino.md#measured-latency-on-an-x86-cpu)                               |
+| Hardware                             | Fastest route          | Precision | end2end [ms] | FPS [img/s] | mAP@50:95 [%] | Full table                                                                           |
+| ------------------------------------ | ---------------------- | --------- | ------------ | ----------- | ------------- | ------------------------------------------------------------------------------------ |
+| NVIDIA L4                            | TensorRT `.trt` engine | int8      | 3.45         | 290         | —             | [TensorRT](tensorrt.md#latency-across-nvidia-gpus)                                   |
+| Apple M4 Max (40-core GPU)           | `inference()` inductor | fp16      | 10.3         | 97.4        | 56.4          | [Baseline](#pytorch-baseline), [CoreML](coreml.md#measured-latency-on-apple-silicon) |
+| x86 CPU (Colab, 4 cores / 8 threads) | OpenVINO IR            | fp32      | 246.8 ± 17.3 | 4.1         | 56.5          | [OpenVINO](openvino.md#measured-latency-on-an-x86-cpu)                               |
 
 - Warmup and timed runs differ per cookbook (GPU 20 + 100, CPU 15 + 50, Apple 5 + 30). The rows come from a Colab L4 host, a Colab x86 host and one Apple M4 Max (macOS 26.7.1).
-- On the x86 host the run-to-run standard deviation is 10 to 17% of the mean, so CPU batch-1 gaps under about 100 ms are noise: OpenVINO fp32 is the best full-accuracy route listed, but eager PyTorch and TorchScript are level with it.
+- On the x86 host (AMD EPYC 7B12) the standard deviation is 6 to 11% of the mean at batch 1. OpenVINO fp32 is the fastest full-accuracy route listed, ahead of eager PyTorch (329.0 ms) and TorchScript (318.5 ms) by more than three standard deviations. The default ONNX INT8 export is level with it (245.9 ms) at 0.8 mAP less.
 - The Apple row is one size, `RFDETRSmall`. Every pretrained size has its own fastest configuration on the M4 Max, timed as the median of 500 images, on the Run pages for [detection](../learn/run/detection.md#fastest-configuration-on-apple-silicon), [segmentation](../learn/run/segmentation.md#fastest-configuration-on-apple-silicon) and [keypoints](../learn/run/keypoints.md#fastest-configuration-on-apple-silicon). For `RFDETRSmall` the winner there is the same route as in this row (`inference()` with inductor in fp16, 10.82 ms); the milliseconds differ because the timing method differs.
 - The NVIDIA L4 row is one size, `RFDETRSmall`, from the CUDA cookbook. Every pretrained size on the T4, L4, A100 and RTX PRO 6000 is timed as the median of 500 images, at batch 1 only and with a different TensorRT version, on the Run pages for [detection](../learn/run/detection.md#fastest-configuration-on-nvidia-gpus), [segmentation](../learn/run/segmentation.md#fastest-configuration-on-nvidia-gpus) and [keypoints](../learn/run/keypoints.md#fastest-configuration-on-nvidia-gpus); compare numbers only within one set.
-- The x86 CPU row is one size, `RFDETRSmall`, from the CPU cookbook. Every pretrained size is timed as the median of 200 images, at batch 1 on a Colab AMD EPYC 7B12 with all 8 logical cores used by every runtime and a newer ONNX Runtime and `rfdetr`, on the Run pages for [detection](../learn/run/detection.md#fastest-configuration-on-an-x86-cpu), [segmentation](../learn/run/segmentation.md#fastest-configuration-on-an-x86-cpu) and [keypoints](../learn/run/keypoints.md#fastest-configuration-on-an-x86-cpu); compare numbers only within one set. For `RFDETRSmall` those tables have OpenVINO fp32 at 248.60 ms and ONNX INT8 at 249.21 ms, against 373.65 ms for OpenVINO fp32 in this row; which of the differences causes the gap was not isolated.
+- The x86 CPU row is one size, `RFDETRSmall`, from the CPU cookbook. Every pretrained size is timed as the median of 200 images, at batch 1 on a Colab AMD EPYC 7B12 with all 8 logical cores used by every runtime and a newer ONNX Runtime, on the Run pages for [detection](../learn/run/detection.md#fastest-configuration-on-an-x86-cpu), [segmentation](../learn/run/segmentation.md#fastest-configuration-on-an-x86-cpu) and [keypoints](../learn/run/keypoints.md#fastest-configuration-on-an-x86-cpu); compare numbers only within one set. For `RFDETRSmall` those tables have OpenVINO fp32 at 258.05 ms and ONNX INT8 at 259.15 ms, against 246.8 ms and 245.9 ms in the CPU cookbook.
 - No mobile or edge CPU row is listed: the TFLite, LiteRT and ExecuTorch tables are pending a rerun with a pinned thread count.
 
 ### Fastest route across NVIDIA GPUs
@@ -114,10 +114,10 @@ The PyTorch rows every cookbook measures, per machine. `predict()` is the eager 
 
 === "x86 CPU (Colab)"
 
-    | Runtime         | Precision | b1 [ms]        | mAP@50:95 [%] | FPS b1 | FPS b4 |
-    | --------------- | --------- | -------------- | ------------- | ------ | ------ |
-    | predict() eager | fp32      | 401.58 ± 66.19 | 56.5          | 2.5    | 2.8    |
-    | inference() JIT | fp32      | 377.85 ± 62.10 | 56.5          | 2.6    | 2.8    |
+    | Runtime         | Precision | b1 [ms]      | mAP@50:95 [%] | FPS b1 | FPS b4 |
+    | --------------- | --------- | ------------ | ------------- | ------ | ------ |
+    | predict() eager | fp32      | 329.0 ± 18.3 | 56.5          | 3.0    | 3.3    |
+    | inference() JIT | fp32      | 318.5 ± 19.8 | 56.5          | 3.1    | 3.4    |
 
 `Memory [MB]` in the cookbooks is comparable only within one cookbook: the CUDA cookbook measures device memory, the others host resident memory (RSS). The subset is chosen for run time, so these are not the full-`val2017` numbers on the [Benchmarks page](../learn/benchmarks.md); set `FULL_VAL = True` in a cookbook to score all 5000 images.
 
@@ -134,7 +134,7 @@ The PyTorch rows every cookbook measures, per machine. `predict()` is the eager 
 !!! warning "fp16 pays off only where the silicon implements it"
 
     - **GPU: large win.** TensorRT fp16 engines and PyTorch `inference(dtype=torch.float16)` on CUDA are the fast routes; see the [TensorRT latency tables](tensorrt.md#latency-across-nvidia-gpus).
-    - **CPU: no measured win.** A CPU without native fp16 kernels computes in fp32, so fp16 saves disk and bandwidth, not arithmetic (OpenVINO fp16 452.3 ms against 373.7 ms fp32 on the Colab host, at half the size). INT8 changes CPU arithmetic but not consistently: in the table above OpenVINO INT8 was slower than its fp32 IR, and in the [Run page CPU tables](../learn/run/detection.md#fastest-configuration-on-an-x86-cpu) it takes 0.70 to 1.16 times the OpenVINO fp32 time depending on size, while ONNX INT8 takes 0.64 to 0.83 times the ONNX fp32 time at every size. See [OpenVINO](openvino.md#measured-latency-on-an-x86-cpu) and [ONNX](onnx.md#on-an-x86-cpu). The TFLite rows are pending a rerun (they ran at the interpreter's default thread count).
+    - **CPU: no measured win.** A CPU without native fp16 kernels computes in fp32, so fp16 saves disk and bandwidth, not arithmetic (OpenVINO fp16 268.1 ms against 246.8 ms fp32 on the Colab host, at half the size). INT8 changes CPU arithmetic but not consistently: in the CPU cookbook OpenVINO INT8 was no faster than its fp32 IR, and in the [Run page CPU tables](../learn/run/detection.md#fastest-configuration-on-an-x86-cpu) it takes 0.70 to 1.16 times the OpenVINO fp32 time depending on size, while ONNX INT8 takes 0.64 to 0.83 times the ONNX fp32 time at every size. See [OpenVINO](openvino.md#measured-latency-on-an-x86-cpu) and [ONNX](onnx.md#on-an-x86-cpu). The TFLite rows are pending a rerun (they ran at the interpreter's default thread count).
     - **Apple: runtime-dependent.** On the M4 Max, CoreML fp16 was *slower* than its fp32 default (23.6 against 12.0 ms) at half the size, and ExecuTorch's CoreML backend (fp16 only) matched CoreML fp16. An earlier macOS 27.0 run had Core AI fp16 faster than fp32 (13.53 against 14.62 ms); Core AI runs on the CPU only on older macOS. Measure per runtime. See [CoreML](coreml.md#measured-latency-on-apple-silicon) and [ExecuTorch](executorch.md#measured-latency-on-apple-silicon).
 
 ## Per-Format Guides

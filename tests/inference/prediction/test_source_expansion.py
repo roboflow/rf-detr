@@ -657,10 +657,10 @@ class TestDefaultEagerBatch:
         sizes: list[int] = []
         original = core._predict_batch
 
-        def recording_predict_batch(context_factory: Any, images: Any, *args: Any) -> Any:
+        def recording_predict_batch(context_factory: Any, images: Any, *args: Any, **kwargs: Any) -> Any:
             """Record the batch size, then predict the batch as the real function does."""
             sizes.append(len(images) if isinstance(images, list) else 1)
-            return original(context_factory, images, *args)
+            return original(context_factory, images, *args, **kwargs)
 
         def context_factory() -> core.PredictionContext:
             """Return the dummy model's context with ``context_overrides`` applied."""
