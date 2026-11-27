@@ -13,8 +13,23 @@ name: Test GitHub Scripts
 on:
   push:
     branches: ["main", "release/*", "develop"]
+    # The tests read these paths only; see .github/_tests.
+    paths:
+      - ".github/**"
+      - "docs/javascripts/**"
+      - "docs/stylesheets/**"
+      - "docs/theme/**"
+      - "mkdocs.yaml"
+      - "pyproject.toml"
   pull_request:
     branches: ["main", "release/*", "develop"]
+    paths:
+      - ".github/**"
+      - "docs/javascripts/**"
+      - "docs/stylesheets/**"
+      - "docs/theme/**"
+      - "mkdocs.yaml"
+      - "pyproject.toml"
   workflow_dispatch:
 
 permissions:
@@ -36,6 +51,8 @@ jobs:
     steps:
       - name: 📥 Checkout the repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          persist-credentials: false
 
       - name: 🐍 Install uv and set Python version
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0

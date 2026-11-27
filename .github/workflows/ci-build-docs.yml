@@ -10,7 +10,10 @@ on:
 # Restrict permissions by default
 permissions:
   contents: read # Required for checkout
-  checks: write # Required for test reporting
+
+concurrency:
+  group: docs-build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   docs-build-test:
@@ -22,6 +25,7 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: 🐍 Install uv and set Python
         uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
@@ -45,11 +49,11 @@ jobs:
         run: uv run --no-sync mkdocs build --verbose
 
       - name: 📤 Upload docs artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: docs-site
           path: site/
-          retention-days: 7
+          retention-days: 3
 
       - name: Minimize uv cache
         run: uv cache prune --ci
