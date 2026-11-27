@@ -190,10 +190,27 @@ _BACKBONE_ENCODER = _QUANTIZED_REGIONS[0]
 #: kernel's size limits too, but TensorRT does not fuse it in INT8 and the unfused INT8 path is slower than FP16.
 _INT8_ATTENTION_REGION = "/backbone/backbone.0/encoder/"
 
-#: Ops a projection's output passes through on its way into a batched multiply: bias, reshape to heads, scaling.
+#: Ops a projection's output passes through on its way into a batched multiply: bias, reshape to heads, scaling, and
+#: taking q, k and v apart after a fused ``qkv`` projection (PE-Core-T: Atto, Femto, Pico).
 _PROJECTION_PASSTHROUGH = frozenset(
-    {"Add", "Cast", "Div", "Identity", "Mul", "Reshape", "Squeeze", "Transpose", "Unsqueeze"}
+    {
+        "Add",
+        "Cast",
+        "Div",
+        "Gather",
+        "Identity",
+        "Mul",
+        "Reshape",
+        "Slice",
+        "Split",
+        "Squeeze",
+        "Transpose",
+        "Unsqueeze",
+    }
 )
+
+#: Ops whose inputs after the first are shapes, axes, sizes or indices, never the data a projection passes on.
+_DATA_INPUT_ONLY = frozenset({"Gather", "Reshape", "Slice", "Split", "Squeeze", "Unsqueeze"})
 
 #: Ops between a first MLP projection and its activation-path successor, including both GELU forms.
 _GELU_PATH = frozenset({"Add", "Div", "Erf", "Gelu", "Mul"})
@@ -612,8 +629,10 @@ def _patch_embedding_as_matmul(model: Any, *, multiple_of: int = 1) -> int:
 def _trace_projection(start: str, producers: Mapping[str, Any], initializers: Mapping[str, Any]) -> str | None:
     """Walk upstream from a batched-multiply input to the weight-bearing projection that produced it.
 
-    Follows only the shape and scaling ops a projection passes through on its way into attention, so a path through
-    shape arithmetic (``Shape`` -> ``Sqrt``) or another block's output ends without a match.
+    Follows only the shape and scaling ops a projection passes through on its way into attention, including the
+    ``Split``, ``Slice`` or ``Gather`` that takes q, k and v apart after a fused ``qkv`` projection, and only the data
+    input of an op with shape or index inputs. A path through shape arithmetic (``Shape`` -> ``Sqrt``) or another
+    block's output ends without a match.
 
     Examples:
         >>> from onnx import helper, numpy_helper
@@ -634,9 +653,40 @@ def _trace_projection(start: str, producers: Mapping[str, Any], initializers: Ma
             return str(node.name)
         if node.op_type not in _PROJECTION_PASSTHROUGH:
             continue
-        data_inputs = node.input[:1] if node.op_type in ("Reshape", "Squeeze", "Unsqueeze") else node.input
+        data_inputs = node.input[:1] if node.op_type in _DATA_INPUT_ONLY else node.input
         frontier.extend(name for name in data_inputs if name and name not in initializers)
     return None
+
+
+def _weights_reaching(
+    starts: tuple[str, ...], producers: Mapping[str, Any], initializers: Mapping[str, Any]
+) -> set[str]:
+    """Return the weight-bearing nodes whose output reaches *starts* without passing another weight-bearing node.
+
+    Walks upstream through any op, unlike :func:`_trace_projection`, so a projection behind an op the trace does not
+    follow (a ``LayerNormalization`` on q, say) is still found. It ends at ``Shape``, which passes on no data, and
+    follows only the data input of the ops in :data:`_DATA_INPUT_ONLY`.
+
+    Examples:
+        >>> from onnx import helper, numpy_helper
+        >>> weights = {"w": numpy_helper.from_array(np.zeros((4, 4), np.float32), "w")}
+        >>> nodes = [helper.make_node("MatMul", ["x", "w"], ["q"], "q_proj"),
+        ...          helper.make_node("LayerNormalization", ["q", "scale"], ["q_norm"], "norm")]
+        >>> _weights_reaching(("q_norm",), {o: n for n in nodes for o in n.output}, weights)
+        {'q_proj'}
+    """
+    frontier, seen, found = list(starts), set(), set()
+    while frontier:
+        node = producers.get(frontier.pop())
+        if node is None or id(node) in seen:
+            continue
+        seen.add(id(node))
+        if _holds_weight(node, initializers):
+            found.add(str(node.name))
+        elif node.op_type != "Shape":
+            data_inputs = node.input[:1] if node.op_type in _DATA_INPUT_ONLY else node.input
+            frontier.extend(name for name in data_inputs if name and name not in initializers)
+    return found
 
 
 def _output_projection(context: Any, consumers: Mapping[str, list[Any]], initializers: Mapping[str, Any]) -> str | None:
@@ -845,6 +895,39 @@ def _is_float_pe_mlp(name: str) -> bool:
     return match is not None and int(match.group(1)) < _PE_FLOAT_MLP_BLOCKS
 
 
+def _refuse_planned_inputs_of_float_attention(
+    graph: Any, float_blocks: list[_Attention], weighted: set[str], initializers: Mapping[str, Any]
+) -> None:
+    """Raise if a planned layer reaches an FP16 attention block's q, k or v without passing another weighted layer.
+
+    :func:`_trace_projection` follows a list of ops; a projection behind any other op (a norm on q, say) is hidden from
+    it and would stay INT8 in front of FP16 attention.
+
+    Args:
+        graph: The model's top-level ``GraphProto``.
+        float_blocks: The attention blocks that stay FP16.
+        weighted: Names of the nodes the plan quantizes.
+        initializers: Constant tensors by name.
+
+    Raises:
+        ValueError: If a planned layer reaches an FP16 attention block's batched multiplies that way.
+
+    Examples:
+        >>> from onnx import helper
+        >>> _refuse_planned_inputs_of_float_attention(helper.make_graph([], "g", [], []), [], set(), {})
+    """
+    producers = {output: node for node in graph.node for output in node.output}
+    for block in float_blocks:
+        starts = (block.scores.input[0], block.scores.input[1], block.context.input[1])
+        reaching = sorted(_weights_reaching(starts, producers, initializers) & weighted)
+        if reaching:
+            raise ValueError(
+                f"Cannot place INT8 safely: the projection {reaching[0]!r} reaches the FP16 attention at "
+                f"{block.scores.name!r} through an op the plan does not follow. INT8 TensorRT export applies to "
+                "RF-DETR model exports only (detection, segmentation or keypoint)."
+            )
+
+
 def plan_int8(model: Any) -> Int8Plan:
     """Decide which nodes of an FP32 RF-DETR graph get INT8 Q/DQ (see the module docstring for the rules).
 
@@ -856,8 +939,9 @@ def plan_int8(model: Any) -> Int8Plan:
 
     Raises:
         ValueError: If the graph has nothing to quantize, which means it is not an RF-DETR model export; if an FP16
-            attention block's output projection cannot be identified; or if a top-level ``Softmax`` feeds a
-            multiply of two activations without being a recognised attention block.
+            attention block's output projection cannot be identified; if a planned projection reaches an FP16
+            attention block through an op the projection trace does not follow; or if a top-level ``Softmax`` feeds
+            a multiply of two activations without being a recognised attention block.
     """
     graph = model.graph
     initializers = _constant_weights(graph)
@@ -874,6 +958,7 @@ def plan_int8(model: Any) -> Int8Plan:
         and not _pads_input_channels(node, initializers)
     }
     attention_inputs: list[tuple[str, int]] = []
+    float_blocks: list[_Attention] = []
     backbone_blocks = fused = 0
     unfused: list[str] = []  # backbone blocks whose attention stays FP16 because of its shape
     for block in _attention_blocks(model):
@@ -894,6 +979,7 @@ def plan_int8(model: Any) -> Int8Plan:
                 "segmentation or keypoint)."
             )
         weighted -= block.projections
+        float_blocks.append(block)
         if in_region and not block.int8:
             unfused.append(block.scores.name)
     if unfused:
@@ -917,6 +1003,7 @@ def plan_int8(model: Any) -> Int8Plan:
                 weighted.discard(name)
                 changed = True
 
+    _refuse_planned_inputs_of_float_attention(graph, float_blocks, weighted, initializers)
     if not weighted:
         raise ValueError(
             "Found no backbone encoder or decoder layer to quantize in this graph; INT8 TensorRT export applies to "

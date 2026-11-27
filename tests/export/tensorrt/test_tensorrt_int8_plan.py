@@ -96,6 +96,112 @@ def _refuse_host(cls: type) -> None:
     raise ImportError("host refused")
 
 
+def _ints(name: str, values: int | list[int]) -> Any:
+    """Return an ``int64`` initializer named *name* holding *values* (a shape, an axis list or an index).
+
+    Examples:
+        >>> _ints("axes", [0]).dims
+        [1]
+    """
+    return numpy_helper.from_array(np.array(values, np.int64), name)
+
+
+def _normed_projection_attention(projection: str) -> Any:
+    """Build FP16-sized backbone attention (400 tokens) with a ``LayerNormalization`` after one projection.
+
+    The projection trace does not walk through a norm, so the ``q``, ``k`` or ``v`` projection named by *projection*
+    is hidden from it, as with timm's ``qk_norm``.
+
+    Examples:
+        >>> model = _normed_projection_attention("k")
+        >>> next(node.input[0] for node in model.graph.node if node.op_type == "LayerNormalization")
+        'k0'
+    """
+    model = _attention_and_mlp(BACKBONE, sequence=400, head_size=16)
+    graph = model.graph
+    graph.initializer.extend(
+        [
+            numpy_helper.from_array(np.ones(32, np.float32), "norm_scale"),
+            numpy_helper.from_array(np.zeros(32, np.float32), "norm_bias"),
+        ]
+    )
+    reshape = next(i for i, node in enumerate(graph.node) if node.name.endswith(f"{projection}/Reshape"))
+    graph.node[reshape].input[0] = "normed"
+    norm_inputs = [f"{projection}0", "norm_scale", "norm_bias"]
+    graph.node.insert(reshape, helper.make_node("LayerNormalization", norm_inputs, ["normed"], f"{BACKBONE}norm"))
+    return model
+
+
+def _fused_qkv_attention(*, sequence: int, splitter: str) -> Any:
+    """Build a backbone ``x -> fused qkv -> attention -> MLP`` graph whose q, k and v come from one projection.
+
+    PE-Core-T (Atto, Femto, Pico) projects q, k and v with one ``qkv`` MatMul, reshapes the result to
+    ``(3, batch, heads, tokens, head_size)`` and takes q, k and v apart with *splitter*: one ``Split``, a ``Gather``
+    per tensor, or a ``Slice`` + ``Squeeze`` per tensor. Two heads of 16 channels.
+
+    Args:
+        sequence: Tokens per sequence.
+        splitter: ``"Split"``, ``"Gather"`` or ``"Slice"``.
+
+    Returns:
+        A checked ``ModelProto``.
+
+    Examples:
+        >>> model = _fused_qkv_attention(sequence=4, splitter="Gather")
+        >>> [node.op_type for node in model.graph.node].count("Gather")
+        3
+    """
+    heads, head_size = 2, 16
+    width = heads * head_size
+    p = BACKBONE
+    inits = [_weight("wqkv", width, 3 * width, seed=0), _weight("wo", width, width, seed=1)]
+    inits += [_weight("w1", width, 2 * width, seed=2), _weight("w2", 2 * width, width, seed=3)]
+    inits += [numpy_helper.from_array(np.zeros(3 * width, np.float32), "bqkv"), _ints("axis0", [0])]
+    inits += [_ints("heads", [1, sequence, 3, heads, head_size]), _ints("merged", [1, sequence, width])]
+    nodes = [
+        helper.make_node("MatMul", ["x", "wqkv"], ["qkv0"], f"{p}qkv/MatMul"),
+        helper.make_node("Add", ["bqkv", "qkv0"], ["qkv1"], f"{p}qkv/Add"),
+        helper.make_node("Reshape", ["qkv1", "heads"], ["qkv2"], f"{p}qkv/Reshape"),
+        helper.make_node("Transpose", ["qkv2"], ["qkv3"], f"{p}qkv/Transpose", perm=[2, 0, 3, 1, 4]),
+    ]
+    if splitter == "Split":
+        inits.append(_ints("sizes", [1, 1, 1]))
+        nodes.append(helper.make_node("Split", ["qkv3", "sizes"], ["q0", "k0", "v0"], f"{p}qkv/Split", axis=0))
+    for index, name in enumerate("qkv"):
+        if splitter == "Gather":
+            inits.append(_ints(f"{name}_index", index))
+            nodes.append(helper.make_node("Gather", ["qkv3", f"{name}_index"], [name], f"{p}{name}/Gather", axis=0))
+            continue
+        if splitter == "Slice":
+            inits += [_ints(f"{name}_start", [index]), _ints(f"{name}_end", [index + 1])]
+            slice_inputs = ["qkv3", f"{name}_start", f"{name}_end", "axis0"]
+            nodes.append(helper.make_node("Slice", slice_inputs, [f"{name}0"], f"{p}{name}/Slice"))
+        nodes.append(helper.make_node("Squeeze", [f"{name}0", "axis0"], [name], f"{p}{name}/Squeeze"))
+    nodes += [
+        helper.make_node("Transpose", ["k"], ["kt"], f"{p}k/Transpose", perm=[0, 1, 3, 2]),
+        helper.make_node("MatMul", ["q", "kt"], ["s"], f"{p}scores/MatMul"),
+        helper.make_node("Softmax", ["s"], ["probs"], f"{p}Softmax", axis=-1),
+        helper.make_node("MatMul", ["probs", "v"], ["c"], f"{p}context/MatMul"),
+        helper.make_node("Transpose", ["c"], ["c1"], f"{p}merge/Transpose", perm=[0, 2, 1, 3]),
+        helper.make_node("Reshape", ["c1", "merged"], ["c2"], f"{p}merge/Reshape"),
+        helper.make_node("MatMul", ["c2", "wo"], ["a"], f"{p}o/MatMul"),
+        helper.make_node("MatMul", ["a", "w1"], ["h"], f"{p}fc1/MatMul"),
+        helper.make_node("Relu", ["h"], ["g"], f"{p}act/Relu"),
+        helper.make_node("MatMul", ["g", "w2"], ["y"], f"{p}fc2/MatMul"),
+    ]
+    tokens = [1, sequence, width]
+    graph = helper.make_graph(
+        nodes,
+        "fused_qkv",
+        [helper.make_tensor_value_info("x", TensorProto.FLOAT, tokens)],
+        [helper.make_tensor_value_info("y", TensorProto.FLOAT, tokens)],
+        inits,
+    )
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 17)])
+    onnx.checker.check_model(model, full_check=True)
+    return model
+
+
 class TestInt8Request:
     """``quantization="int8"`` is validated from the configuration alone, before any forward pass."""
 
@@ -739,6 +845,94 @@ class TestPlanInt8:
                 node.name = f"{HEAD}o/MatMul"
         plan = quantize.plan_int8(model)
         assert (_names(plan), [n for n, _ in plan.activations if "/scores/" in n]) == (["fc1/MatMul", "fc2/MatMul"], [])
+
+    @pytest.mark.parametrize("splitter", ["Split", "Gather", "Slice"])
+    def test_fused_qkv_behind_float_attention_stays_float(self, splitter: str) -> None:
+        """A fused qkv projection in front of FP16 attention (400 tokens) is not quantized."""
+        plan = quantize.plan_int8(_fused_qkv_attention(sequence=400, splitter=splitter))
+        assert _names(plan) == ["fc1/MatMul", "fc2/MatMul"]
+
+    @pytest.mark.parametrize("splitter", ["Split", "Gather", "Slice"])
+    def test_fusable_attention_with_fused_qkv_is_quantized_whole(self, splitter: str) -> None:
+        """A fused qkv projection in front of fusable attention (325 tokens) is quantized with it, scores included."""
+        plan = quantize.plan_int8(_fused_qkv_attention(sequence=325, splitter=splitter))
+        batched = sorted(
+            name.split("/")[-2] for name, _ in plan.activations if "/scores/" in name or "/context/" in name
+        )
+        assert (_names(plan), batched) == (
+            ["qkv/MatMul", "o/MatMul", "fc1/MatMul", "fc2/MatMul"],
+            ["context", "context", "scores", "scores"],
+        )
+
+    @pytest.mark.parametrize("splitter", ["Split", "Gather", "Slice"])
+    def test_fusable_attention_with_an_unplanned_fused_qkv_stays_float(self, splitter: str) -> None:
+        """Fusable attention whose fused qkv projection cannot be planned stays FP16 whole."""
+        model = _fused_qkv_attention(sequence=325, splitter=splitter)
+        for node in model.graph.node:
+            if node.name.endswith("qkv/MatMul"):
+                node.name = f"{HEAD}qkv/MatMul"
+        plan = quantize.plan_int8(model)
+        assert (_names(plan), [n for n, _ in plan.activations if "/scores/" in n]) == (["fc1/MatMul", "fc2/MatMul"], [])
+
+    def test_index_input_of_a_splitter_is_not_traced_as_the_projection(self) -> None:
+        """A Gather index computed from a projection is not mistaken for the gathered tensor's projection."""
+        model = _attention_and_mlp(BACKBONE, sequence=400, head_size=16)
+        graph = model.graph
+        graph.initializer.extend([_weight("wsel", 32, 1, seed=8), _ints("flat", [-1])])
+        context = next(i for i, node in enumerate(graph.node) if node.name.endswith("context/MatMul"))
+        graph.node[context].input[1] = "v3"
+        index = [
+            helper.make_node("MatMul", ["x", "wsel"], ["sel0"], f"{BACKBONE}sel/MatMul"),
+            helper.make_node("Cast", ["sel0"], ["sel1"], f"{BACKBONE}sel/Cast", to=TensorProto.INT64),
+            helper.make_node("Reshape", ["sel1", "flat"], ["sel2"], f"{BACKBONE}sel/Reshape"),
+            helper.make_node("Gather", ["v2", "sel2"], ["v3"], f"{BACKBONE}v/Gather", axis=2),
+        ]
+        for offset, node in enumerate(index):
+            graph.node.insert(context + offset, node)
+        assert _names(quantize.plan_int8(model)) == ["sel/MatMul", "fc1/MatMul", "fc2/MatMul"]
+
+    @pytest.mark.parametrize("projection", ["q", "k", "v"])
+    def test_projection_the_trace_cannot_follow_into_float_attention_is_refused(self, projection: str) -> None:
+        """A planned projection reaching FP16 attention through an op the trace does not follow is refused."""
+        model = _normed_projection_attention(projection)
+        with pytest.raises(ValueError, match="reaches the FP16 attention") as exc_info:
+            quantize.plan_int8(model)
+        assert f"{BACKBONE}{projection}/MatMul" in str(exc_info.value)
+
+    def test_unplanned_projection_the_trace_cannot_follow_is_accepted(self) -> None:
+        """A projection hidden from the trace but outside the quantized regions is accepted."""
+        model = _normed_projection_attention("q")
+        graph = model.graph
+        next(node for node in graph.node if node.name.endswith("q/MatMul")).name = f"{HEAD}q/MatMul"
+        assert _names(quantize.plan_int8(model)) == ["fc1/MatMul", "fc2/MatMul"]
+
+    def test_unplannable_projection_ends_the_walk_into_float_attention(self) -> None:
+        """An unnamed q projection, which the plan cannot name, still ends the walk from FP16 attention."""
+        model = _attention_and_mlp(BACKBONE, sequence=400, head_size=16)
+        graph = model.graph
+        graph.initializer.append(_weight("wpre", 32, 32, seed=10))
+        query = next(i for i, node in enumerate(graph.node) if node.name.endswith("q/MatMul"))
+        graph.node[query].input[0] = "x_pre"
+        graph.node[query].name = ""
+        graph.node.insert(query, helper.make_node("MatMul", ["x", "wpre"], ["x_pre"], f"{BACKBONE}pre/MatMul"))
+        assert _names(quantize.plan_int8(model)) == ["pre/MatMul", "fc1/MatMul", "fc2/MatMul"]
+
+    def test_shape_of_a_planned_layer_does_not_count_as_feeding_float_attention(self) -> None:
+        """FP16 attention scaled by a size read from a planned layer's output shape does not refuse that layer."""
+        model = _attention_and_mlp(BACKBONE, sequence=400, head_size=16)
+        graph = model.graph
+        graph.initializer.append(_weight("wside", 32, 32, seed=9))
+        scores = next(i for i, node in enumerate(graph.node) if node.name.endswith("scores/MatMul"))
+        graph.node[scores].input[0] = "q_scaled"
+        scale = [
+            helper.make_node("MatMul", ["x", "wside"], ["side"], f"{BACKBONE}side/MatMul"),
+            helper.make_node("Shape", ["side"], ["side_shape"], f"{BACKBONE}side/Shape", start=-1),
+            helper.make_node("Cast", ["side_shape"], ["size"], f"{BACKBONE}side/Cast", to=TensorProto.FLOAT),
+            helper.make_node("Div", ["q2", "size"], ["q_scaled"], f"{BACKBONE}q/Div"),
+        ]
+        for offset, node in enumerate(scale):
+            graph.node.insert(scores + offset, node)
+        assert _names(quantize.plan_int8(model)) == ["side/MatMul", "fc1/MatMul", "fc2/MatMul"]
 
     def test_gelu_chain_drops_every_projection_feeding_a_float_consumer(self) -> None:
         """A GELU chain ending in a float consumer leaves nothing to quantize and is refused."""
