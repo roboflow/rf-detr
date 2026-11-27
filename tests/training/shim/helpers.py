@@ -3,9 +3,9 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Shared config builders and helpers for the RFDETR training-shim tests (``test_detr_shim*.py``).
+"""Shared config builders and helpers for the RFDETR training-shim tests in this package.
 
-Import them with ``from tests.training._shim_support import ...``. The ``patch_lit`` fixture these tests use lives in
+Import them with ``from tests.training.shim.helpers import ...``. The ``patch_lit`` fixture these tests use lives in
 ``tests/training/conftest.py``.
 """
 

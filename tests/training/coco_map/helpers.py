@@ -3,10 +3,10 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Shared backend lists, state builders and assertions for the one-pass COCO metric tests (``test_coco_map*.py``).
+"""Shared backend lists, state builders and assertions for the one-pass COCO metric tests in this package.
 
 ``_BACKEND_ONLY`` lists every backend the adapter accepts, with the skip mark for the package it needs; the other
-backend lists derive from it. Import them with ``from tests.training._coco_map_support import ...``.
+backend lists derive from it. Import them with ``from tests.training.coco_map.helpers import ...``.
 """
 
 from typing import Any

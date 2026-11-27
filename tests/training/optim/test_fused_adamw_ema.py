@@ -357,7 +357,7 @@ def test_import_does_not_eagerly_import_triton_kernel_module() -> None:
 def test_cpu_doctest_collection_skips_triton_kernel_module(tmp_path: Path) -> None:
     """CPU test collection must not import the CUDA-only kernel module when Triton is unavailable."""
     (tmp_path / "sitecustomize.py").write_text('import sys\nsys.modules["triton"] = None\n')
-    repository_root = Path(__file__).parents[2]
+    repository_root = Path(__file__).parents[3]
     environment = os.environ.copy()
     environment["PYTHONPATH"] = os.pathsep.join((str(tmp_path), str(repository_root / "src")))
     result = subprocess.run(

@@ -100,11 +100,12 @@ repos:
         entry: '\b(importorskip|find_spec)\('
         files: ^tests/.*\.py$
         # Two groups of files stay out. Fake import finders and module-path lookups call find_spec on purpose:
-        # test_detr_shim, test_fused_adamw_ema_routing, test_from_checkpoint, test_public_facades, test_export.
+        # training/shim/test_detr_shim.py, training/optim/test_fused_adamw_ema_routing.py,
+        # test_from_checkpoint, test_public_facades, test_export.
         # The test_tensorrt_int8_* modules keep one module-level importorskip("onnx") each, because their parametrized cases build ONNX nodes at
         # collection time; moving them behind local imports is a follow-up.
         exclude: >-
-          ^tests/(training/test_detr_shim|training/test_fused_adamw_ema_routing|inference/test_from_checkpoint|export/test_public_facades|export/test_export|export/tensorrt/test_tensorrt_int8_(plan|graph|calibration))\.py$
+          ^tests/(training/shim/test_detr_shim|training/optim/test_fused_adamw_ema_routing|inference/test_from_checkpoint|export/test_public_facades|export/test_export|export/tensorrt/test_tensorrt_int8_(plan|graph|calibration))\.py$
 
       - id: mypy
         name: mypy

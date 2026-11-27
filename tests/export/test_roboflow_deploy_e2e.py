@@ -10,8 +10,8 @@ upload ``requests.put`` failure in a bare ``try/except`` that only prints — it
 side upload looks identical to a successful one from ``deploy_to_roboflow``'s return value alone (see issue #1116:
 notebook reports success, Roboflow UI shows "Model Upload Failed"). Every other ``deploy_to_roboflow`` test in this repo
 (``tests/export/test_export_for_roboflow.py``, ``tests/inference/prediction/test_core.py``,
-``tests/training/test_detr_shim.py``) mocks ``roboflow.Roboflow`` entirely, so none of them can catch a real server-side
-rejection.
+``tests/training/shim/test_detr_shim.py``) mocks ``roboflow.Roboflow`` entirely, so none of them can catch a real
+server-side rejection.
 
 This module instead generates a **fresh dataset version per run** (``Project.generate_version`` — the server assigns the
 next number itself), deploys with ``version=None`` to exercise the auto-latest resolution in ``deploy_to_roboflow``, and

@@ -19,7 +19,7 @@ from rfdetr.config import RFDETRBaseConfig, SegmentationTrainConfig, TrainConfig
 
 # ---------------------------------------------------------------------------
 # Shared config factory fixtures (used by test_module, test_datamodule,
-# test_args — avoids duplicate fixture definitions across files)
+# trainer/test_args.py — avoids duplicate fixture definitions across files)
 # ---------------------------------------------------------------------------
 
 
@@ -135,8 +135,8 @@ def _restore_rfdetr_datamodule_trainer_property():
 
 
 # ---------------------------------------------------------------------------
-# Training entry-point patches shared by the test_detr_shim*.py files and the
-# Trainer capture shared by the test_build_trainer*.py files.
+# Training entry-point patches shared by the shim/test_detr_shim*.py files and
+# Trainer capture shared by the trainer/test_build_trainer*.py files.
 # ---------------------------------------------------------------------------
 
 

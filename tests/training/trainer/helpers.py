@@ -3,9 +3,9 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Shared config builders for the ``build_trainer()`` tests (``test_build_trainer*.py``).
+"""Shared config builders for the ``build_trainer()`` tests in this package.
 
-Import them with ``from tests.training._trainer_support import ...``. The ``captured_trainer_kwargs`` and
+Import them with ``from tests.training.trainer.helpers import ...``. The ``captured_trainer_kwargs`` and
 ``mock_xla_precision`` fixtures these tests use live in ``tests/training/conftest.py``.
 """
 

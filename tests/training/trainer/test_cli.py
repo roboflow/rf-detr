@@ -41,7 +41,7 @@ from tests.training.helpers import _fake_criterion, _fake_model
 from tests.training.helpers import _mock_postprocess as _fake_postprocess
 
 #: The shipped config the trainer tests parse, as ``rfdetr fit --config configs/rfdetr_nano.yaml`` does.
-_NANO_CONFIG = Path(__file__).parents[2] / "configs" / "rfdetr_nano.yaml"
+_NANO_CONFIG = Path(__file__).parents[3] / "configs" / "rfdetr_nano.yaml"
 
 
 class _NoRunCli(RFDETRCli):
@@ -359,7 +359,7 @@ class TestRFDETRCliTrainer:
             "    raise AssertionError('CLI setup should report the missing optional dependency')",
         ]
         (tmp_path / "check_import.py").write_text("\n".join(script) + "\n")
-        source_path = Path(__file__).resolve().parents[2] / "src"
+        source_path = Path(__file__).resolve().parents[3] / "src"
         env = {**os.environ, "PYTHONPATH": os.pathsep.join((str(tmp_path), str(source_path)))}
 
         result = subprocess.run(

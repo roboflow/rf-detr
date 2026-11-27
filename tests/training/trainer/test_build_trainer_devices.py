@@ -24,7 +24,7 @@ from rfdetr.training.trainer import (
     _xla_resolves_to_single_device,
 )
 from tests._markers import _requires_torch_xla
-from tests.training._trainer_support import _configs, _kp_tc, _mc, _tc
+from tests.training.trainer.helpers import _configs, _kp_tc, _mc, _tc
 
 
 class TestBuildTrainerEMAShardingGuard:

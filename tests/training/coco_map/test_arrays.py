@@ -25,7 +25,7 @@ from tests._markers import (
     _requires_ufcoco,
     _requires_vernier,
 )
-from tests.training._coco_map_support import (
+from tests.training.coco_map.helpers import (
     _ALL_BACKENDS,
     _BACKEND_KWARGS,
     _BOX_ARRAY_BACKENDS,

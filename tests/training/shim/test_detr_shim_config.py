@@ -23,7 +23,7 @@ from rfdetr.datasets.webdataset.load import WebDatasetDetection
 from rfdetr.detr import RFDETR, _save_training_config
 from rfdetr.detr import logger as detr_logger
 from tests._markers import _requires_posix_permissions
-from tests.training._shim_support import (
+from tests.training.shim.helpers import (
     _DATASET_READ_ERRORS,
     _make_model_config,
     _make_rfdetr_self,

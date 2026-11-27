@@ -758,7 +758,8 @@ class TestEagerRewritesOnTheProductionModel:
 
         The ``captured`` case drives the model through ``CudaGraphTrainingRunner`` (``cuda_graphs=True``) under bf16
         autocast: a host-side index tensor or synchronisation in any rewrite fails the capture. The capture tests in
-        ``test_cuda_graph_step.py`` run without autocast and never reach the two autocast-only rewrites.
+        ``tests/training/optim/test_cuda_graph_step.py`` run without autocast and never reach the two autocast-only
+        rewrites.
         """
         from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 
@@ -952,12 +953,12 @@ class TestEagerRewritesOnTheProductionModel:
     def test_autocast_only_rewrites_match_the_two_op_graph_under_cuda_graph_replay(self) -> None:
         """Captured and replayed on new inputs, ``_AddInDtype`` and ``_CastThenExpand`` keep the two-op graph's values.
 
-        The capture tests in ``test_cuda_graph_step.py`` run without autocast, and the production-model capture case
-        only checks that the loss is finite. Here a minimal module around the two autocast-only rewrites is captured
-        once and replayed twice on different inputs, each time against an eager run of the plain two-op graph; a stale
-        saved tensor or an aliased output buffer shows as an error of order one. bf16 capture and eager pick different
-        kernels, so the bound is a few percent of the norm rather than the fp32 ``1e-4`` of the full-Nano fp32 test.
-        Needs a GPU; written without one.
+        The capture tests in ``tests/training/optim/test_cuda_graph_step.py`` run without autocast, and the production-
+        model capture case only checks that the loss is finite. Here a minimal module around the two autocast-only
+        rewrites is captured once and replayed twice on different inputs, each time against an eager run of the plain
+        two-op graph; a stale saved tensor or an aliased output buffer shows as an error of order one. bf16 capture and
+        eager pick different kernels, so the bound is a few percent of the norm rather than the fp32 ``1e-4`` of the
+        full-Nano fp32 test. Needs a GPU; written without one.
         """
         torch.manual_seed(0)
         reference = _AutocastRewriteBlock(rewrites=False).cuda().train()

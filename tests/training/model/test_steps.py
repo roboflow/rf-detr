@@ -427,7 +427,7 @@ class TestTrainingStep:
 
         Lightning's ``ClosureResult.from_training_step_output`` divides the returned loss by
         ``trainer.accumulate_grad_batches`` before ``backward()``. Dividing here as well would scale every accumulated
-        gradient by ``1/N**2`` (``tests/training/test_grad_accumulation.py`` holds the gradient-level proof).
+        gradient by ``1/N**2`` (``tests/training/optim/test_grad_accumulation.py`` holds the gradient-level proof).
         """
         loss_dict = {"loss_ce": torch.tensor(4.0)}
         weight_dict = {"loss_ce": 1.0}

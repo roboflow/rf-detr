@@ -20,7 +20,7 @@ from pytorch_lightning.utilities.exceptions import MisconfigurationException
 from rfdetr.training import build_trainer
 from rfdetr.utilities.imports import _IS_TRANSFORMER_ENGINE_INSTALLED
 from tests._markers import _requires_torch_xla
-from tests.training._trainer_support import _mc, _tc
+from tests.training.trainer.helpers import _mc, _tc
 
 _requires_transformer_engine = pytest.mark.skipif(
     not _IS_TRANSFORMER_ENGINE_INSTALLED, reason="requires the 'cuda' extra (transformer-engine)"

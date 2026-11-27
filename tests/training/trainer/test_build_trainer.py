@@ -29,7 +29,7 @@ from rfdetr.training.callbacks.drop_schedule import DropPathCallback
 from rfdetr.training.callbacks.ema import RFDETREMACallback
 from rfdetr.training.trainer import _ForceLastEpochValidationCallback
 from tests._markers import _requires_hotcoco
-from tests.training._trainer_support import _configs, _kp_tc, _mc, _tc
+from tests.training.trainer.helpers import _configs, _kp_tc, _mc, _tc
 
 
 def _kp_preview_mc():

@@ -27,7 +27,7 @@ from rfdetr.training.coco_map import (
     _VernierBackend,
 )
 from tests._markers import _requires_hotcoco, _requires_ufcoco, _requires_vernier
-from tests.training._coco_map_support import (
+from tests.training.coco_map.helpers import (
     _ALTERNATIVE_BACKENDS,
     _BACKEND_KWARGS,
     _assert_results_close,

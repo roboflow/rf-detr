@@ -322,9 +322,9 @@ class TestOnLoadCheckpoint:
     def test_pre_merge_optimizer_state_is_regrouped(self) -> None:
         """on_load_checkpoint itself regroups one-group-per-parameter optimizer state.
 
-        tests/training/test_param_groups.py exercises regroup_unmerged_optimizer_state() directly; this proves the hook
-        actually calls it, since a wiring mistake there (wrong argument, wrong order relative to the other normalisation
-        steps, a silently swallowed exception) would not be caught by calling the helper on its own.
+        tests/training/optim/test_param_groups.py exercises regroup_unmerged_optimizer_state() directly; this proves the
+        hook actually calls it, since a wiring mistake there (wrong argument, wrong order relative to the other
+        normalisation steps, a silently swallowed exception) would not be caught by calling the helper on its own.
         """
         fake = _FakeModule()
         ckpt = {

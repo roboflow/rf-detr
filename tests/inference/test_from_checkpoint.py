@@ -645,13 +645,13 @@ def args_only_checkpoint(tmp_path: Path) -> Path:
 def two_class_checkpoint(tmp_path: Path) -> Path:
     """Save a minimal synthetic 2-class checkpoint to disk (no downloads, no real weights).
 
-    Follows the lightweight checkpoint pattern used elsewhere in the suite (``test_detr_shim``,
-    ``test_load_pretrain_weights``): write only what ``from_checkpoint``/``load_pretrain_weights`` actually inspect —
-    the ``class_embed.bias`` tensor sized for 2 classes + background, plus the metadata used to resolve the model
-    (``model_name``) and the class count (``model_config`` carrying ``num_classes=2``).  A *non-default*
-    ``num_classes`` is what trips the user-override guards, so it is written explicitly rather than relying on a
-    published checkpoint (whose default 90 would not trip them).  ``from_checkpoint`` still builds a real model from
-    this, which is what the provenance and head-shape assertions exercise.
+    Follows the lightweight checkpoint pattern in ``tests/training/shim/test_detr_shim.py`` and
+    ``tests/training/model/test_load_pretrain_weights.py``. Write only what ``from_checkpoint`` and
+    ``load_pretrain_weights`` inspect — the ``class_embed.bias`` tensor sized for 2 classes + background, plus the
+    metadata used to resolve the model (``model_name``) and the class count (``model_config`` with ``num_classes=2``).
+    A *non-default* ``num_classes`` is what trips the user-override guards, so it is written explicitly rather than
+    relying on a published checkpoint (whose default 90 would not trip them).
+    The provenance and head-shape assertions exercise the real model built by ``from_checkpoint``.
 
     Args:
         tmp_path: Pytest temporary directory.

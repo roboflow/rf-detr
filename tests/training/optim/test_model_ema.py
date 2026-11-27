@@ -52,7 +52,7 @@ class TestBestMetricSingle:
 
     def test_rejects_invalid_better_under_optimized_mode(self) -> None:
         """The check must not rely on ``assert``, which ``python -O`` strips."""
-        source_root = Path(__file__).parents[2] / "src"
+        source_root = Path(__file__).parents[3] / "src"
         code = "\n".join(
             [
                 "import sys",

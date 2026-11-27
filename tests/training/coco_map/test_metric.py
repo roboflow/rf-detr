@@ -20,7 +20,7 @@ from torchmetrics.detection.helpers import CocoBackend
 from rfdetr.config import CocoEvalBackend
 from rfdetr.training.coco_map import _BACKENDS, OnePassCocoMeanAveragePrecision
 from tests._markers import _requires_gloo_spawn
-from tests.training._coco_map_support import (
+from tests.training.coco_map.helpers import (
     _ALL_BACKENDS,
     _BACKEND_KWARGS,
     _BACKEND_ONLY,
@@ -676,7 +676,7 @@ def _distributed_empty_rank_worker(rank: int, world_size: int, init_file: str, b
 
 
 # Windows CI currently cannot run this spawn test because gloo DDP spawn fails with
-# makeDeviceForHostname unsupported-device errors (see tests/training/test_trainer_smoke.py).
+# makeDeviceForHostname unsupported-device errors (see tests/training/trainer/test_trainer_smoke.py).
 @pytest.mark.ddp
 @_requires_gloo_spawn
 @pytest.mark.parametrize("backend", _NON_STREAMING_BACKENDS)

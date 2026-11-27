@@ -29,7 +29,7 @@ from rfdetr.detr import logger as detr_logger
 from rfdetr.models.postprocess import PostProcess
 from rfdetr.training.auto_batch import AutoBatchResult
 from tests.inference.helpers import _DummyRFDETR
-from tests.training._shim_support import (
+from tests.training.shim.helpers import (
     _DATASET_READ_ERRORS,
     _make_rfdetr_self,
     _make_train_config,
