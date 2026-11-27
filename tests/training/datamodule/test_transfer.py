@@ -486,6 +486,9 @@ class TestOnAfterBatchTransfer:
         )
         dm._resolved_augmentation_backend = AugmentationBackend.KORNIA
         dm._setup_kornia_pipeline()
+        # The data module keeps translate_px off the GPU (it runs on the CPU before the resize), so build the GPU
+        # pixel-affine pipeline directly to exercise the transfer hook's handling of it.
+        dm._kornia_pipeline = build_kornia_pipeline(config, dm.model_config.resolution, with_masks=True)
         dm = self._attach_mock_trainer(dm, training=True)
         image = torch.zeros(1, 3, 64, 80, device=device)
         image[:, :, 30:34, 30:34] = 1.0
@@ -525,16 +528,16 @@ class TestOnAfterBatchTransfer:
     @_requires_kornia
     def test_pixel_affine_drops_box_and_mask_shifted_out_of_frame(self, tmp_path: Path) -> None:
         """A translated-out object must not remain as a zero-area training target."""
+        config = {"Affine": {"translate_px": {"x": 60}, "p": 1.0}}
         dm = RFDETRDataModule(
             _base_model_config(segmentation_head=True),
-            _base_train_config(
-                tmp_path,
-                aug_config={"Affine": {"translate_px": {"x": 60}, "p": 1.0}},
-                augmentation_backend="kornia",
-            ),
+            _base_train_config(tmp_path, aug_config=config, augmentation_backend="kornia"),
         )
         dm._resolved_augmentation_backend = AugmentationBackend.KORNIA
         dm._setup_kornia_pipeline()
+        # The data module keeps translate_px off the GPU (it runs on the CPU before the resize), so build the GPU
+        # pixel-affine pipeline directly to exercise the transfer hook's handling of it.
+        dm._kornia_pipeline = build_kornia_pipeline(config, dm.model_config.resolution, with_masks=True)
         dm = self._attach_mock_trainer(dm, training=True)
         image = torch.zeros(1, 3, 64, 80)
         mask = torch.zeros(1, 64, 80, dtype=torch.bool)
