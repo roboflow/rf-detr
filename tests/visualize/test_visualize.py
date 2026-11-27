@@ -3,15 +3,18 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Tests for RF-DETR training metric visualization helpers."""
+
+"""Tests for RF-DETR training metric visualization helpers.
+
+Tests for the RF-DETR ground-truth/prediction visualization helper.
+
+Tests for private RF-DETR keypoint visualization helpers.
+"""
 
 from __future__ import annotations
-
 from pathlib import Path
-
 import numpy as np
 import pytest
-
 from rfdetr.utilities.imports import _IS_MATPLOTLIB_INSTALLED, _IS_PANDAS_INSTALLED, _IS_SEABORN_INSTALLED
 from rfdetr.visualize.training import (
     _build_metric_groups,
@@ -22,14 +25,24 @@ from rfdetr.visualize.training import (
     plot_map_metrics,
     plot_metrics,
 )
+from PIL import Image
+from pytest_mock import MockerFixture
+from rfdetr.visualize.data import save_gt_predictions_visualization
+import supervision as sv
+from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
+from rfdetr.visualize.keypoints import _key_points_for_display, _keypoint_prediction_records
 
 _requires_pandas = pytest.mark.skipif(
     not _IS_PANDAS_INSTALLED, reason="pandas not installed; skip metrics DataFrame tests"
 )
+
+
 _requires_plotting = pytest.mark.skipif(
     not (_IS_MATPLOTLIB_INSTALLED and _IS_PANDAS_INSTALLED),
     reason="matplotlib/pandas not installed; skip metric plotting tests",
 )
+
+
 _requires_seaborn_plotting = pytest.mark.skipif(
     not (_IS_MATPLOTLIB_INSTALLED and _IS_PANDAS_INSTALLED and _IS_SEABORN_INSTALLED),
     reason="matplotlib/pandas/seaborn not installed; skip seaborn plotting tests",
@@ -450,3 +463,330 @@ def test_plot_metrics_adds_legends_to_all_populated_subplots(tmp_path: Path) -> 
     assert detection_ax.get_legend() is not None, "Detection AP@0.50 subplot should have legend"
 
     plt.close(figure)
+
+
+class TestSaveGtPredictionsVisualization:
+    """Tests for `save_gt_predictions_visualization`."""
+
+    def test_saves_png_with_gt_and_pred_boxes(self, tmp_path: Path) -> None:
+        """A scenario with both ground-truth and prediction boxes saves a PNG named after it.
+
+        This is the function's primary contract: given at least one box on each side, it renders and persists
+        `<scenario_name>.png` under `save_dir` without raising.
+        """
+        save_gt_predictions_visualization(
+            scenario_name="scenario_a",
+            image_width=8,
+            image_height=8,
+            gt_boxes=[[1.0, 1.0, 2.0, 2.0]],
+            gt_class_ids=[1],
+            pred_boxes=[[2.0, 2.0, 2.0, 2.0]],
+            pred_class_ids=[1],
+            pred_confidences=[0.9],
+            pred_ious=[0.5],
+            save_dir=tmp_path,
+        )
+
+        assert (tmp_path / "scenario_a.png").is_file()
+
+    def test_creates_missing_save_directory(self, tmp_path: Path) -> None:
+        """A `save_dir` that does not exist yet is created rather than raising.
+
+        Mirrors a fresh training run's first visualization call, where the target directory has not been created by any
+        earlier step.
+        """
+        save_dir = tmp_path / "viz"
+
+        save_gt_predictions_visualization(
+            scenario_name="scenario_b",
+            image_width=4,
+            image_height=4,
+            gt_boxes=[[0.0, 0.0, 1.0, 1.0]],
+            gt_class_ids=[1],
+            pred_boxes=[[0.0, 0.0, 1.0, 1.0]],
+            pred_class_ids=[1],
+            pred_confidences=[0.5],
+            pred_ious=[None],
+            save_dir=save_dir,
+        )
+
+        assert save_dir.is_dir()
+        assert (save_dir / "scenario_b.png").is_file()
+
+    def test_output_image_includes_top_padding(self, tmp_path: Path) -> None:
+        """Saved image height equals the requested height plus the fixed 60px label strip.
+
+        The top padding reserves room for labels above the boxes; a regression here would silently crop or misplace
+        every annotation.
+        """
+        save_gt_predictions_visualization(
+            scenario_name="scenario_c",
+            image_width=10,
+            image_height=20,
+            gt_boxes=[[0.0, 0.0, 1.0, 1.0]],
+            gt_class_ids=[1],
+            pred_boxes=[[0.0, 0.0, 1.0, 1.0]],
+            pred_class_ids=[1],
+            pred_confidences=[0.5],
+            pred_ious=[None],
+            save_dir=tmp_path,
+        )
+
+        with Image.open(tmp_path / "scenario_c.png") as image:
+            assert image.size == (10, 80)
+
+    @pytest.mark.parametrize(
+        ("pred_iou", "expected_label"),
+        [
+            pytest.param(0.512, "c2\nconf=0.876\niou=0.512", id="iou-known"),
+            pytest.param(None, "c2\nconf=0.876", id="iou-unknown"),
+        ],
+    )
+    def test_pred_label_reflects_iou_availability(
+        self, mocker: MockerFixture, tmp_path: Path, pred_iou: float | None, expected_label: str
+    ) -> None:
+        """Prediction labels append the IoU segment only when an IoU value is known.
+
+        An unmatched false-positive prediction carries `iou=None`; the label loop must drop the IoU segment in that case
+        instead of formatting `None` into the string.
+        """
+        mocker.patch("rfdetr.visualize.data.BoxAnnotator")
+        mock_label_annotator = mocker.patch("rfdetr.visualize.data.LabelAnnotator")
+
+        save_gt_predictions_visualization(
+            scenario_name="scenario_d",
+            image_width=6,
+            image_height=6,
+            gt_boxes=[[0.0, 0.0, 1.0, 1.0]],
+            gt_class_ids=[1],
+            pred_boxes=[[0.0, 0.0, 2.0, 2.0]],
+            pred_class_ids=[2],
+            pred_confidences=[0.876],
+            pred_ious=[pred_iou],
+            save_dir=tmp_path,
+        )
+
+        pred_labels = mock_label_annotator.return_value.annotate.call_args_list[-1].kwargs["labels"]
+        assert pred_labels == [expected_label]
+
+    def test_gt_and_pred_boxes_offset_by_top_padding(self, mocker: MockerFixture, tmp_path: Path) -> None:
+        """Both GT and prediction boxes are shifted down by the 60px top padding before annotation.
+
+        Verifies the xywh->xyxy conversion sees the offset y-coordinate, and that each side's class ids (and the
+        prediction's confidence) reach the annotator unchanged.
+        """
+        mock_box_annotator = mocker.patch("rfdetr.visualize.data.BoxAnnotator")
+        mocker.patch("rfdetr.visualize.data.LabelAnnotator")
+
+        save_gt_predictions_visualization(
+            scenario_name="scenario_e",
+            image_width=8,
+            image_height=6,
+            gt_boxes=[[0.0, 0.0, 4.0, 4.0]],
+            gt_class_ids=[1],
+            pred_boxes=[[1.0, 1.0, 2.0, 2.0]],
+            pred_class_ids=[2],
+            pred_confidences=[0.75],
+            pred_ious=[None],
+            save_dir=tmp_path,
+        )
+
+        gt_call, pred_call = mock_box_annotator.return_value.annotate.call_args_list
+        np.testing.assert_array_equal(gt_call.kwargs["detections"].xyxy, np.array([[0.0, 60.0, 4.0, 64.0]]))
+        np.testing.assert_array_equal(gt_call.kwargs["detections"].class_id, np.array([1]))
+        np.testing.assert_array_equal(pred_call.kwargs["detections"].xyxy, np.array([[1.0, 61.0, 3.0, 63.0]]))
+        np.testing.assert_array_equal(pred_call.kwargs["detections"].class_id, np.array([2]))
+        np.testing.assert_array_equal(pred_call.kwargs["detections"].confidence, np.array([0.75]))
+
+
+class TestSaveGtPredictionsVisualizationEmptyBoxes:
+    """An empty ``gt_boxes`` or ``pred_boxes`` list must be a no-op for that side, not a crash."""
+
+    @pytest.mark.parametrize(
+        ("num_gt", "num_pred"),
+        [
+            (0, 1),  # no ground truth: former IndexError, 1-D np.array([]) indexed as 2-D by xywh_to_xyxy
+            (1, 0),  # no predictions: same IndexError on the prediction side
+            (0, 0),  # neither side: blank visualization
+        ],
+    )
+    def test_saves_png_when_a_side_is_empty(self, tmp_path: Path, num_gt: int, num_pred: int) -> None:
+        """A scenario with an empty GT and/or prediction side still saves its visualization.
+
+        Regression test for an ``IndexError``: an empty box list produced a 1-D ``np.array([])`` that ``xywh_to_xyxy``
+        then indexed as 2-D.
+        """
+        scenario_name = f"gt{num_gt}_pred{num_pred}"
+
+        save_gt_predictions_visualization(
+            scenario_name=scenario_name,
+            image_width=32,
+            image_height=32,
+            gt_boxes=[[4.0, 4.0, 8.0, 8.0]] * num_gt,
+            gt_class_ids=[1] * num_gt,
+            pred_boxes=[[4.0, 4.0, 8.0, 8.0]] * num_pred,
+            pred_class_ids=[1] * num_pred,
+            pred_confidences=[0.9] * num_pred,
+            pred_ious=[None] * num_pred,
+            save_dir=tmp_path,
+        )
+
+        assert (tmp_path / f"{scenario_name}.png").exists()
+
+
+class TestPrecisionCholeskyToPixelCovariance:
+    """Tests for `precision_cholesky_to_pixel_covariance`."""
+
+    def test_identity_precision_scales_to_pixel_variance(self) -> None:
+        """Identity normalized precision should scale to width/height pixel variance."""
+        precision_cholesky = np.array([[[0.0, 0.0, 0.0]]], dtype=np.float32)
+        source_shape = np.array([[10.0, 20.0]], dtype=np.float32)
+
+        covariance = precision_cholesky_to_pixel_covariance(
+            precision_cholesky=precision_cholesky, source_shape=source_shape
+        )
+
+        expected = np.array([[[[400.0, 0.0], [0.0, 100.0]]]], dtype=np.float32)
+        np.testing.assert_allclose(covariance, expected, rtol=1e-4, atol=1e-6)
+
+    def test_does_not_clamp_log_cholesky(self) -> None:
+        """Covariance display should use raw RF-DETR precision parameters."""
+        precision_cholesky = np.array([[[25.0, 0.0, 0.0]]], dtype=np.float32)
+        source_shape = np.array([[1.0, 1.0]], dtype=np.float32)
+
+        covariance = precision_cholesky_to_pixel_covariance(
+            precision_cholesky=precision_cholesky, source_shape=source_shape
+        )
+
+        np.testing.assert_allclose(covariance[0, 0, 0, 0], np.exp(-50.0), rtol=1e-4, atol=1e-28)
+
+    @pytest.mark.parametrize(
+        ("precision_shape", "source_shape", "message"),
+        [
+            ((1, 2, 4), (1, 2), "precision_cholesky must have shape"),
+            ((2, 1, 3), (1, 2), "source_shape must have shape"),
+        ],
+    )
+    def test_rejects_bad_shape(self, precision_shape: tuple, source_shape: tuple, message: str) -> None:
+        """Invalid precision and source shapes should fail before annotation."""
+        with pytest.raises(ValueError) as exc_info:
+            precision_cholesky_to_pixel_covariance(
+                precision_cholesky=np.zeros(precision_shape, dtype=np.float32),
+                source_shape=np.zeros(source_shape, dtype=np.float32),
+            )
+
+        assert message in str(exc_info.value)
+
+
+class TestKeyPointsForDisplay:
+    """Tests for `_key_points_for_display`."""
+
+    def test_builds_keypoints_with_covariance_and_masks_low_confidence(self) -> None:
+        """RF-DETR keypoints become annotator-ready keypoints with covariance and a low-confidence visibility mask."""
+        predictions = sv.KeyPoints(
+            xy=np.array([[[1.0, 2.0], [3.0, 4.0]]], dtype=np.float32),
+            keypoint_confidence=np.array([[0.9, 0.1]], dtype=np.float32),
+            detection_confidence=np.array([0.95], dtype=np.float32),
+            class_id=np.array([3], dtype=int),
+            data={
+                "keypoint_precision_cholesky": np.array([[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]], dtype=np.float32),
+                "source_shape": np.array([[10, 20]], dtype=np.int64),
+                "xyxy": np.array([[0, 0, 10, 10]], dtype=np.float32),
+            },
+        )
+
+        key_points = _key_points_for_display(predictions, keypoint_threshold=0.2)
+
+        np.testing.assert_allclose(
+            key_points.xy, np.array([[[1.0, 2.0], [3.0, 4.0]]], dtype=np.float32), rtol=1e-4, atol=1e-6
+        )
+        np.testing.assert_allclose(
+            key_points.keypoint_confidence, np.array([[0.9, 0.1]], dtype=np.float32), rtol=1e-4, atol=1e-6
+        )
+        np.testing.assert_array_equal(key_points.visible, np.array([[True, False]]))
+        np.testing.assert_array_equal(key_points.class_id, np.array([3]))
+        assert "covariance" in key_points.data
+        assert key_points.data["covariance"].shape == (1, 2, 2, 2)
+
+    def test_accepts_keypoints_directly(self) -> None:
+        """RF-DETR KeyPoints should be annotator-ready without converting through Detections."""
+        predictions = sv.KeyPoints(
+            xy=np.array([[[1.0, 2.0], [3.0, 4.0]]], dtype=np.float32),
+            keypoint_confidence=np.array([[0.9, 0.1]], dtype=np.float32),
+            detection_confidence=np.array([0.95], dtype=np.float32),
+            data={
+                "keypoint_precision_cholesky": np.array([[[0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]], dtype=np.float32),
+                "source_shape": np.array([[10, 20]], dtype=np.int64),
+                "xyxy": np.array([[0, 0, 10, 10]], dtype=np.float32),
+            },
+        )
+
+        key_points = _key_points_for_display(predictions, keypoint_threshold=0.2)
+
+        np.testing.assert_allclose(
+            key_points.xy, np.array([[[1.0, 2.0], [3.0, 4.0]]], dtype=np.float32), rtol=1e-4, atol=1e-6
+        )
+        np.testing.assert_array_equal(key_points.visible, np.array([[True, False]]))
+        np.testing.assert_array_equal(key_points.data["xyxy"], predictions.data["xyxy"])
+        np.testing.assert_array_equal(key_points.detection_confidence, predictions.detection_confidence)
+        assert "covariance" in key_points.data
+
+    def test_preserves_existing_covariance(self) -> None:
+        """Display preparation should not overwrite covariance emitted by prediction."""
+        covariance = np.array([[[[1.0, 0.0], [0.0, 2.0]]]], dtype=np.float32)
+        predictions = sv.KeyPoints(
+            xy=np.array([[[1.0, 2.0]]], dtype=np.float32),
+            keypoint_confidence=np.array([[0.9]], dtype=np.float32),
+            data={
+                "covariance": covariance,
+                "keypoint_precision_cholesky": np.array([[[0.0, 0.0, 0.0]]], dtype=np.float32),
+                "source_shape": np.array([[10, 20]], dtype=np.int64),
+            },
+        )
+
+        key_points = _key_points_for_display(predictions)
+
+        np.testing.assert_array_equal(key_points.data["covariance"], covariance)
+
+    def test_rejects_keypoints_without_confidence_channel(self) -> None:
+        """RF-DETR display helper expects per-keypoint confidence."""
+        key_points = sv.KeyPoints(xy=np.array([[[1.0, 2.0]]], dtype=np.float32))
+
+        with pytest.raises(ValueError, match="Expected RF-DETR keypoints"):
+            _key_points_for_display(key_points)
+
+    def test_returns_empty_keypoints_unchanged(self) -> None:
+        """Empty KeyPoints (zero detections) should be returned unchanged without raising."""
+        empty_predictions = sv.KeyPoints.empty()
+
+        result = _key_points_for_display(empty_predictions)
+
+        assert len(result) == 0, f"Expected empty KeyPoints, got len={len(result)}"
+
+
+def test_keypoint_prediction_records_flattens_visible_keypoints() -> None:
+    """Prediction records should expose detection and keypoint confidence for visible non-zero points."""
+    key_points = sv.KeyPoints(
+        xy=np.array([[[1.0, 2.0], [0.0, 0.0], [3.0, 4.0]]], dtype=np.float32),
+        keypoint_confidence=np.array([[0.9, 0.99, 0.1]], dtype=np.float32),
+        detection_confidence=np.array([0.95], dtype=np.float32),
+        class_id=np.array([2], dtype=int),
+        visible=np.array([[True, True, False]]),
+        data={"class_name": np.array(["dartboard"], dtype=object)},
+    )
+
+    records = _keypoint_prediction_records(key_points, image=Path("/tmp/sample.jpg"), keypoint_threshold=0.2)
+
+    assert records == [
+        {
+            "image": "sample.jpg",
+            "detection_index": 0,
+            "class_id": 2,
+            "class_name": "dartboard",
+            "detection_confidence": pytest.approx(0.95),
+            "keypoint_index": 0,
+            "x": pytest.approx(1.0),
+            "y": pytest.approx(2.0),
+            "keypoint_confidence": pytest.approx(0.9),
+        }
+    ]
