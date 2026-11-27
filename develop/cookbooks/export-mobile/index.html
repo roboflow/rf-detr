@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-21T21:18:00">
+  <meta property="article:modified_time" content="2026-11-27T14:56:07">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-21T21:18:00",
+    "dateModified": "2026-11-27T14:56:07",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -5668,15 +5668,12 @@ Linux <code>executorch</code> wheel (so Colab works out of the box); on macOS in
 <code>brew install flatbuffers</code>.</p>
 </blockquote>
 <blockquote>
-<p><strong><code>executorch&gt;=1.3.1,&lt;1.4</code> is pinned deliberately.</strong> <code>pyproject.toml</code>'s <code>[executorch]</code> extra is
-capped at <code>&gt;=1.3,&lt;1.4</code> and says "validated on 1.3.1". One reason for the cap:
-<code>executorch==1.5.1</code> raises
-<code>RuntimeError: tensor does not have a device</code> from <code>executorch::extension::alias_tensor_ptr_to_attensor</code>
-on every <code>method.execute(...)</code> call on this platform (confirmed with <code>torch.randn</code>, <code>torch.zeros</code>,
-and cloned/contiguous variants — all six failed identically, then all six succeeded after
-downgrading to 1.3.1 alone, with no other package changed). Keep the explicit
-<code>executorch&gt;=1.3.1,&lt;1.4</code> range until this regression is confirmed fixed upstream and
-<code>pyproject.toml</code>'s validated version is bumped.</p>
+<p><strong><code>executorch</code> and <code>torch</code> have to match.</strong> Each <code>executorch</code> release is compiled against one <code>torch</code>
+minor release (1.5 against 2.14), and <code>executorch</code> 1.5 declares no <code>torch</code> requirement of its own. Next to
+<code>torch</code> 2.12 it installs without a warning and then raises
+<code>RuntimeError: tensor does not have a device</code> on every <code>method.execute(...)</code> call. The <code>[executorch]</code> extra
+therefore carries the <code>torch</code> range too, and together with <code>[litert]</code> it resolves to <code>executorch</code> 1.5 on
+<code>torch</code> 2.14. Do not add a separate <code>torch</code> pin to the install line below.</p>
 </blockquote>
 </div>
 </div>
@@ -5702,13 +5699,13 @@ downgrading to 1.3.1 alone, with no other package changed). Keep the explicit
 </div>
 <div class="highlight-ipynb hl-python"><pre><span></span><span class="n">RFDETR_SPEC</span> <span class="o">=</span> <span class="s2">"rfdetr[litert,executorch] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"</span>
 <span class="c1"># RFDETR_SPEC = "rfdetr[litert,executorch]&gt;=1.12,&lt;2"</span>
-<span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"</span><span class="si">{RFDETR_SPEC}</span><span class="s2">"</span> <span class="s2">"torch&lt;2.13"</span> <span class="s2">"executorch&gt;=1.3.1,&lt;1.4"</span> <span class="n">psutil</span> <span class="n">supervision</span> <span class="n">pandas</span> <span class="n">tabulate</span> <span class="n">faster</span><span class="o">-</span><span class="n">coco</span><span class="o">-</span><span class="nb">eval</span>
+<span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="s2">"</span><span class="si">{RFDETR_SPEC}</span><span class="s2">"</span> <span class="n">psutil</span> <span class="n">supervision</span> <span class="n">pandas</span> <span class="n">tabulate</span> <span class="n">faster</span><span class="o">-</span><span class="n">coco</span><span class="o">-</span><span class="nb">eval</span>
 <span class="err">!</span><span class="n">pip</span> <span class="n">install</span> <span class="o">-</span><span class="n">q</span> <span class="o">--</span><span class="n">force</span><span class="o">-</span><span class="n">reinstall</span> <span class="o">--</span><span class="n">no</span><span class="o">-</span><span class="n">deps</span> <span class="s2">"pillow==11.3.0"</span>
 <span class="err">!</span><span class="n">pip</span> <span class="n">uninstall</span> <span class="o">-</span><span class="n">q</span> <span class="o">-</span><span class="n">y</span> <span class="n">torchaudio</span>
 </pre></div>
 <div class="clipboard-copy-txt" id="cell-22">RFDETR_SPEC = "rfdetr[litert,executorch] @ https://github.com/roboflow/rf-detr/archive/refs/heads/develop.zip"
 # RFDETR_SPEC = "rfdetr[litert,executorch]&gt;=1.12,&lt;2"
-!pip install -q "{RFDETR_SPEC}" "torch&lt;2.13" "executorch&gt;=1.3.1,&lt;1.4" psutil supervision pandas tabulate faster-coco-eval
+!pip install -q "{RFDETR_SPEC}" psutil supervision pandas tabulate faster-coco-eval
 !pip install -q --force-reinstall --no-deps "pillow==11.3.0"
 !pip uninstall -q -y torchaudio</div>
 </div>
@@ -5759,7 +5756,7 @@ downgrading to 1.3.1 alone, with no other package changed). Keep the explicit
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">rfdetr</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr</span><span class="w"> </span><span class="kn">import</span> <span class="n">RFDETRInference</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">BenchmarkConfig</span><span class="p">,</span> <span class="n">BenchmarkRows</span><span class="p">,</span> <span class="n">cpu_brand</span><span class="p">,</span> <span class="n">visualize_detections</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export._benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">BenchmarkConfig</span><span class="p">,</span> <span class="n">BenchmarkRows</span><span class="p">,</span> <span class="n">_artifact_size_mb</span><span class="p">,</span> <span class="n">cpu_brand</span><span class="p">,</span> <span class="n">visualize_detections</span>  <span class="c1"># noqa: F811</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rfdetr.export.benchmark</span><span class="w"> </span><span class="kn">import</span> <span class="n">measure_latency</span><span class="p">,</span> <span class="n">measure_memory</span>
 
 <span class="n">MODEL_SIZE</span> <span class="o">=</span> <span class="s2">"small"</span>  <span class="c1"># nano, small, medium, large; Plus detection: atto, femto, pico, xlarge, 2xlarge</span>
@@ -5792,7 +5789,7 @@ from PIL import Image
 
 import rfdetr
 from rfdetr import RFDETRInference
-from rfdetr.export._benchmark import BenchmarkConfig, BenchmarkRows, cpu_brand, visualize_detections
+from rfdetr.export._benchmark import BenchmarkConfig, BenchmarkRows, _artifact_size_mb, cpu_brand, visualize_detections  # noqa: F811
 from rfdetr.export.benchmark import measure_latency, measure_memory
 
 MODEL_SIZE = "small"  # nano, small, medium, large; Plus detection: atto, femto, pico, xlarge, 2xlarge
@@ -5888,7 +5885,7 @@ artifacts: dict = {}</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=0d48785d">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=3305b4de">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -6032,7 +6029,7 @@ print(f"Sample image: {image.size[0]}×{image.size[1]}")</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=8197e5bb">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=23c664a3">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -6043,7 +6040,7 @@ print(f"Sample image: {image.size[0]}×{image.size[1]}")</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=84a7044c">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=a432a3fb">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -6080,7 +6077,7 @@ visualize_detections(baseline_detections, image)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=4b885589">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=898c1999">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -6091,7 +6088,7 @@ visualize_detections(baseline_detections, image)</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=0475d94b">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=7b7d333c">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -6148,7 +6145,7 @@ visualize_detections(baseline_detections, image)</div>
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=b7f18edf">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=a1219368">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -6159,7 +6156,7 @@ visualize_detections(baseline_detections, image)</div>
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=377a7a91">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=11a9d2a1">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -6264,7 +6261,7 @@ for batch in BATCH_SIZES:
 </div>
 </div>
 </div>
-<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=5811f48d">
+<div class="jp-Cell jp-MarkdownCell jp-Notebook-cell" id="cell-id=aa84b740">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -6275,7 +6272,7 @@ for batch in BATCH_SIZES:
 </div>
 </div>
 </div><div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs">
-<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=4fb9e972">
+<div class="jp-Cell jp-CodeCell jp-Notebook-cell jp-mod-noOutputs" id="cell-id=e74b70dc">
 <div class="jp-Cell-inputWrapper" tabindex="0">
 <div class="jp-Collapser jp-InputCollapser jp-Cell-inputCollapser">
 </div>
@@ -6869,7 +6866,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 21, 2026 21:18:00 UTC">2026-11-21 21:18:00</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 27, 2026 14:56:07 UTC">2026-11-27 14:56:07</span>
   </span>
 
     
