@@ -3,7 +3,11 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Parity tests for the combined CUDA training update."""
+
+"""Parity tests for the combined CUDA training update.
+
+Tests for best-metric tracking in ``rfdetr.training.model_ema``.
+"""
 
 from __future__ import annotations
 
@@ -14,7 +18,7 @@ import subprocess
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 import pytorch_lightning as pl
@@ -26,6 +30,7 @@ from torch.utils.data import DataLoader, Dataset
 from rfdetr.config import RFDETRNanoConfig, TrainConfig
 from rfdetr.training.callbacks.ema import RFDETREMACallback
 from rfdetr.training.fused_adamw_ema import FusedAdamWEMA
+from rfdetr.training.model_ema import BestMetricHolder, BestMetricSingle
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.tensors import NestedTensor
 from tests._markers import _requires_cuda
@@ -936,3 +941,73 @@ def test_trainer_resume_with_accumulation_continues_combined_update(
     assert int(callback._average_model.n_averaged) == 2
     assert optimizer.ema_update_step == 2
     assert all(torch.isfinite(parameter).all() for parameter in callback._average_model.module.parameters())
+
+
+class TestBestMetricSingle:
+    """Validation of the ``better`` argument of ``BestMetricSingle``."""
+
+    @pytest.mark.parametrize(
+        "better",
+        [
+            "invalid",
+            "LARGE",
+            None,
+            pytest.param("", id="empty"),
+            b"large",
+            pytest.param(["large"], id="list"),
+            1,
+        ],
+    )
+    def test_rejects_invalid_better(self, better: object) -> None:
+        """An unknown ``better`` value is rejected at construction."""
+        with pytest.raises(ValueError) as exc_info:
+            BestMetricSingle(better=better)  # type: ignore[arg-type]
+        assert "'better' must be 'large' or 'small'" in str(exc_info.value)
+
+    @pytest.mark.parametrize("better", ["invalid", 1])
+    def test_error_message_names_offending_value(self, better: object) -> None:
+        """The ``ValueError`` message shows the rejected value."""
+        with pytest.raises(ValueError) as exc_info:
+            BestMetricSingle(better=better)  # type: ignore[arg-type]
+        assert f"got {better!r}" in str(exc_info.value)
+
+    def test_holder_rejects_invalid_better(self) -> None:
+        """``BestMetricHolder`` passes ``better`` through and rejects it too."""
+        with pytest.raises(ValueError) as exc_info:
+            BestMetricHolder(better="invalid")  # type: ignore[arg-type]
+        assert "'better' must be 'large' or 'small'" in str(exc_info.value)
+
+    def test_rejects_invalid_better_under_optimized_mode(self) -> None:
+        """The check must not rely on ``assert``, which ``python -O`` strips."""
+        source_root = Path(__file__).parents[3] / "src"
+        code = "\n".join(
+            [
+                "import sys",
+                "if not sys.flags.optimize:",
+                "    raise SystemExit('python -O was not applied')",
+                "from rfdetr.training.model_ema import BestMetricSingle",
+                "try:",
+                "    BestMetricSingle(better='invalid')",
+                "except ValueError:",
+                "    print('raised')",
+            ]
+        )
+        environment = os.environ.copy()
+        # The child does not inherit pytest's ``pythonpath``; pin it to the tree under test, not an installed copy.
+        environment["PYTHONPATH"] = os.pathsep.join(filter(None, (str(source_root), environment.get("PYTHONPATH"))))
+        result = subprocess.run(
+            [sys.executable, "-O", "-c", code],
+            check=False,
+            text=True,
+            capture_output=True,
+            timeout=60,
+            env=environment,
+        )
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.strip() == "raised"
+
+    @pytest.mark.parametrize(("better", "expected"), [("large", True), ("small", False)])
+    def test_accepts_valid_better(self, better: Literal["large", "small"], expected: bool) -> None:
+        """Both supported directions are accepted and compare as documented."""
+        metric = BestMetricSingle(better=better)
+        assert metric.isbetter(1.0, 0.0) is expected

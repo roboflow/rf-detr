@@ -19,7 +19,7 @@ from rfdetr.config import RFDETRBaseConfig, SegmentationTrainConfig, TrainConfig
 
 # ---------------------------------------------------------------------------
 # Shared config factory fixtures (used by test_module, test_datamodule,
-# trainer/test_args.py — avoids duplicate fixture definitions across files)
+# trainer/test_cli.py — avoids duplicate fixture definitions across files)
 # ---------------------------------------------------------------------------
 
 
