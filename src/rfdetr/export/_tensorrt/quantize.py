@@ -901,36 +901,49 @@ def _is_float_pe_mlp(name: str) -> bool:
     return match is not None and int(match.group(1)) < _PE_FLOAT_MLP_BLOCKS
 
 
-def _refuse_planned_inputs_of_float_attention(float_blocks: list[_Attention], weighted: set[str]) -> None:
-    """Raise if a planned layer reaches an FP16 attention block's q, k or v without passing another weighted layer.
+def _refuse_mixed_precision_attention(
+    fused_blocks: list[_Attention], float_blocks: list[_Attention], weighted: set[str]
+) -> None:
+    """Raise unless every attention block is all INT8 or all FP16 together with the layers feeding its q, k and v.
 
-    :func:`_trace_projection` follows a list of ops; a projection behind any other op (a norm on q, say) is hidden from
-    it and would stay INT8 in front of FP16 attention.
+    :func:`_trace_projection` identifies one projection per input; a layer behind any other path (a norm on q, say) is
+    known only from :attr:`_Attention.reaching`. A rule that runs after the attention decision (the GELU rule, say) can
+    also drop a projection of a fused block.
 
     Args:
+        fused_blocks: The attention blocks quantized whole.
         float_blocks: The attention blocks that stay FP16.
         weighted: Names of the nodes the plan quantizes.
 
     Raises:
-        ValueError: If a planned layer reaches an FP16 attention block's batched multiplies that way.
+        ValueError: If a fused block lost a projection or a layer reaching it, or if a planned layer reaches an FP16
+            block's q, k or v.
 
     Examples:
         >>> from onnx import helper
         >>> scores = helper.make_node("MatMul", ["q", "k"], ["s"], "scores")
         >>> context = helper.make_node("MatMul", ["p", "v"], ["c"], "context")
         >>> block = _Attention(scores, context, frozenset(), "out", False, frozenset({"q_proj"}))
-        >>> _refuse_planned_inputs_of_float_attention([block], {"q_proj"})
+        >>> _refuse_mixed_precision_attention([], [block], {"q_proj"})
         Traceback (most recent call last):
         ...
         ValueError: Cannot place INT8 safely: the layer 'q_proj' reaches the FP16 attention at 'scores' ...
     """
+    for block in fused_blocks:
+        missing = sorted((block.projections | block.reaching) - weighted)
+        if missing:
+            raise ValueError(
+                f"Cannot place INT8 safely: the layer {missing[0]!r} feeding the INT8 attention at "
+                f"{block.scores.name!r} is left in FP16 by a later placement rule. "
+                'Export this model without quantization="int8".'
+            )
     for block in float_blocks:
         reaching = sorted(block.reaching & weighted)
         if reaching:
             raise ValueError(
                 f"Cannot place INT8 safely: the layer {reaching[0]!r} reaches the FP16 attention at "
-                f"{block.scores.name!r} through an op the plan does not follow, so it cannot be kept out of INT8 with "
-                'that attention. Export this model without quantization="int8".'
+                f"{block.scores.name!r} without being identified as its q, k or v projection, so it cannot be kept "
+                'out of INT8 with that attention. Export this model without quantization="int8".'
             )
 
 
@@ -945,9 +958,9 @@ def plan_int8(model: Any) -> Int8Plan:
 
     Raises:
         ValueError: If the graph has nothing to quantize, which means it is not an RF-DETR model export; if an FP16
-            attention block's output projection cannot be identified; if a planned projection reaches an FP16
-            attention block through an op the projection trace does not follow; or if a top-level ``Softmax`` feeds
-            a multiply of two activations without being a recognised attention block.
+            attention block's output projection cannot be identified; if an attention block would mix INT8 and FP16
+            with the layers feeding its q, k and v (see :func:`_refuse_mixed_precision_attention`); or if a top-level
+            ``Softmax`` feeds a multiply of two activations without being a recognised attention block.
     """
     graph = model.graph
     initializers = _constant_weights(graph)
@@ -964,6 +977,7 @@ def plan_int8(model: Any) -> Int8Plan:
         and not _pads_input_channels(node, initializers)
     }
     attention_inputs: list[tuple[str, int]] = []
+    fused_blocks: list[_Attention] = []
     float_blocks: list[_Attention] = []
     backbone_blocks = fused = 0
     unfused: list[str] = []  # backbone blocks whose attention stays FP16 because of its shape
@@ -974,6 +988,7 @@ def plan_int8(model: Any) -> Int8Plan:
         # Every layer reaching q, k or v must be planned too: one the trace cannot see still feeds the fused kernel.
         if block.int8 and in_region and not unnamed and block.projections | block.reaching <= weighted:
             fused += 1
+            fused_blocks.append(block)
             attention_inputs += [(block.scores.name, 0), (block.scores.name, 1)]
             attention_inputs += [(block.context.name, 0), (block.context.name, 1)]
             continue
@@ -1010,7 +1025,7 @@ def plan_int8(model: Any) -> Int8Plan:
                 weighted.discard(name)
                 changed = True
 
-    _refuse_planned_inputs_of_float_attention(float_blocks, weighted)
+    _refuse_mixed_precision_attention(fused_blocks, float_blocks, weighted)
     if not weighted:
         raise ValueError(
             "Found no backbone encoder or decoder layer to quantize in this graph; INT8 TensorRT export applies to "

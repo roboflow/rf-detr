@@ -942,6 +942,36 @@ class TestPlanInt8:
         graph.node.insert(query, helper.make_node("MatMul", ["x", "wpre"], ["x_pre"], f"{BACKBONE}pre/MatMul"))
         assert _names(quantize.plan_int8(model)) == ["pre/MatMul", "fc1/MatMul", "fc2/MatMul"]
 
+    def test_unnamed_projection_keeps_fusable_attention_float(self) -> None:
+        """A fusable block whose q projection has no name, so the plan cannot quantize it, keeps attention FP16."""
+        model = _attention_and_mlp(BACKBONE, sequence=8, head_size=16)
+        next(node for node in model.graph.node if node.name.endswith("q/MatMul")).name = ""
+        plan = quantize.plan_int8(model)
+        assert (_names(plan), [n for n, _ in plan.activations if "/scores/" in n]) == (["fc1/MatMul", "fc2/MatMul"], [])
+
+    @pytest.mark.parametrize("hidden", [False, True])
+    def test_projection_of_fused_attention_dropped_by_a_later_rule_is_refused(self, hidden: bool) -> None:
+        """A fused block whose q projection the GELU rule drops afterwards is refused, not left half INT8."""
+        if hidden:
+            model = _normed_projection_attention("q", sequence=8)
+        else:
+            model = _attention_and_mlp(BACKBONE, sequence=8, head_size=16)
+        graph = model.graph
+        graph.initializer.append(_weight("w3", 32, 16, seed=11))
+        graph.node.extend(
+            [
+                helper.make_node("Div", ["q0", "sqrt2"], ["g0"], f"{BACKBONE}side/Div"),
+                helper.make_node("Erf", ["g0"], ["g1"], f"{BACKBONE}side/Erf"),
+                helper.make_node("Add", ["g1", "one"], ["g2"], f"{BACKBONE}side/Add"),
+                helper.make_node("Mul", ["q0", "g2"], ["g3"], f"{BACKBONE}side/Mul"),
+                helper.make_node("Mul", ["g3", "half"], ["q_gelu"], f"{BACKBONE}side/Mul_1"),
+                helper.make_node("MatMul", ["q_gelu", "w3"], ["side"], f"{HEAD}side/MatMul"),
+            ]
+        )
+        graph.output.append(helper.make_tensor_value_info("side", TensorProto.FLOAT, [1, 8, 16]))
+        with pytest.raises(ValueError, match="INT8 attention"):
+            quantize.plan_int8(model)
+
     @pytest.mark.parametrize("op", ["Shape", "Size"])
     def test_shape_of_a_planned_layer_does_not_count_as_feeding_float_attention(self, op: str) -> None:
         """FP16 attention scaled by a size read from a planned layer's output shape does not refuse that layer."""
