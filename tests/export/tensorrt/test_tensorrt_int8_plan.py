@@ -1168,7 +1168,8 @@ class TestNanoInt8Plan:
     """Exact counts on a real RFDETRNano export pin the plan to the architecture it was measured on."""
 
     @pytest.fixture(scope="class")
-    def nano_onnx(self, tmp_path_factory: pytest.TempPathFactory) -> Path:
+    @staticmethod
+    def nano_onnx(tmp_path_factory: pytest.TempPathFactory) -> Path:
         """Export an untrained RFDETRNano to ONNX on CPU, once for the class.
 
         Examples:
@@ -1188,7 +1189,8 @@ class TestNanoInt8Plan:
         )
 
     @pytest.fixture(scope="class")
-    def plan(self, nano_onnx: Path) -> quantize.Int8Plan:
+    @staticmethod
+    def plan(nano_onnx: Path) -> quantize.Int8Plan:
         """The INT8 plan of the exported Nano graph.
 
         Examples:
@@ -1255,7 +1257,8 @@ class TestNanoInt8Plan:
         assert [n for n in plan.weighted if n.endswith("patch_embeddings/projection/MatMul")] != []
 
     @pytest.fixture(scope="class")
-    def nano_int8(self, nano_onnx: Path) -> Any:
+    @staticmethod
+    def nano_int8(nano_onnx: Path) -> Any:
         """The INT8 source graph of the exported Nano, built once for the class from two random images.
 
         Examples:
@@ -1350,7 +1353,8 @@ class TestSegmentationAndKeypointInt8Plan:
     """The plan of real segmentation and keypoint exports keeps their heads and extra attention in FP16."""
 
     @pytest.fixture(scope="class")
-    def exports(self, tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
+    @staticmethod
+    def exports(tmp_path_factory: pytest.TempPathFactory) -> dict[str, Path]:
         """Export an untrained RFDETRSegNano, RFDETRSegSmall, RFDETRSegMedium, RFDETRSegLarge and RFDETRKeypointPreview.
 
         Done once for the class, to ONNX on CPU. Small and Medium are the segmentation models whose windows fit INT8
@@ -1385,7 +1389,8 @@ class TestSegmentationAndKeypointInt8Plan:
         return paths
 
     @pytest.fixture(scope="class")
-    def plans(self, exports: dict[str, Path]) -> dict[str, quantize.Int8Plan]:
+    @staticmethod
+    def plans(exports: dict[str, Path]) -> dict[str, quantize.Int8Plan]:
         """The INT8 plan of each exported graph.
 
         Examples:
@@ -1396,7 +1401,8 @@ class TestSegmentationAndKeypointInt8Plan:
         return {kind: quantize.plan_int8(onnx.load(str(path))) for kind, path in exports.items()}
 
     @pytest.fixture(scope="class")
-    def quantized_graphs(self, exports: dict[str, Path]) -> dict[str, Any]:
+    @staticmethod
+    def quantized_graphs(exports: dict[str, Path]) -> dict[str, Any]:
         """The INT8 source graph of the segmentation and keypoint exports, calibrated on two random images, loaded.
 
         Examples:
