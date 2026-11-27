@@ -151,6 +151,36 @@ class TestPredictReturnTypes:
         assert result.metadata["source_image"].dtype == np.uint8
         np.testing.assert_array_equal(result.metadata["source_image"], expected)
 
+    @pytest.mark.parametrize("input_kind", ["pil", "path"])
+    @pytest.mark.parametrize("num_channels", [1, 3])
+    def test_native_16_bit_png_keeps_dynamic_range(self, tmp_path: Path, input_kind: str, num_channels: int) -> None:
+        """A 16-bit grayscale PNG predicts on its scaled values instead of a clipped white image (#1728)."""
+        model = _DummyRFDETR()
+        if num_channels == 1:
+            model.model_config.num_channels = 1
+            model.means = model.means[:1]
+            model.stds = model.stds[:1]
+        ramp = np.tile(np.linspace(0, 65535, 256, dtype=np.uint16), (64, 1))
+        path = tmp_path / "g16.png"
+        PIL.Image.fromarray(ramp).save(path)
+        expected = np.tile(np.arange(256, dtype=np.uint8), (64, 1))
+        if input_kind == "pil":
+            image = PIL.Image.open(path)
+            image.load()
+        else:
+            image = path
+
+        result = model.predict(image)
+
+        source = result.metadata["source_image"]
+        assert source.dtype == np.uint8
+        if num_channels == 1:
+            assert source.shape == (64, 256)
+            np.testing.assert_array_equal(source, expected)
+        else:
+            assert source.shape == (64, 256, 3)
+            np.testing.assert_array_equal(source, np.stack([expected] * 3, axis=-1))
+
     def test_native_unknown_keyword_keeps_legacy_behavior(self) -> None:
         """Unknown native keywords warn while preserving the prediction result."""
         model = _DummyRFDETR()
