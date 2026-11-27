@@ -787,6 +787,45 @@ class TestNestedTensorTo:
     """``NestedTensor.to`` preserves the boolean-mask contract across conversions."""
 
     @pytest.mark.parametrize(
+        "args,kwargs,expected_dtype",
+        [
+            pytest.param(("meta",), {}, torch.float32, id="string-device"),
+            pytest.param(
+                (torch.device("meta"),),
+                {"dtype": torch.float16},
+                torch.float16,
+                id="device-with-dtype",
+            ),
+        ],
+    )
+    def test_to_moves_mask_to_converted_tensor_device(
+        self,
+        args: tuple[torch.device | str, ...],
+        kwargs: dict[str, object],
+        expected_dtype: torch.dtype,
+    ) -> None:
+        """Moving tensors from CPU to meta also moves the boolean mask."""
+        mask = torch.zeros(1, 2, 2, dtype=torch.bool)
+        nested = NestedTensor(torch.rand(1, 3, 2, 2), mask)
+
+        converted = nested.to(*args, **kwargs)
+
+        assert converted.tensors.device.type == "meta"
+        assert converted.tensors.dtype is expected_dtype
+        assert converted.mask is not None
+        assert converted.mask.device.type == "meta"
+        assert converted.mask.dtype is torch.bool
+
+    def test_to_preserves_none_mask(self) -> None:
+        """A NestedTensor without a mask keeps ``None`` through conversion."""
+        nested = NestedTensor(torch.rand(1, 3, 2, 2), None)
+
+        converted = nested.to(torch.float16)
+
+        assert converted.tensors.dtype is torch.float16
+        assert converted.mask is None
+
+    @pytest.mark.parametrize(
         "args,kwargs,expected_dtype,expected_channels_last",
         [
             pytest.param(
