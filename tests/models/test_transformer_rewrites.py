@@ -6,11 +6,13 @@
 """Eligibility gates and custom autograd functions of the eager CUDA decoder rewrites in ``models/transformer.py``.
 
 Every rewrite must either reproduce the ops it replaces or step aside for the previous ops. These tests pin the cases
-where it must step aside, and the autograd contract of the functions it runs instead.
+where it must step aside, the autograd contract of the functions it runs instead, and that the production Nano model
+takes every rewrite with loss parity, including under CUDA-graph replay.
 """
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from unittest.mock import Mock
@@ -20,16 +22,22 @@ import torch
 import torch.nn.functional as F  # noqa: N812
 from torch import nn
 
+from rfdetr._namespace import _namespace_from_configs
+from rfdetr.config import RFDETRNanoConfig, TrainConfig
+from rfdetr.models.lwdetr import build_criterion_from_config, build_model, build_model_from_config
 from rfdetr.models.transformer import (
     TransformerDecoder,
     TransformerDecoderLayer,
     _AddInDtype,
+    _CastThenExpand,
     _eager_cuda,
     _InterleavedSinCos,
     _LinearReLU,
     _module_call_is_plain,
     gen_sineembed_for_position,
 )
+from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
+from rfdetr.utilities.tensors import NestedTensor
 from tests._markers import _requires_cuda
 from tests.models._transformer_support import (
     EAGER_CUDA,
@@ -63,6 +71,13 @@ _GLOBAL_CALL_HOOK_REGISTRIES = [
     "_global_backward_pre_hooks",
 ]
 _MODULE_CALL_HOOK_REGISTRIES = ["_forward_hooks", "_forward_pre_hooks", "_backward_hooks", "_backward_pre_hooks"]
+
+
+@pytest.fixture(autouse=True)
+def _reset_random_seeds() -> None:
+    """Ensure reproducible random state for every test."""
+    torch.manual_seed(42)
+    torch.cuda.manual_seed_all(42)
 
 
 @pytest.fixture
@@ -628,3 +643,346 @@ class TestAutocastFoldsAreTakenOnlyForPlainModules:
         _run_decoder_with_pass_through_layer(modify_head)
 
         assert bf16_gate.sine_dtypes == [None]
+
+
+@pytest.mark.parametrize(
+    "pos_in_compute_dtype", [pytest.param(False, id="fp32-pos"), pytest.param(True, id="compute-pos")]
+)
+@pytest.mark.parametrize("dtype", [pytest.param(torch.bfloat16, id="bf16"), pytest.param(torch.float16, id="fp16")])
+def test_add_in_dtype_is_bitwise_the_add_then_cast_graph(dtype: torch.dtype, pos_in_compute_dtype: bool) -> None:
+    """One kernel, same bits: forward equals ``(a + b).to(dtype)``, backward equals that graph's gradients."""
+    pos_dtype = dtype if pos_in_compute_dtype else torch.float32
+    tensor = torch.randn(2, 30, 8, dtype=torch.float32, requires_grad=True)
+    pos = torch.randn(2, 30, 8).to(pos_dtype).requires_grad_(True)
+    grad_out = torch.randn(2, 30, 8).to(dtype)
+
+    expected = (tensor + pos).to(dtype)
+    expected.backward(grad_out)
+    expected_grads = (tensor.grad, pos.grad)
+    tensor.grad = pos.grad = None
+
+    actual = _AddInDtype.apply(tensor, pos, dtype)
+    actual.backward(grad_out)
+
+    assert actual.dtype == dtype
+    assert torch.equal(actual, expected)
+    assert tensor.grad is not None and pos.grad is not None
+    assert expected_grads[0] is not None and expected_grads[1] is not None
+    assert tensor.grad.dtype == torch.float32 and pos.grad.dtype == pos_dtype
+    assert torch.equal(tensor.grad, expected_grads[0])
+    assert torch.equal(pos.grad, expected_grads[1])
+
+
+class _AutocastRewriteBlock(nn.Module):
+    """Smallest module that runs the two autocast-only rewrites, :class:`_AddInDtype` and :class:`_CastThenExpand`.
+
+    A fp32 activation is added to a bf16 projection and rounded once to bf16, and the same fp32 activation is cast once
+    to bf16 and expanded over ``groups``; ``rewrites=False`` computes both with the plain two-op graphs they replace.
+    The forward takes ``NestedTensor`` and ``targets`` like ``LWDETR`` so ``CudaGraphTrainingRunner`` can capture it.
+
+    Examples:
+        >>> block = _AutocastRewriteBlock()
+        >>> samples = NestedTensor(torch.zeros(2, 4, 8), torch.zeros(2, 4, dtype=torch.bool))
+        >>> with torch.autocast("cpu", dtype=torch.bfloat16):
+        ...     block(samples)["pred"].shape
+        torch.Size([3, 2, 4, 8])
+    """
+
+    def __init__(self, width: int = 8, groups: int = 3, rewrites: bool = True) -> None:
+        super().__init__()
+        self.scale = nn.Parameter(torch.rand(width) + 0.5)
+        self.pos_proj = nn.Linear(width, width)
+        self.mix = nn.Linear(width, width)
+        self.groups = groups
+        self.rewrites = rewrites
+
+    def forward(self, samples: NestedTensor, targets: object = None) -> dict[str, torch.Tensor]:
+        """Return the mixed bf16 sum plus the group-expanded bf16 copy of the scaled activation."""
+        del targets
+        x = samples.tensors
+        activation = x * self.scale
+        pos = self.pos_proj(x)
+        if self.rewrites:
+            summed = _AddInDtype.apply(activation, pos, torch.bfloat16)
+            memory = _CastThenExpand.apply(activation, self.groups, torch.bfloat16)
+        else:
+            summed = (activation + pos).to(torch.bfloat16)
+            memory = activation.unsqueeze(0).expand(self.groups, *activation.shape).to(torch.bfloat16)
+        return {"pred": self.mix(summed).unsqueeze(0) + memory}
+
+
+def _assert_within_norm_bound(actual: torch.Tensor, expected: torch.Tensor, rel_tol: float, name: str) -> None:
+    """Assert ``||actual - expected||`` is at most ``rel_tol`` of ``||expected||`` (plus a tiny absolute floor).
+
+    Unlike an element-wise tolerance this separates kernel rounding noise on a large entry from a wrong value on a
+    small one: a stale or aliased tensor is off by a large fraction of the norm, rounding noise is not.
+
+    Examples:
+        >>> _assert_within_norm_bound(torch.ones(4), torch.ones(4) * 1.001, 1e-2, "ones")
+        >>> _assert_within_norm_bound(torch.ones(4), torch.zeros(4), 1e-2, "ones")  # doctest: +ELLIPSIS
+        Traceback (most recent call last):
+        AssertionError: ones: ||diff|| 2.000e+00 vs ||expected|| 0.000e+00...
+    """
+    difference_norm = (actual.float() - expected.float()).norm()
+    expected_norm = expected.float().norm()
+    assert difference_norm <= rel_tol * expected_norm + 1e-9, (
+        f"{name}: ||diff|| {difference_norm:.3e} vs ||expected|| {expected_norm:.3e}"
+    )
+
+
+class TestEagerRewritesOnTheProductionModel:
+    """Eager decoder rewrites on the production Nano model: routing, loss parity and CUDA-graph replay."""
+
+    @pytest.mark.gpu
+    @_requires_cuda
+    @pytest.mark.parametrize(
+        ("training", "autocast_dtype", "captured"),
+        [
+            pytest.param(True, torch.bfloat16, False, id="train-bf16"),
+            pytest.param(True, torch.float16, False, id="train-fp16"),
+            pytest.param(True, None, False, id="train-fp32"),
+            pytest.param(False, torch.bfloat16, False, id="eval-bf16"),
+            pytest.param(True, torch.bfloat16, True, id="train-bf16-cuda-graph"),
+        ],
+    )
+    def test_every_decoder_rewrite_is_taken_on_cuda(
+        self, training: bool, autocast_dtype: torch.dtype | None, captured: bool, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Each rewrite runs on the route ``LWDETR.forward`` takes, in exactly the modes it is meant for.
+
+        The rewrites are bitwise the ops they replace, so no output comparison can tell them from their fallbacks:
+        unwiring one leaves every parity test green and silently gives the speedup back. Delegating spies on a real Nano
+        built by ``build_model`` observe each one at its owner. The FFN epilogue and the sine-embedding write are not
+        tied to training and also run in ``eval()``; the grouped self-attention, the fused positional adds and the
+        cast-once memory are training-only, and the last two need autocast (there is no cast to fold without it).
+
+        The ``captured`` case drives the model through ``CudaGraphTrainingRunner`` (``cuda_graphs=True``) under bf16
+        autocast: a host-side index tensor or synchronisation in any rewrite fails the capture. The capture tests in
+        ``test_cuda_graph_step.py`` run without autocast and never reach the two autocast-only rewrites.
+        """
+        from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
+
+        calls: dict[str, list[tuple[object, ...]]] = {key: [] for key in ("sine", "add", "ffn", "attn", "memory")}
+
+        def count(owner: type, attr: str, key: str) -> None:
+            real = getattr(owner, attr)
+
+            def spy(*args: object, **kwargs: object) -> object:
+                calls[key].append(args)
+                return real(*args, **kwargs)
+
+            monkeypatch.setattr(owner, attr, spy)
+
+        count(_InterleavedSinCos, "apply", "sine")
+        count(_AddInDtype, "apply", "add")
+        count(_LinearReLU, "apply", "ffn")
+        count(TransformerDecoderLayer, "_grouped_self_attention", "attn")
+        count(_CastThenExpand, "apply", "memory")
+        torch.manual_seed(0)
+        ns = _namespace_from_configs(
+            RFDETRNanoConfig(num_classes=7, pretrain_weights=None, device="cpu"), TrainConfig(dataset_dir="/tmp")
+        )
+        model = build_model(ns).cuda().train(training)
+        transformer = model.transformer
+        assert transformer._two_stage_batching_eligible()
+        layers = len(transformer.decoder.layers)
+        samples = NestedTensor(
+            torch.randn(2, 3, 256, 256, device="cuda"), torch.zeros(2, 256, 256, dtype=torch.bool, device="cuda")
+        )
+
+        with (
+            torch.set_grad_enabled(training),
+            torch.autocast("cuda", dtype=autocast_dtype or torch.bfloat16, enabled=autocast_dtype is not None),
+        ):
+            outputs = CudaGraphTrainingRunner(model)(samples) if captured else model(samples)
+        if captured:
+            loss = outputs["pred_logits"].float().sum()
+            loss.backward()
+            assert torch.isfinite(loss)
+
+        folds_a_cast = training and autocast_dtype is not None
+        per_pass = {
+            "sine": 1 if transformer.decoder.lite_refpoint_refine else layers,
+            "ffn": layers,
+            "attn": layers if training else 0,
+            "add": 2 * layers if folds_a_cast else 0,
+            "memory": 1 if folds_a_cast else 0,
+        }
+        # A CUDA graph runs the module for its warm-up passes and the capture, so the counts are a whole number of
+        # passes.
+        passes = len(calls["ffn"]) // layers
+        assert passes >= 1 and (captured or passes == 1)
+        assert {key: len(taken) for key, taken in calls.items()} == {key: passes * n for key, n in per_pass.items()}
+        # ``ref_point_head`` is the embedding's only consumer, so under autocast it is written in the compute dtype.
+        assert {args[1] for args in calls["sine"]} == {autocast_dtype or torch.float32}
+
+    @pytest.mark.gpu
+    @_requires_cuda
+    @pytest.mark.parametrize(
+        ("autocast_dtype", "grad_rtol"),
+        [pytest.param(None, 1e-4, id="fp32"), pytest.param(torch.bfloat16, 1e-2, id="bf16")],
+    )
+    def test_loss_terms_are_bitwise_and_gradients_match_with_rewrites_on_and_off(
+        self, autocast_dtype: torch.dtype | None, grad_rtol: float, monkeypatch: pytest.MonkeyPatch, tf32_disabled: None
+    ) -> None:
+        """A real Nano forward plus criterion gives the same outputs and loss terms with the eager rewrites on or off.
+
+        The rewrites are bitwise the ops they replace in the forward, so outputs and every loss term must be equal bit
+        for bit. Gradients are compared with a scale-aware norm bound instead, because the rewrites reorder
+        weight-gradient sums: ``grad_rtol`` of the reference gradient's norm (a wrong gradient is off by far more), with
+        a looser bf16 constant because bf16 rounds each sum to eight bits. Autocast is a case because the folded
+        positional add and the cast-once memory only run under it.
+
+        Every rewrite lives in the decoder, so each parameter outside the ViT trunk (``backbone.0.encoder.``) gets its
+        own bound. In bf16 a bitwise difference entering the trunk reshuffles the rounding of its twelve layers (CI saw
+        about ``grad_rtol`` of the norm in the first layers), and its attention key biases have an analytically zero
+        gradient (softmax ignores a shift shared by all keys), so their stored value is rounding residue. The trunk is
+        therefore checked as one aggregate norm, which still catches a wrong gradient entering it. The reference is the
+        rewrites-off bf16 graph, not fp32: the two-stage ``topk`` and Hungarian matching are discrete, so bf16 and fp32
+        forwards can pair queries differently. ``_sineembed_interleaved`` still computes the angles on the rewrites-off
+        side; only its sin/cos kernel is replaced. This test needs a GPU and was written without one.
+        """
+        torch.manual_seed(0)
+        model_config = RFDETRNanoConfig(pretrain_weights=None, num_classes=3, device="cuda")
+        train_config = TrainConfig(dataset_dir="unused", drop_path=0.0)
+        model = build_model_from_config(model_config, train_config).cuda().train()
+        criterion, _ = build_criterion_from_config(model_config, train_config)
+        criterion = criterion.cuda()
+        samples = NestedTensor(
+            torch.randn(2, 3, 256, 256, device="cuda"), torch.zeros(2, 256, 256, dtype=torch.bool, device="cuda")
+        )
+        targets = [
+            {"labels": torch.tensor([1], device="cuda"), "boxes": torch.tensor([[0.5, 0.5, 0.2, 0.3]], device="cuda")},
+            {
+                "labels": torch.tensor([0, 2], device="cuda"),
+                "boxes": torch.tensor([[0.3, 0.4, 0.2, 0.2], [0.7, 0.6, 0.3, 0.1]], device="cuda"),
+            },
+        ]
+        fused_calls: list[object] = []
+        real_apply = _LinearReLU.apply
+
+        def run(rewrites_on: bool) -> tuple[dict[str, torch.Tensor], dict[str, torch.Tensor]]:
+            with monkeypatch.context() as patch:
+                if rewrites_on:
+                    patch.setattr(_LinearReLU, "apply", lambda *args: (fused_calls.append(args), real_apply(*args))[1])
+                else:
+                    patch.setattr(
+                        TransformerDecoderLayer, "_grouped_self_attention_eligible", lambda *_args, **_kwargs: False
+                    )
+                    patch.setattr(
+                        TransformerDecoderLayer, "_pos_embed_for_linear", TransformerDecoderLayer.with_pos_embed
+                    )
+                    patch.setattr(
+                        TransformerDecoderLayer, "_ffn_hidden", lambda self, tgt: self.activation(self.linear1(tgt))
+                    )
+                    patch.setattr(
+                        _CastThenExpand,
+                        "apply",
+                        lambda x, groups, dtype: x.unsqueeze(0).expand(groups, *x.shape).to(dtype),
+                    )
+                    patch.setattr(
+                        _InterleavedSinCos,
+                        "apply",
+                        lambda angle, dtype: torch.stack((angle.sin(), angle.cos()), -1).to(dtype),
+                    )
+                model.zero_grad(set_to_none=True)
+                torch.manual_seed(1)
+                with torch.autocast("cuda", dtype=autocast_dtype or torch.bfloat16, enabled=autocast_dtype is not None):
+                    outputs = model(samples, targets)
+                losses = criterion(outputs, targets)
+                total = sum(losses[key] * weight for key, weight in criterion.weight_dict.items() if key in losses)
+                total.backward()
+                terms = {"pred_logits": outputs["pred_logits"].detach(), "pred_boxes": outputs["pred_boxes"].detach()}
+                terms.update({key: value.detach() for key, value in losses.items()})
+                terms["total"] = total.detach()
+                return terms, {name: p.grad.clone() for name, p in model.named_parameters() if p.grad is not None}
+
+        expected_terms, expected_grads = run(rewrites_on=False)
+        assert fused_calls == []
+        actual_terms, actual_grads = run(rewrites_on=True)
+
+        assert fused_calls, "the rewrites never ran, so the comparison would not test them"
+        assert actual_terms.keys() == expected_terms.keys()
+        for key, expected_term in expected_terms.items():
+            assert torch.equal(actual_terms[key], expected_term), key
+        # A NaN norm compares false against any bound, so a non-finite gradient would otherwise pass unnoticed.
+        non_finite = sorted(
+            f"{label}: {name}"
+            for label, grads in (("rewrites off", expected_grads), ("rewrites on", actual_grads))
+            for name, grad in grads.items()
+            if not torch.isfinite(grad).all()
+        )
+        assert not non_finite, f"non-finite gradients: {non_finite}"
+        assert actual_grads.keys() == expected_grads.keys()
+        violations: list[tuple[float, str, float, float]] = []
+        trunk_difference_norms: list[torch.Tensor] = []
+        trunk_reference_norms: list[torch.Tensor] = []
+        for name, reference in expected_grads.items():
+            difference_norm = (actual_grads[name] - reference).norm()
+            if name.startswith("backbone.0.encoder."):
+                trunk_difference_norms.append(difference_norm)
+                trunk_reference_norms.append(reference.norm())
+                continue
+            bound = grad_rtol * reference.norm() + 1e-9
+            if difference_norm > bound:
+                violations.append(
+                    ((difference_norm / bound).item(), name, difference_norm.item(), reference.norm().item())
+                )
+        assert trunk_difference_norms, "no ViT trunk gradient found, so the aggregate bound would check nothing"
+        trunk_difference = torch.stack(trunk_difference_norms).norm()
+        trunk_reference = torch.stack(trunk_reference_norms).norm()
+        trunk_bound = grad_rtol * trunk_reference
+        if trunk_difference > trunk_bound:
+            violations.append(
+                (
+                    (trunk_difference / trunk_bound).item(),
+                    "backbone.0.encoder.* (aggregate)",
+                    trunk_difference.item(),
+                    trunk_reference.item(),
+                )
+            )
+        # Report every violating parameter: stopping at the first one hides the decoder gradients behind the backbone's.
+        assert not violations, "gradient mismatches, worst first (ratio = ||diff|| / bound):\n" + "\n".join(
+            f"{ratio:.3f} {name}: ||diff|| {diff:.3e} vs ||reference|| {ref:.3e}"
+            for ratio, name, diff, ref in sorted(violations, reverse=True)
+        )
+
+    @pytest.mark.gpu
+    @_requires_cuda
+    def test_autocast_only_rewrites_match_the_two_op_graph_under_cuda_graph_replay(self) -> None:
+        """Captured and replayed on new inputs, ``_AddInDtype`` and ``_CastThenExpand`` keep the two-op graph's values.
+
+        The capture tests in ``test_cuda_graph_step.py`` run without autocast, and the production-model capture case
+        only checks that the loss is finite. Here a minimal module around the two autocast-only rewrites is captured
+        once and replayed twice on different inputs, each time against an eager run of the plain two-op graph; a stale
+        saved tensor or an aliased output buffer shows as an error of order one. bf16 capture and eager pick different
+        kernels, so the bound is a few percent of the norm rather than the fp32 ``1e-4`` of the full-Nano fp32 test.
+        Needs a GPU; written without one.
+        """
+        torch.manual_seed(0)
+        reference = _AutocastRewriteBlock(rewrites=False).cuda().train()
+        graphed = copy.deepcopy(reference)
+        graphed.rewrites = True
+        runner = CudaGraphTrainingRunner(graphed)
+
+        def run_once() -> None:
+            samples = NestedTensor(
+                torch.randn(2, 8, 8, device="cuda"), torch.zeros(2, 8, dtype=torch.bool, device="cuda")
+            )
+            reference.zero_grad(set_to_none=True)
+            graphed.zero_grad(set_to_none=True)
+            with torch.autocast("cuda", dtype=torch.bfloat16, cache_enabled=True):
+                expected = reference(samples)["pred"]
+                actual = runner(samples)["pred"]
+            expected.float().square().sum().backward()
+            actual.float().square().sum().backward()
+            _assert_within_norm_bound(actual, expected, 3e-2, "pred")
+            for (name, parameter), expected_parameter in zip(graphed.named_parameters(), reference.parameters()):
+                assert parameter.grad is not None and expected_parameter.grad is not None, name
+                _assert_within_norm_bound(parameter.grad, expected_parameter.grad, 3e-2, f"grad of {name}")
+
+        run_once()  # captures
+        run_once()  # replays on new values
+        run_once()
+
+        assert len(runner._graphed_cache) == 1

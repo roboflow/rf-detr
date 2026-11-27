@@ -18,7 +18,7 @@ from pytest_mock import MockerFixture
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
 from rfdetr.training.coco_map import OnePassCocoMeanAveragePrecision, _HotCocoBackend, _warn_streaming_fallback
 from tests._markers import _requires_hotcoco
-from tests.training.callbacks.test_coco_eval_callback import _make_pl_module, _make_trainer
+from tests.training.callbacks.helpers import _make_pl_module, _make_trainer
 
 # The two ways a metric gets copied mid-epoch: Lightning's spawn/checkpoint plumbing pickles it, EMA set-up deep-copies.
 _ROUND_TRIPS = [

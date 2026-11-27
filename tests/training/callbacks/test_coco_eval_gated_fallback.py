@@ -12,7 +12,7 @@ import pytest
 from pytest_mock import MockerFixture
 
 from rfdetr.training.callbacks.coco_eval import COCOEvalCallback
-from tests.training.callbacks.test_coco_eval_callback import (
+from tests.training.callbacks.helpers import (
     _cpu_module,
     _make_trainer,
     _matching_entry,
