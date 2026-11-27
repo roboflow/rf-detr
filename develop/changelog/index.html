@@ -3337,6 +3337,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <h3 id="fixed">Fixed<a class="headerlink" href="#fixed" title="Permanent link">&para;</a></h3>
 <ul>
 <li>
+<p><code>export(format="tensorrt", quantization="int8")</code> keeps the fused <code>qkv</code> projection of a PE-Core-T backbone block (Atto, Femto, Pico) in FP16 when that block's attention runs in FP16, and no longer smooths the norm in front of it. The plan did not follow the projection through the <code>Split</code>, <code>Slice</code> or <code>Gather</code> that takes q, k and v apart, so Atto quantized all 12 <code>qkv</code> projections in front of FP16 attention, and Femto and Pico 4 each. The plan now refuses a graph in which a quantized layer reaches FP16 attention through a path it does not identify, instead of building that engine. Nano to Large, every segmentation size and the keypoint model get the same plan as before. The Atto, Femto and Pico TensorRT INT8 accuracy and latency figures in the docs were measured before this change. (<a href="https://github.com/roboflow/rf-detr/pull/1773">#1773</a>)</p>
+</li>
+<li>
 <p><code>batch_size="auto"</code> works for keypoint models. The probe's synthetic targets carried boxes and labels but no <code>keypoints</code>, so the keypoint loss raised <code>KeyError: 'keypoints'</code> on the first probe step and the keypoint quick start in <code>docs/learn/train/index.md</code> stopped before training. Each synthetic target now carries fully visible keypoints in the schema the criterion uses, labelled with a class that has keypoints: slot 0 of <code>[17]</code>, slot 1 of the background-first <code>[0, 17]</code> the pretrained preview checkpoint loads with. On an RTX 4090 with 22.6 GiB free, that quick start now probes batch 3 with 6 accumulation steps and trains; training at that batch peaks at 8.6 GiB. (<a href="https://github.com/roboflow/rf-detr/pull/1745">#1745</a>)</p>
 </li>
 <li>

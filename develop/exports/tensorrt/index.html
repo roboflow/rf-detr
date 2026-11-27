@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-25T10:28:58">
+  <meta property="article:modified_time" content="2026-11-27T11:08:29">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-25T10:28:58",
+    "dateModified": "2026-11-27T11:08:29",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3822,7 +3822,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <li><strong>The first six MLPs of Atto, Femto and Pico stay FP16.</strong> In the PE-Core-T backbone the input of the second MLP projection in block 3 has a range 52 to 55 times its typical 99.9th percentile, and blocks 2 and 4 reach 13 to 16 times. One INT8 step per tensor is set by those outliers, so quantizing these MLPs cost 7.0 to 8.7 AP in an earlier development build, and neither smoothing nor the bias correction below recovered it. The export keeps the two projections of blocks 0 to 5 in FP16 by node name; the other backbones are unaffected.</li>
 <li><strong>Detection backbone norms are smoothed (<a href="https://arxiv.org/abs/2211.10438">SmoothQuant</a>).</strong> One INT8 step per LayerNorm output is set by its widest channels. The export divides each channel of the norm's scale and bias by a factor measured on the calibration images and multiplies the matching rows of the projections that read it. The outputs are the same and the engine has no extra layer.</li>
 <li><strong>Detection backbone MLP biases are corrected.</strong> Rounding a layer's input to INT8 shifts the mean of its output, most of all for the one-sided GELU output the second MLP projection reads. The export measures that shift per output channel and subtracts it from the bias. On an RTX 5070 (a measurement not repeated on the table above) the two steps cut the box AP lost at batch 1 from 0.66, 0.71, 0.94 and 0.60 points to 0.50, 0.47, 0.66 and 0.32 (Nano to Large), at the same latency and size. Keep any new op off the GELU → second-projection path: on TensorRT 11.4 even a no-op subtraction there changed the fusion and cost more AP than the whole INT8 plan.</li>
-<li><strong>Attention is all INT8 or all FP16.</strong> A block with head size 16, 32 or 64 and at most 325 tokens gets INT8 projections and INT8 attention matrix multiplies, fused into one INT8 attention kernel. That covers the windowed blocks of detection Nano (145 tokens), Small (257) and Medium (325), and Seg Small (257) and Seg Medium (325). Detection Large (485), Seg Large (442), Keypoint Preview (577) and Seg Nano (677) keep attention in FP16: INT8 was no faster or less accurate at 442 to 485 tokens and much slower above the fused kernel's 512. Windows of 326 to 484 tokens that are not listed were not measured and stay FP16, as do global blocks and the decoder self-attention. A windowed block has <code>(resolution / patch_size / num_windows)² + 1</code> tokens, so a higher export resolution can move a model's attention to FP16; the export logs how many backbone attention blocks stay FP16.</li>
+<li><strong>Attention is all INT8 or all FP16.</strong> A block with head size 16, 32 or 64 and at most 325 tokens gets INT8 projections and INT8 attention matrix multiplies, fused into one INT8 attention kernel. That covers the windowed blocks of detection Nano (145 tokens), Small (257) and Medium (325), and Seg Small (257) and Seg Medium (325). Detection Large (485), Seg Large (442), Keypoint Preview (577) and Seg Nano (677) keep attention in FP16: INT8 was no faster or less accurate at 442 to 485 tokens and much slower above the fused kernel's 512. Windows of 326 to 484 tokens that are not listed were not measured and stay FP16, as do global blocks and the decoder self-attention. A windowed block has <code>(resolution / patch_size / num_windows)² + 1</code> tokens, so a higher export resolution can move a model's attention to FP16; the export logs how many backbone attention blocks stay FP16. In an FP16 block every projection stays FP16, including the fused <code>qkv</code> projection of Atto, Femto and Pico.</li>
 </ul>
 <h3 id="requirements-and-limits">Requirements and limits<a class="headerlink" href="#requirements-and-limits" title="Permanent link">&para;</a></h3>
 <ul>
@@ -4441,7 +4441,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 25, 2026 10:28:58 UTC">2026-11-25 10:28:58</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 27, 2026 11:08:29 UTC">2026-11-27 11:08:29</span>
   </span>
 
     
