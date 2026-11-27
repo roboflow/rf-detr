@@ -19,7 +19,13 @@ import pytest
 import torch
 from PIL import Image
 
-from rfdetr.export.prepare import ExportGraph, make_infer_image, prepare_export_graph, resolve_output_names
+from rfdetr.export.prepare import (
+    ExportGraph,
+    make_infer_image,
+    prepare_export_graph,
+    reject_masks_with_keypoints,
+    resolve_output_names,
+)
 from tests._oriented_photo import upright_reference, write_oriented_photo
 
 
@@ -81,6 +87,13 @@ class TestResolveOutputNames:
         """
         assert resolve_output_names(_make_model_config(**config_kwargs), backbone_only=False, backbone=None) == expected
 
+    def test_full_detector_with_masks_and_keypoints_is_rejected(self) -> None:
+        """Two task-specific outputs have no name in the export contract, so no three-name list is returned."""
+        config = _make_model_config(segmentation_head=True, use_grouppose_keypoints=True)
+
+        with pytest.raises(NotImplementedError, match="both a segmentation head and a keypoint head"):
+            resolve_output_names(config, backbone_only=False, backbone=None)
+
     def test_backbone_export_names_one_output_per_projector_scale(self) -> None:
         """A backbone-only export emits one feature name per configured projector scale."""
         config = _make_model_config(projector_scale=["P3", "P4", "P5"])
@@ -103,6 +116,38 @@ class TestResolveOutputNames:
         """Asking for backbone-only names without the backbone is a programming error, not a silent empty list."""
         with pytest.raises(ValueError, match="backbone must be provided"):
             resolve_output_names(_make_model_config(), backbone_only=True, backbone=None)
+
+
+class TestRejectMasksWithKeypoints:
+    """Refusing the export of a full detector that predicts masks and keypoints together."""
+
+    @pytest.mark.parametrize(
+        "config_kwargs",
+        [
+            pytest.param({}, id="detection"),
+            pytest.param({"segmentation_head": True}, id="segmentation"),
+            pytest.param({"use_grouppose_keypoints": True}, id="keypoints"),
+        ],
+    )
+    def test_single_task_models_are_accepted(self, config_kwargs: dict) -> None:
+        """A model with at most one of the two heads exports as before."""
+        reject_masks_with_keypoints(_make_model_config(**config_kwargs), backbone_only=False)
+
+    def test_full_detector_with_both_heads_is_rejected(self) -> None:
+        """The message names the unsupported combination and the supported ways to predict."""
+        config = _make_model_config(segmentation_head=True, use_grouppose_keypoints=True)
+
+        with pytest.raises(NotImplementedError) as exc_info:
+            reject_masks_with_keypoints(config, backbone_only=False)
+
+        assert "both a segmentation head and a keypoint head" in str(exc_info.value)
+        assert "backbone_only=True" in str(exc_info.value)
+
+    def test_backbone_only_export_is_accepted(self) -> None:
+        """A backbone-only export emits no head output, so both heads may be configured."""
+        config = _make_model_config(segmentation_head=True, use_grouppose_keypoints=True)
+
+        reject_masks_with_keypoints(config, backbone_only=True)
 
 
 #: Skip a test node that checks the fallback taken when CUDA is requested but absent.

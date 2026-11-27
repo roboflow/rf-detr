@@ -757,8 +757,9 @@ class LWDETR(nn.Module):
             tensors: Normalized images of shape ``(B, 3, H, W)``.
 
         Returns:
-            ``(boxes, logits)`` for detection, ``(boxes, logits, masks)`` for segmentation, or
-            ``(boxes, logits, keypoints)`` for keypoint models.
+            ``(boxes, logits)`` for detection, ``(boxes, logits, masks)`` for segmentation,
+            ``(boxes, logits, keypoints)`` for keypoint models, or ``(boxes, logits, masks, keypoints)`` for
+            models with both heads.
         """
         srcs, _, poss, cross_attn_srcs = self.backbone(tensors)
         # only use one group in inference
@@ -845,6 +846,8 @@ class LWDETR(nn.Module):
                     skip_blocks=True,
                 )[0]
 
+        if outputs_masks is not None and outputs_keypoints is not None:
+            return outputs_coord, outputs_class, outputs_masks, outputs_keypoints
         if outputs_masks is not None:
             return outputs_coord, outputs_class, outputs_masks
         if outputs_keypoints is not None:

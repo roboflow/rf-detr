@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,7 @@ __all__ = [
     "active_keypoint_counts",
     "infer_coco_keypoint_schema",
     "infer_yolo_keypoint_schema",
+    "keypoint_category_ids",
 ]
 
 
@@ -319,6 +321,43 @@ def _validate_annotations(annotations: Any) -> list[dict[str, Any]]:
     return annotations
 
 
+def keypoint_category_ids(
+    categories: Iterable[Mapping[str, Any]],
+    annotations: Iterable[Mapping[str, Any]],
+) -> list[int]:
+    """Return the ids of the categories that carry keypoints, in ascending order.
+
+    This is the one rule that schema inference (:func:`infer_coco_keypoint_schema`) and the COCO loader share to decide
+    which categories own a keypoint slot. A category carries keypoints when its ``keypoints`` metadata is a non-empty
+    list, or when any annotation of it holds a non-empty ``keypoints`` vector. Categories with metadata and categories
+    with annotation-only keypoints are counted together, so a dataset that mixes both keeps one slot per category.
+
+    Args:
+        categories: COCO category dictionaries.
+        annotations: COCO annotation dictionaries.
+
+    Returns:
+        Ascending category ids that carry keypoints.
+
+    Example:
+        >>> categories = [{"id": 2, "keypoints": ["a", "b"]}, {"id": 1}, {"id": 3}]
+        >>> annotations = [{"category_id": 1, "keypoints": [1, 2, 2]}, {"category_id": 3, "keypoints": []}]
+        >>> keypoint_category_ids(categories, annotations)
+        [1, 2]
+    """
+    keypoint_ids = {
+        int(category["id"])
+        for category in categories
+        if isinstance(category.get("keypoints"), list) and category["keypoints"]
+    }
+    keypoint_ids.update(
+        int(annotation["category_id"])
+        for annotation in annotations
+        if isinstance(annotation.get("keypoints"), list) and annotation["keypoints"]
+    )
+    return sorted(keypoint_ids)
+
+
 def _keypoint_count_from_annotations(annotations: list[dict[str, Any]], category_id: int) -> int:
     """Infer keypoint count for one category from annotation vectors.
 
@@ -383,18 +422,21 @@ def infer_coco_keypoint_schema(
     class_names: list[str] = []
     num_keypoints_per_class: list[int] = []
     category_flip_pairs: list[list[int]] = []
+    # The loader reads the same set (see ``keypoint_category_ids``), so a category owns a slot in both or in neither.
+    keypoint_ids = set(keypoint_category_ids(categories, annotations))
     for category in categories:
         category_id = int(category["id"])
         class_names.append(str(category["name"]))
+        if category_id not in keypoint_ids:
+            num_keypoints_per_class.append(0)
+            continue
         category_keypoints = category.get("keypoints")
         if isinstance(category_keypoints, list) and category_keypoints:
             num_keypoints_per_class.append(len(category_keypoints))
             category_flip_pairs.append(_infer_keypoint_flip_pairs_from_names(category_keypoints))
         else:
-            inferred_count = _keypoint_count_from_annotations(annotations, category_id)
-            num_keypoints_per_class.append(inferred_count)
-            if inferred_count > 0:
-                category_flip_pairs.append([])
+            num_keypoints_per_class.append(_keypoint_count_from_annotations(annotations, category_id))
+            category_flip_pairs.append([])
 
     if not any(count > 0 for count in num_keypoints_per_class):
         raise ValueError(

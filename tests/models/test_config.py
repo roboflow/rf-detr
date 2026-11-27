@@ -18,6 +18,7 @@ import torch
 from pydantic import Field, ValidationError
 
 import rfdetr.config as config_module
+from rfdetr import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
 from rfdetr.config import (
     AugmentationBackend,
     KeypointTrainConfig,
@@ -35,6 +36,7 @@ from rfdetr.config import (
     RFDETRSegSmallConfig,
     RFDETRSegXLargeConfig,
     RFDETRSmallConfig,
+    SegmentationKeypointTrainConfig,
     SegmentationTrainConfig,
     TrainConfig,
     _cuda_bf16_supported_on_devices,
@@ -42,6 +44,7 @@ from rfdetr.config import (
     _cuda_training_device_indices,
     _detect_device,
     _resolve_amp_dtype,
+    _resolve_train_config_class,
 )
 from rfdetr.detr import RFDETR
 from rfdetr.training import build_trainer
@@ -278,11 +281,151 @@ class TestTrainConfigRejectsUnknownKwargs:
 
     def test_get_train_config_raises_for_typo_kwarg(self, tmp_path) -> None:
         """The public RFDETR.get_train_config path surfaces the typo instead of swallowing it."""
-        stub = SimpleNamespace(_train_config_class=TrainConfig)
+        stub = SimpleNamespace(_train_config_class=TrainConfig, model_config=RFDETRNanoConfig(pretrain_weights=None))
         with pytest.raises(ValidationError) as exc_info:
             RFDETR.get_train_config(stub, dataset_dir=str(tmp_path), output_dir=str(tmp_path), epoch=5)
 
         assert "Unknown parameter(s): 'epoch'" in str(exc_info.value)
+
+
+class TestTrainConfigClassSelection:
+    """The train config class follows the model's segmentation and keypoint heads."""
+
+    @pytest.mark.parametrize(
+        ("declared", "model_kwargs", "expected"),
+        [
+            pytest.param(TrainConfig, {}, TrainConfig, id="detection"),
+            pytest.param(SegmentationTrainConfig, {"segmentation_head": True}, SegmentationTrainConfig, id="seg"),
+            pytest.param(TrainConfig, {"use_grouppose_keypoints": True}, KeypointTrainConfig, id="detection-keypoints"),
+            pytest.param(
+                KeypointTrainConfig, {"use_grouppose_keypoints": True}, KeypointTrainConfig, id="keypoint-variant"
+            ),
+            pytest.param(
+                SegmentationTrainConfig,
+                {"segmentation_head": True, "use_grouppose_keypoints": True},
+                SegmentationKeypointTrainConfig,
+                id="seg-keypoints",
+            ),
+            pytest.param(
+                KeypointTrainConfig,
+                {"segmentation_head": True, "use_grouppose_keypoints": True},
+                SegmentationKeypointTrainConfig,
+                id="keypoint-variant-with-masks",
+            ),
+        ],
+    )
+    def test_class_follows_model_heads(
+        self, declared: type[TrainConfig], model_kwargs: dict[str, bool], expected: type[TrainConfig]
+    ) -> None:
+        """Only a keypoint head the declared class does not cover changes the class."""
+        model_config = RFDETRNanoConfig(pretrain_weights=None, **model_kwargs)
+
+        assert _resolve_train_config_class(declared, model_config) is expected
+
+    @pytest.mark.parametrize(
+        ("variant", "expected"),
+        [
+            pytest.param(RFDETRNano, TrainConfig, id="detection"),
+            pytest.param(RFDETRSegNano, SegmentationTrainConfig, id="segmentation"),
+            pytest.param(RFDETRKeypointPreview, KeypointTrainConfig, id="keypoint-preview"),
+        ],
+    )
+    def test_released_variants_keep_their_declared_class(
+        self, variant: type[RFDETR], expected: type[TrainConfig]
+    ) -> None:
+        """A variant built with its default heads trains with the class it declares."""
+        model_config = variant._model_config_class(pretrain_weights=None)
+
+        assert _resolve_train_config_class(variant._train_config_class, model_config) is expected
+
+    def test_custom_subclass_covering_both_heads_is_kept(self) -> None:
+        """A user subclass that already carries both heads' fields is not replaced."""
+
+        class _Custom(SegmentationKeypointTrainConfig):
+            pass
+
+        model_config = RFDETRNanoConfig(pretrain_weights=None, segmentation_head=True, use_grouppose_keypoints=True)
+
+        assert _resolve_train_config_class(_Custom, model_config) is _Custom
+
+    @pytest.mark.parametrize(
+        ("model_kwargs", "base", "expected", "missing"),
+        [
+            pytest.param(
+                {"use_grouppose_keypoints": True},
+                TrainConfig,
+                KeypointTrainConfig,
+                "KeypointTrainConfig",
+                id="detection-keypoints",
+            ),
+            pytest.param(
+                {"segmentation_head": True, "use_grouppose_keypoints": True},
+                SegmentationTrainConfig,
+                SegmentationKeypointTrainConfig,
+                "KeypointTrainConfig",
+                id="seg-keypoints",
+            ),
+        ],
+    )
+    def test_replacing_custom_subclass_warns_naming_missing_bases(
+        self,
+        model_kwargs: dict[str, bool],
+        base: type[TrainConfig],
+        expected: type[TrainConfig],
+        missing: str,
+    ) -> None:
+        """A user subclass the model's heads force out is replaced with a warning that names the missing bases."""
+
+        class _Custom(base):
+            pass
+
+        model_config = RFDETRNanoConfig(pretrain_weights=None, **model_kwargs)
+
+        with pytest.warns(UserWarning, match=f"_Custom does not subclass .*{missing}") as record:
+            resolved = _resolve_train_config_class(_Custom, model_config)
+
+        assert resolved is expected
+        assert expected.__name__ in str(record[0].message)
+
+    def test_replacing_stock_class_is_silent(self) -> None:
+        """Upgrading a stock declared class to the one covering the model's heads is the feature, not a warning."""
+        model_config = RFDETRNanoConfig(pretrain_weights=None, segmentation_head=True, use_grouppose_keypoints=True)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            resolved = _resolve_train_config_class(SegmentationTrainConfig, model_config)
+
+        assert resolved is SegmentationKeypointTrainConfig
+
+    def test_get_train_config_uses_model_heads(self, tmp_path) -> None:
+        """RFDETR.get_train_config builds the keypoint class for a detection variant with a keypoint head."""
+        model_config = RFDETRNanoConfig(pretrain_weights=None, use_grouppose_keypoints=True)
+        stub = SimpleNamespace(_train_config_class=TrainConfig, model_config=model_config)
+
+        config = RFDETR.get_train_config(stub, dataset_dir=str(tmp_path), output_dir=str(tmp_path))
+
+        assert type(config) is KeypointTrainConfig
+
+    def test_combined_config_has_both_loss_families_and_segmentation_selection_defaults(self, tmp_path) -> None:
+        """The combined class carries mask and keypoint loss fields and the TrainConfig selection defaults."""
+        config = SegmentationKeypointTrainConfig(dataset_dir=str(tmp_path), output_dir=str(tmp_path))
+
+        assert isinstance(config, SegmentationTrainConfig)
+        assert isinstance(config, KeypointTrainConfig)
+        assert (config.mask_ce_loss_coef, config.mask_dice_loss_coef) == (5.0, 5.0)
+        assert (config.keypoint_l1_loss_coef, config.keypoint_nll_loss_coef) == (1, 1.0)
+        assert (config.cls_loss_coef, config.smooth_alpha, config.skip_best_epochs) == (1.0, 0.0, 0)
+
+    def test_combined_config_keeps_every_default_its_bases_override(self) -> None:
+        """No segmentation or keypoint default is lost to the other base's inherited TrainConfig default."""
+        declared = {"cls_loss_coef", "smooth_alpha", "skip_best_epochs"}
+        combined = SegmentationKeypointTrainConfig.model_fields
+        for base in (SegmentationTrainConfig, KeypointTrainConfig):
+            for name, field in base.model_fields.items():
+                inherited = TrainConfig.model_fields.get(name)
+                if name in declared or (inherited is not None and inherited.default == field.default):
+                    continue
+                assert combined[name].default == field.default, f"{base.__name__}.{name}"
 
 
 class TestTrainConfigMultiScale:

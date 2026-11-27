@@ -244,6 +244,37 @@ class TestValidateCheckpointCompatibility:
         assert "segmentation head" in str(exc_info.value)
 
     # ------------------------------------------------------------------
+    # keypoint head
+    # ------------------------------------------------------------------
+
+    @pytest.mark.parametrize("segmentation_head", [False, True])
+    def test_checkpoint_without_keypoint_head_loads_into_keypoint_model(
+        self, segmentation_head: bool, rf_detr_warnings
+    ) -> None:
+        """A model may add a keypoint head to a checkpoint trained without one; the head stays randomly initialized."""
+        checkpoint = {
+            "args": SimpleNamespace(segmentation_head=segmentation_head, patch_size=14, use_grouppose_keypoints=False)
+        }
+        model_args = SimpleNamespace(segmentation_head=segmentation_head, patch_size=14, use_grouppose_keypoints=True)
+
+        validate_checkpoint_compatibility(checkpoint, model_args)  # must not raise
+
+        assert not [r for r in rf_detr_warnings.records if r.levelno >= logging.WARNING]
+
+    @pytest.mark.parametrize("segmentation_head", [False, True])
+    def test_checkpoint_with_keypoint_head_into_model_without_one_raises(self, segmentation_head: bool) -> None:
+        """A trained keypoint head would be discarded silently, so the load is refused with the right remedy."""
+        checkpoint = {
+            "args": SimpleNamespace(segmentation_head=segmentation_head, patch_size=14, use_grouppose_keypoints=True)
+        }
+        model_args = SimpleNamespace(segmentation_head=segmentation_head, patch_size=14, use_grouppose_keypoints=False)
+
+        with pytest.raises(ValueError, match="keypoint head") as exc_info:
+            validate_checkpoint_compatibility(checkpoint, model_args)
+
+        assert "RFDETRSegNano(use_grouppose_keypoints=True)" in str(exc_info.value)
+
+    # ------------------------------------------------------------------
     # patch_size mismatch
     # ------------------------------------------------------------------
 

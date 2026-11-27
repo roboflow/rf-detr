@@ -29,6 +29,7 @@ from rfdetr.config import (
     KeypointTrainConfig,
     RFDETRBaseConfig,
     RFDETRKeypointPreviewConfig,
+    SegmentationKeypointTrainConfig,
     SegmentationTrainConfig,
     TrainConfig,
 )
@@ -259,6 +260,25 @@ class TestBuildTrainerReturnType:
         assert isinstance(build_trainer(_tc(tmp_path), _mc()), Trainer)
 
 
+class TestBuildTrainerConfigCompatibility:
+    """Verify that a model with both heads requires both sets of training settings."""
+
+    @pytest.mark.parametrize(
+        "config_cls",
+        [
+            pytest.param(KeypointTrainConfig, id="keypoint-only"),
+            pytest.param(SegmentationTrainConfig, id="segmentation-only"),
+        ],
+    )
+    def test_dual_head_model_rejects_single_head_config(self, tmp_path: Path, config_cls: type[TrainConfig]) -> None:
+        """Reject either single-head config and name the config that covers both heads."""
+        model_config = _mc(segmentation_head=True, use_grouppose_keypoints=True, num_keypoints_per_class=[2])
+        train_config = _tc(tmp_path, config_cls=config_cls)
+
+        with pytest.raises(ValueError, match=r"Pass SegmentationKeypointTrainConfig\b"):
+            build_trainer(train_config, model_config, accelerator="cpu")
+
+
 class TestBuildTrainerCallbacks:
     """build_trainer() must wire the correct callback set."""
 
@@ -448,13 +468,28 @@ class TestBuildTrainerCallbacks:
                 "val/ema_mAR",
                 id="segmentation-mar-metric-has-no-dedicated-mask-mar-falls-back-to-bbox-mar",
             ),
+            pytest.param(
+                lambda p: _tc(p, config_cls=SegmentationKeypointTrainConfig, use_ema=True),
+                lambda: _mc(segmentation_head=True, use_grouppose_keypoints=True, num_keypoints_per_class=[2]),
+                "val/segm_mAP_50_95",
+                "val/ema_segm_mAP_50_95",
+                id="segmentation-with-keypoints-ranks-by-segmentation-ap",
+            ),
+            pytest.param(
+                lambda p: _tc(p, config_cls=SegmentationKeypointTrainConfig, use_ema=True, best_model_metric="mar"),
+                lambda: _mc(segmentation_head=True, use_grouppose_keypoints=True, num_keypoints_per_class=[2]),
+                "val/mAR",
+                "val/ema_mAR",
+                id="segmentation-with-keypoints-mar-metric-ranks-by-bbox-mar",
+            ),
         ],
     )
     def test_best_model_monitor_selection(self, tmp_path, make_tc, make_mc, expected_monitor, expected_monitor_ema):
         """BestModelCallback.monitor/._monitor_ema select the metric key matching task and best_model_metric.
 
         Detection ranks by mAP by default and mAR when best_model_metric='mar'; keypoint and segmentation swap in their
-        own AP/AR metric families; the EMA monitor is only set when EMA is enabled.
+        own AP/AR metric families, and a model with both heads follows segmentation; the EMA monitor is only set when
+        EMA is enabled.
         """
         best_cb = _find_callback(build_trainer(make_tc(tmp_path), make_mc()), BestModelCallback)
         assert best_cb.monitor == expected_monitor

@@ -82,3 +82,9 @@ class TestClassIdToNameOrder:
         mapping = class_id_to_name(names, num_classes, num_keypoints_per_class)
 
         assert [mapping[class_id] for class_id in sorted(mapping)] == names
+
+    def test_leading_zero_slot_that_holds_a_named_class_keeps_its_name(self) -> None:
+        """A first class without keypoints (schema ``[0, N]``) stays at slot 0 instead of shifting names by one."""
+        mapping = class_id_to_name(["helmet", "person"], 2, [0, 17])
+
+        assert mapping == {0: "helmet", 1: "person"}

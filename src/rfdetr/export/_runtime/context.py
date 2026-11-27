@@ -60,7 +60,8 @@ def load_exported_context(
             upsample_masks_to_image_size=contract.upsample_masks_to_image_size,
         ),
         run=runtime.run,
-        runtime_info={**runtime.info, "task": contract.task},
+        # Export refuses a model with both heads, so an artifact returns keypoints exactly when its task is keypoints.
+        runtime_info={**runtime.info, "task": contract.task, "has_keypoints": contract.task == "keypoints"},
         fixed_shape=True,
         batch_size=None if contract.input_shape[0] == -1 else contract.input_shape[0],
         max_batch_size=contract.max_batch_size,

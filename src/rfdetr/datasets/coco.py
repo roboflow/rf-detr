@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 from collections.abc import Mapping
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Dict, List, NamedTuple, Optional, cast
 
 import torch
@@ -33,6 +34,7 @@ from torchvision.transforms.v2 import ToDtype, ToImage
 
 from rfdetr.config import AugmentationBackend, MultiScale
 from rfdetr.datasets._aug_utils import _warn_keypoint_hflip_disabled, resolve_keypoint_flip_pairs
+from rfdetr.datasets._keypoint_schema import keypoint_category_ids
 from rfdetr.datasets._pillow_worker import image_mode
 from rfdetr.datasets._torchvision import (
     Compose,
@@ -211,18 +213,54 @@ def _train_split_cat2label(dataset_root: Path) -> dict[int, int] | None:
         return None
 
 
-def _category_ids_with_keypoints(coco: Any) -> list[int]:
-    """Return sorted COCO category ids that carry keypoint metadata or annotations."""
-    category_ids = {
-        int(cat_id) for cat_id, category in coco.cats.items() if category.get("keypoints") or category.get("skeleton")
-    }
-    if category_ids:
-        return sorted(category_ids)
+def _train_split_keypoint_cat2label(
+    train_ann_file: Path,
+    num_keypoints_per_class: list[int] | None,
+) -> dict[int, int] | None:
+    """Derive the train split's keypoint ``category_id`` → label-slot mapping so the other splits can reuse it.
 
-    for annotation in coco.anns.values():
-        if annotation.get("keypoints") or int(annotation.get("num_keypoints", 0)) > 0:
-            category_ids.add(int(annotation["category_id"]))
-    return sorted(category_ids)
+    Without category ``keypoints`` metadata the keypoint-bearing categories come from each split's own annotations, so a
+    validation or test split that lacks one of them would map the remaining categories onto different schema slots than
+    the train split the model is trained on. Deriving the mapping once from train keeps every split on one label space.
+
+    Args:
+        train_ann_file: Path to the train split's COCO annotation file.
+        num_keypoints_per_class: Keypoint schema the mapping is built against.
+
+    Returns:
+        Mapping from COCO category id to label slot, or ``None`` when the train annotation file is missing or cannot
+        produce a mapping, in which case the caller keeps the split-local mapping.
+    """
+    if not train_ann_file.exists():
+        return None
+    try:
+        with open(train_ann_file, encoding="utf-8") as file:
+            train_annotations = json.load(file)
+        train_coco = SimpleNamespace(
+            cats={int(category["id"]): category for category in train_annotations["categories"]},
+            anns=dict(enumerate(train_annotations.get("annotations", []))),
+        )
+        return _build_keypoint_cat2label(train_coco, num_keypoints_per_class)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        logger.warning(
+            "Could not derive the train-split keypoint label mapping from %s (%s); falling back to this split's own "
+            "mapping. Its label slots may diverge from the ones training used.",
+            train_ann_file,
+            exc,
+        )
+        return None
+
+
+def _category_ids_with_keypoints(coco: Any) -> list[int]:
+    """Return sorted COCO category ids that carry keypoint metadata or annotations.
+
+    Delegates to :func:`~rfdetr.datasets._keypoint_schema.keypoint_category_ids`, the rule schema inference uses, so a
+    category owns a slot in the schema and in the loader alike, whether its keypoints come from category metadata,
+    annotations, or a mix of both.
+    """
+    # ``coco.cats`` is keyed by category id, which is authoritative over any ``id`` field inside the entry.
+    categories = [{**category, "id": cat_id} for cat_id, category in coco.cats.items()]
+    return keypoint_category_ids(categories, coco.anns.values())
 
 
 def _build_keypoint_cat2label(coco: Any, num_keypoints_per_class: list[int] | None) -> dict[int, int]:
@@ -1587,6 +1625,12 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             "unavailable; disabling GPU postprocess transforms and retaining CPU normalization."
         )
     gpu_postprocess = is_gpu_postprocess(resolved_augmentation_backend)
+    # Keypoint slots come from the train split alone (see `_train_split_keypoint_cat2label`).
+    cat2label = (
+        _train_split_keypoint_cat2label(PATHS["train"][1], num_keypoints_per_class)
+        if include_keypoints and image_set.split("_", maxsplit=1)[0] != "train"
+        else None
+    )
     skip_unreadable = image_set == "train" and bool(getattr(args, "skip_unreadable_images", False))
     draft_size = draft_size_for_transforms(
         image_set,
@@ -1624,6 +1668,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             # Active-first [17] maps keypoint categories to slot 0; changing either without
             # the other silently misaligns training supervision.
             remap_category_ids=include_keypoints,
+            cat2label=cat2label,
             draft_size=draft_size,
             num_channels=getattr(args, "num_channels", 3),
             skip_unreadable=skip_unreadable,
@@ -1653,6 +1698,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             # Active-first [17] maps keypoint categories to slot 0; changing either without
             # the other silently misaligns training supervision.
             remap_category_ids=include_keypoints,
+            cat2label=cat2label,
             draft_size=draft_size,
             num_channels=getattr(args, "num_channels", 3),
             skip_unreadable=skip_unreadable,
@@ -1719,8 +1765,14 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     gpu_postprocess = is_gpu_postprocess(resolved_augmentation_backend)
     # Label indices come from the train split alone: deriving them per split makes a category that is annotated in
     # train but not in valid shift every later label index of that split. The keypoint path maps categories onto
-    # schema slots instead of annotation coverage, so it keeps its own derivation.
-    cat2label = None if split == "train" or include_keypoints else _train_split_cat2label(root)
+    # schema slots, which annotation-only keypoints derive from each split's coverage, so it takes train's mapping too.
+    cat2label: dict[int, int] | None
+    if split == "train":
+        cat2label = None
+    elif include_keypoints:
+        cat2label = _train_split_keypoint_cat2label(PATHS["train"][1], num_keypoints_per_class)
+    else:
+        cat2label = _train_split_cat2label(root)
     skip_unreadable = image_set == "train" and bool(getattr(args, "skip_unreadable_images", False))
     draft_size = draft_size_for_transforms(
         image_set,

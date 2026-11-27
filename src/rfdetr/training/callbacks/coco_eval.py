@@ -293,7 +293,7 @@ class COCOEvalCallback(Callback):
             getattr(model_config, "use_grouppose_keypoints", False) if model_config is not None else False
         )
         self._keypoint_mode = use_grouppose_keypoints is True
-        self._use_segm_metrics = self._segmentation and not self._keypoint_mode
+        # A model with both heads reports mask mAP here and OKS keypoint metrics beside it.
         iou_type: Any = ["bbox", "segm"] if self._use_segm_metrics else "bbox"
         kwargs: dict[str, Any] = dict(
             # Per-class AP is genuinely skipped (compute + state memory) when per-class logging is
@@ -506,6 +506,8 @@ class COCOEvalCallback(Callback):
                     "(sparse_forward).  Only val/test segm mAP is available."
                 )
                 self._train_segm_skip_warned = True
+            # The OKS keypoint metric needs no masks, so a model with both heads still accumulates it.
+            self._update_keypoint_oks_metric(trainer, outputs, split="train")
             return
         self.map_metric_train.update(preds, targets)
 
@@ -1033,6 +1035,10 @@ class COCOEvalCallback(Callback):
         mar_key = f"{pfx}mar_{self._max_dets}"
         if not self._any_rank_has_updates(metric, pl_module):
             metric.reset()
+            # The train-split mask metric of a model with both heads never updates (see on_train_batch_end), while
+            # its keypoint metric does; compute it here, then clear whatever a skipped compute left behind.
+            if split == "train":
+                self._compute_and_log_keypoint_map(split, pl_module, trainer)
             self._reset_keypoint_split(split)
             if split not in ("val", "train"):
                 self._reset_agnostic_metric()

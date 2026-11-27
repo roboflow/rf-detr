@@ -18,7 +18,7 @@ __all__ = [
 ]
 
 
-def _is_bg_first_schema(schema: list[int]) -> bool:
+def _is_bg_first_schema(schema: list[int], class_names: list[str] | None = None) -> bool:
     """Return True if *schema* uses a background-first layout.
 
     A background-first schema has a leading slot with zero keypoints that
@@ -26,11 +26,20 @@ def _is_bg_first_schema(schema: list[int]) -> bool:
     is background and slot 1 is person with 17 keypoints.  Active-first
     schemas omit that slot entirely, e.g. ``[17]``.
 
+    A leading zero is ambiguous on its own: a model whose first class carries no keypoints
+    (names ``["helmet", "person"]``, schema ``[0, 17]``) is active-first with a named slot 0. A
+    background-first schema holds one slot more than the model has class names, so passing
+    *class_names* lets that case be told apart: a leading zero with exactly one slot per name
+    means slot 0 is a named class, not the background sentinel. Without *class_names*, or with a
+    different number of names, the leading zero keeps its legacy background-first meaning.
+
     Args:
         schema: Keypoints-per-class list.
+        class_names: Names of the model's classes in slot order, when known.
 
     Returns:
-        ``True`` when ``schema`` is non-empty and its first element is zero.
+        ``True`` when ``schema`` is non-empty, its first element is zero, and *class_names* (when
+        given) does not name every slot of ``schema``.
 
     Examples:
         >>> _is_bg_first_schema([0, 17])
@@ -39,8 +48,14 @@ def _is_bg_first_schema(schema: list[int]) -> bool:
         False
         >>> _is_bg_first_schema([])
         False
+        >>> _is_bg_first_schema([0, 17], ["person"])
+        True
+        >>> _is_bg_first_schema([0, 17], ["helmet", "person"])
+        False
     """
-    return bool(schema) and schema[0] == 0
+    if not schema or schema[0] != 0:
+        return False
+    return class_names is None or len(class_names) != len(schema)
 
 
 def _to_active_first(schema: list[int]) -> list[int]:

@@ -598,6 +598,12 @@ class TestShiftTTAValidation:
 class TestTTAPublicAPI:
     """``RFDETRInference(model).predict(..., tta=TTAConfig(shift=N))``."""
 
+    def test_rejects_segmentation_model_with_keypoint_head(self) -> None:
+        """Keypoints are not fused across passes, so a model with both heads is refused like a keypoint model."""
+        model = RFDETRSegNano(pretrain_weights=None, use_grouppose_keypoints=True, num_keypoints_per_class=[17])
+        with pytest.raises(ValueError, match="does not support keypoint models"):
+            RFDETRInference(model).predict(PIL.Image.new("RGB", (28, 28)), tta=TTAConfig(shift=2))
+
     def test_segmentation_model_returns_image_sized_masks(self) -> None:
         torch.manual_seed(0)
         predictor = RFDETRInference(RFDETRSegNano(pretrain_weights=None))

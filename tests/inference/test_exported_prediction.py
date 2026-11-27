@@ -484,6 +484,7 @@ class TestExportedPrediction:
             "backend": "onnx",
             "device": "CPUExecutionProvider",
             "task": "detect",
+            "has_keypoints": False,
             "input_shape": (required_batch, 3, 32, 48),
             "default_shape": (32, 48),
             "batch_size": required_batch,
@@ -678,6 +679,7 @@ class TestExportedPrediction:
         onnx.save(graph, path)
         model = RFDETRInference(path, metadata=metadata, device="cpu")
         assert model.runtime_info["task"] == task
+        assert model.runtime_info["has_keypoints"] == (task == "keypoints")
         result = model.predict(np.zeros((64, 96, 3), dtype=np.uint8))
         if task == "segment":
             assert isinstance(result, Detections)

@@ -38,7 +38,7 @@ from rfdetr._prediction.core import (
 from rfdetr._prediction.types import _ImageInput, _ThresholdInput
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
-from rfdetr.config import ModelConfig, TrainConfig
+from rfdetr.config import ModelConfig, TrainConfig, _resolve_train_config_class
 from rfdetr.datasets._aug_utils import cycle_channel_stats
 from rfdetr.datasets._keypoint_schema import (
     active_keypoint_counts,
@@ -2059,7 +2059,8 @@ class RFDETR:
         Raises:
             FileNotFoundError: If the artifact does not exist.
             ValueError: If the format, batch bounds, shape, patch size, backend, SoC, or format settings are invalid.
-            NotImplementedError: If the requested settings are unsupported by the format.
+            NotImplementedError: If the requested settings are unsupported by the format, or the model has both a
+                segmentation head and a keypoint head and ``backbone_only`` is not set.
             ImportError: If embedding metadata or reading the artifact's interface needs a missing optional package.
             OSError: If the artifact cannot be read or metadata cannot be written.
 
@@ -2073,12 +2074,13 @@ class RFDETR:
         from rfdetr.export._backend import _resolve_export_backend
         from rfdetr.export._runtime.metadata import metadata_from_model, write_metadata
         from rfdetr.export.base import reject_unsupported_dynamic_batch
-        from rfdetr.export.prepare import validate_export_shape
+        from rfdetr.export.prepare import reject_masks_with_keypoints, validate_export_shape
         from rfdetr.export.registry import resolve_exporter
 
         artifact = Path(artifact)
         if not artifact.exists():
             raise FileNotFoundError(artifact)
+        reject_masks_with_keypoints(self.model_config, backbone_only=backbone_only)
         format, batch_size, max_batch_size = RFDETR._resolve_export_batch(
             format, batch_size, dynamic_batch, max_batch_size
         )
@@ -2440,7 +2442,8 @@ class RFDETR:
                 ``format="coreml"``, ``format="openvino"``, ``format="tflite"``, or ``format="litert"`` — those
                 paths require a fixed batch size; if ``format="litert"`` is combined with a ``quantization``
                 other than ``None`` / ``"fp32"``; if ``format="litert"`` is asked to export a keypoint model
-                (``backbone_only=True`` still converts).
+                (``backbone_only=True`` still converts); if the model has both a segmentation head and a keypoint
+                head, for every format (``backbone_only=True`` still converts).
             ImportError: If the optional dependencies for the requested
                 ``format``/``backend`` are not installed (e.g.
                 ``rfdetr[onnx]``, ``rfdetr[tensorrt]``, ``rfdetr[executorch]``,
@@ -2474,7 +2477,7 @@ class RFDETR:
         """
         from rfdetr.export._backend import _resolve_export_backend
         from rfdetr.export.base import reject_unsupported_dynamic_batch
-        from rfdetr.export.prepare import prepare_export_graph, validate_export_shape
+        from rfdetr.export.prepare import prepare_export_graph, reject_masks_with_keypoints, validate_export_shape
         from rfdetr.export.registry import resolve_exporter
 
         # Every format builds its example batch from this, so it is checked before any exporter is imported.
@@ -2499,6 +2502,8 @@ class RFDETR:
         # exporter imports the format's heavy optional dependency (coremltools, executorch, openvino, ...) and long
         # before the user pays for a full DINOv2 forward pass.
         reject_unsupported_dynamic_batch(format, dynamic_batch=dynamic_batch)
+        # The export contract names one task-specific output, so a model with both heads is refused here as well.
+        reject_masks_with_keypoints(self.model_config, backbone_only=backbone_only)
         if getattr(self, "_optimized_inplace", False) or self.model.model is None:
             raise RuntimeError(
                 "RFDETR.export() is not available after inplace optimization. "
@@ -3061,8 +3066,13 @@ class RFDETR:
                 model_args.num_keypoints_per_class = inferred_schema
 
     def get_train_config(self, **kwargs: Any) -> TrainConfig:
-        """Retrieve the configuration parameters that will be used for training."""
-        return self._train_config_class(**kwargs)
+        """Retrieve the configuration parameters that will be used for training.
+
+        The config class follows the model heads: a model built with ``use_grouppose_keypoints=True`` trains with
+        :class:`~rfdetr.config.KeypointTrainConfig`, or :class:`~rfdetr.config.SegmentationKeypointTrainConfig` when
+        it also has a segmentation head, whatever its variant class declares.
+        """
+        return _resolve_train_config_class(self._train_config_class, self.model_config)(**kwargs)
 
     def get_model(self, config: ModelConfig, *, trust_checkpoint: bool = False) -> ModelContext:
         """Retrieve a model context from the provided architecture configuration.
@@ -3132,6 +3142,8 @@ class RFDETR:
             "backend": "pytorch",
             "device": str(self.model.device),
             "task": _task_of(config),
+            # `task` gives segmentation precedence; this flag finds the keypoints a two-head model also returns.
+            "has_keypoints": bool(config.use_grouppose_keypoints),
             "input_shape": (batch_size, config.num_channels, spatial_size, spatial_size),
             "default_shape": (self.model.resolution, self.model.resolution),
             "batch_size": batch_size,
@@ -3210,7 +3222,10 @@ class RFDETR:
                 "pred_logits": predictions[1],
                 "pred_boxes": predictions[0],
             }
-            if len(predictions) == 3:
+            if len(predictions) == 4:
+                return_predictions["pred_masks"] = predictions[2]
+                return_predictions["pred_keypoints"] = predictions[3]
+            elif len(predictions) == 3:
                 # Distinguish optional keypoint vs mask tuple output for legacy compiled/export shims.
                 if getattr(getattr(self.model, "args", None), "use_grouppose_keypoints", False):
                     return_predictions["pred_keypoints"] = predictions[2]
@@ -3300,7 +3315,13 @@ class RFDETR:
             ``KeyPoints`` does not have a native bounding-box field. The ``data`` dict also contains ``class_name`` and
             ``source_shape`` as per-object arrays. When ``include_source_image=True`` for keypoint models,
             ``source_image`` is stored as per-object data until Supervision exposes collection-level metadata for
-            ``KeyPoints``.
+            ``KeyPoints``. A model with both a segmentation head and a keypoint head returns
+            :class:`~supervision.Detections` with ``mask`` set, ``detections.data["keypoints"]`` as a
+            ``(num_detections, num_keypoints, 3)`` array of pixel ``x``, ``y`` and per-keypoint confidence,
+            ``detections.data["keypoint_precision_cholesky"]`` with the raw precision parameters, and
+            ``detections.data["covariance"]`` with the same pixel-space covariance matrices a keypoint model returns.
+            It has no ``visible`` field; ``detections.data["keypoints"][..., 2] > 0`` is what ``key_points.visible``
+            holds for a keypoint model.
 
         Note:
             For ``Detections`` outputs, ``source_image`` moved from ``detections.data`` to ``detections.metadata``.

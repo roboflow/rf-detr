@@ -312,10 +312,14 @@ def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: An
 
     Raises:
         ValueError: If ``segmentation_head`` or ``patch_size`` in the checkpoint
-            args do not match those of the model, or if the ``patch_size`` inferred from the DINOv2 projection weight
-            shape differs from ``model_args.patch_size`` when no explicit ``args.patch_size`` is present.
+            args do not match those of the model, if the checkpoint has a keypoint head the model lacks, or if the
+            ``patch_size`` inferred from the DINOv2 projection weight shape differs from ``model_args.patch_size`` when
+            no explicit ``args.patch_size`` is present.
 
     Note:
+        A model with a keypoint head may load a checkpoint trained without one: the head keeps its random
+        initialization. The reverse is refused because it would silently discard a trained head.
+
         This helper does not mutate ``model_args``. It emits ``logger.warning`` (not an exception) for class-count
         mismatches so that callers can still proceed with reinitialization or weight loading.
 
@@ -442,14 +446,19 @@ def validate_checkpoint_compatibility(checkpoint: dict[str, Any], model_args: An
     ckpt_keypoint_head: bool | None = _ckpt_args_get(ckpt_args, "use_grouppose_keypoints")
     model_keypoint_head: bool | None = getattr(model_args, "use_grouppose_keypoints", None)
 
-    if ckpt_keypoint_head is not None and model_keypoint_head is not None and ckpt_keypoint_head != model_keypoint_head:
-        if ckpt_keypoint_head:
-            raise ValueError(
-                "The checkpoint was trained with a keypoint head, but the current model does not have one. "
-                "Load the weights into a keypoint model (e.g. RFDETRKeypointPreview) instead of a detection model."
-            )
-        else:
-            raise ValueError(
-                "The current model has a keypoint head, but the checkpoint was trained without one. "
-                "Load the weights into a detection model (e.g. RFDETRNano) instead of a keypoint model."
-            )
+    if ckpt_keypoint_head and model_keypoint_head is not None and not model_keypoint_head:
+        # Loading would silently discard a trained head, so refuse. The reverse direction (a model with a keypoint
+        # head loading a checkpoint without one) is allowed: the head keeps its random initialization, as it does for
+        # the official detection and segmentation weights, because load_state_dict(strict=False) tolerates the
+        # missing keys.
+        raise ValueError(
+            "The checkpoint was trained with a keypoint head, but the current model does not have one. "
+            "Load the weights into a model with a keypoint head (e.g. RFDETRKeypointPreview, or "
+            "RFDETRSegNano(use_grouppose_keypoints=True) for a segmentation checkpoint) instead of a model "
+            "without one."
+        )
+    if ckpt_keypoint_head is not None and not ckpt_keypoint_head and model_keypoint_head:
+        logger.info(
+            "The checkpoint was trained without a keypoint head; the model's keypoint head keeps its random "
+            "initialization and needs fine-tuning."
+        )

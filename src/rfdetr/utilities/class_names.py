@@ -56,6 +56,8 @@ def class_id_to_name(
         {0: 'cat', 1: 'dog'}
         >>> class_id_to_name(["person"], 2, [0, 17])
         {1: 'person'}
+        >>> class_id_to_name(["helmet", "person"], 2, [0, 17])
+        {0: 'helmet', 1: 'person'}
         >>> class_id_to_name(COCO_CLASS_NAMES, 90, [])[18]
         'dog'
     """
@@ -65,7 +67,7 @@ def class_id_to_name(
             for index, category_id in enumerate(COCO_CLASSES)
             if index < len(class_names)
         }
-    if _is_bg_first_schema(num_keypoints_per_class):
+    if _is_bg_first_schema(num_keypoints_per_class, class_names):
         active_slots = [slot for slot, count in enumerate(num_keypoints_per_class) if count > 0]
         return {slot: class_names[index] for index, slot in enumerate(active_slots) if index < len(class_names)}
     return dict(enumerate(class_names))
