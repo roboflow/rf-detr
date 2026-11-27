@@ -229,7 +229,9 @@ model.train(
 2. If the metric improves by at least `min_delta`, the patience counter resets
 3. If the metric doesn't improve, the patience counter increments
 4. When patience counter reaches `patience`, training stops
-5. The best checkpoint is already saved as `checkpoint_best_total.pth`
+5. The best checkpoint is saved whenever the metric reaches a new best, and `checkpoint_best_total.pth` is written from it when training ends
+
+![Animated loss chart with patience 5. Training loss keeps falling every epoch while validation loss reaches its lowest point at epoch 6 and then rises, so the gap grows, which is overfitting. Each time the validation loss reaches a new lowest value, a best-checkpoint-saved tag appears and the best-so-far line steps down. A counter under each epoch resets to 0 at a new best and rises by one per epoch without one, filling five patience slots, until it reaches 5, the patience, and a banner says training stops and the best weights are kept as checkpoint_best_total.pth. RF-DETR itself watches the validation metric (map); the loss is shown for intuition. Values are illustrative.](../../assets/early-stopping.svg){ loading=lazy }
 
 ```
 Epoch 10: <selected-metric> = 0.450 (best: 0.450) - counter: 0

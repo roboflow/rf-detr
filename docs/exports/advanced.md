@@ -154,4 +154,6 @@ The backbone export contains the encoder and its feature projector, without the 
 
 Every format is written by an `Exporter` class built from that format's own configuration, and `model.export()` is a facade over them: it resolves the format to an exporter, narrows this method's union-of-every-format signature down to the settings that format actually reads, prepares one format-independent `ExportGraph`, and hands the graph to the exporter. `RFDETR.export()`'s signature and return value are the supported surface; the classes behind it are internal.
 
+![Schematic. A trained model goes through export() into one artifact in a chosen format (ONNX, TensorRT, OpenVINO, TFLite, CoreML and more) plus its metadata. Below, standard predict with the native model, which needs no export, sits beside predict with the exported artifact. Loading and the forward pass differ, PyTorch versus a format runtime and its adapter. Preprocess, postprocess and the Detections result are shared.](../assets/export-pipeline.svg){ loading=lazy }
+
 If you want to add a format, or you are reading the export code, see [Exporter Blueprint](blueprint.md) for the contract each format implements and the steps a new one takes.

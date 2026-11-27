@@ -1,0 +1,300 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="890" height="1110" viewBox="0 0 890 1110" role="img" aria-labelledby="title desc">
+  <title id="title">One RF-DETR training step as a blueprint</title>
+  <desc id="desc">A blueprint of one RF-DETR training step with a symbol that follows the data and changes with its type. Left, the data path from top to bottom: 1 the dataset on disk holds images with annotations and is unchanged; 2 augmentation applies a random set of transforms such as rotate, scale and flip to the image and moves the annotations with it, which changes pixels and boxes; 3 several augmented samples are composed into a float batch tensor of shape B, 3, H, W with a list of targets, which changes the format. The batch then forks: the images go to the network and the annotations go to the compare step. Right, the model: 4 the network reads its weights and turns the images into predictions; 5 the predictions are 300 boxes with class scores per image; 6 they are compared with the annotations, the ground truth; 7 the loss, class plus L1 plus GIoU, is one number for the batch. The loss goes back into the network only, as a gradient for every weight, with the norm clipped to 0.1, and the AdamW step then changes the weights and updates the EMA copy. Nothing goes back to the data. A side card lists the TrainConfig settings batch_size, multi_scale, grad_accum_steps, use_ema and aug_config. After the last batch the epoch validates without augmentation, computes COCO mAP, saves the best checkpoint and checks early stopping.</desc>
+  <defs>
+    <marker id="am" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#6706CE"/></marker>
+    <marker id="amp" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#8315F9"/></marker>
+    <pattern id="grid" width="20" height="20" patternUnits="userSpaceOnUse"><path d="M20 0 H0 V20" fill="none" stroke="#F3EEFF" stroke-width="1"/></pattern>
+    <clipPath id="clip"><rect width="130" height="96" rx="6"/></clipPath>
+    <g id="scene"><rect width="130" height="96" fill="#F3EEFF"/><rect y="68" width="130" height="28" fill="#E8D2FF"/><circle cx="33" cy="26" r="8" fill="#B58AF5"/><rect x="21" y="36" width="24" height="40" rx="6" fill="#B58AF5"/><rect x="74" y="60" width="26" height="14" rx="5" fill="#6FD8C6"/><circle cx="102" cy="57" r="6" fill="#6FD8C6"/><rect x="78" y="73" width="4" height="5" fill="#6FD8C6"/><rect x="92" y="73" width="4" height="5" fill="#6FD8C6"/></g>
+  </defs>
+  <style>
+    text { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #1D1D1F; }
+    .title { font-size: 22px; font-weight: 700; fill: #4A176F; }
+    .s { font-size: 14px; fill: #6F6C79; }
+    .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12.5px; }
+    .b { font-weight: 700; }
+    .sm { font-size: 12px; fill: #6F6C79; }
+    .d { font-size: 12.5px; fill: #1D1D1F; }
+    .pill { font-size: 12px; font-weight: 700; }
+    .a { animation-duration: 24s; animation-iteration-count: infinite; animation-timing-function: linear; }
+    .tok { animation-name: tok; }
+    .gt { animation-name: gt; }
+    .colL { animation-name: colL; }
+    .colR { animation-name: colR; }
+    .w0p42_7p92 { animation-name: w0p42_7p92; }
+    .r12p5 { animation-name: r12p5; }
+    .r15 { animation-name: r15; }
+    .r17p5 { animation-name: r17p5; }
+    .w10_24p58 { animation-name: w10_24p58; }
+    .r30 { animation-name: r30; }
+    .r31p67 { animation-name: r31p67; }
+    .r33p33 { animation-name: r33p33; }
+    .r35 { animation-name: r35; }
+    .r35p83 { animation-name: r35p83; }
+    .r36p67 { animation-name: r36p67; }
+    .w29p17_40 { animation-name: w29p17_40; }
+    .w48p33_52p08 { animation-name: w48p33_52p08; }
+    .w51p67_55p42 { animation-name: w51p67_55p42; }
+    .w55_58p75 { animation-name: w55_58p75; }
+    .w84p58_92p08 { animation-name: w84p58_92p08; }
+    .w87p08_92p08 { animation-name: w87p08_92p08; }
+    .w89p58_92p08 { animation-name: w89p58_92p08; }
+    .r92p5 { animation-name: r92p5; }
+    .w0_91p67 { animation-name: w0_91p67; }
+    .w47p5_58p33 { animation-name: w47p5_58p33; }
+    .w83p33_97p5 { animation-name: w83p33_97p5; }
+    .r57p5 { animation-name: r57p5; }
+    .w60_66p25 { animation-name: w60_66p25; }
+    .r71p67 { animation-name: r71p67; }
+    .w68p33_76p67 { animation-name: w68p33_76p67; }
+    .r78p33 { animation-name: r78p33; }
+    .w77p5_82p92 { animation-name: w77p5_82p92; }
+    .sym_aug { animation-name: sym_aug; }
+    .sym_batch { animation-name: sym_batch; }
+    .sym_pred { animation-name: sym_pred; }
+    .sym_loss { animation-name: sym_loss; }
+    .sym_grad { animation-name: sym_grad; }
+    .sym_w { animation-name: sym_w; }
+    .sym_img { animation-name: sym_img; }
+    @keyframes w0p42_7p92{0%,0.42%{opacity:0}1.67%,7.92%{opacity:1}9.17%,100%{opacity:0}}
+    @keyframes r12p5{0%,12.5%{opacity:0}14.58%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes r15{0%,15%{opacity:0}17.08%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes r17p5{0%,17.5%{opacity:0}19.58%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes w10_24p58{0%,10%{opacity:0}11.25%,24.58%{opacity:1}25.83%,100%{opacity:0}}
+    @keyframes r30{0%,30%{opacity:0}32.08%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes r31p67{0%,31.67%{opacity:0}33.75%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes r33p33{0%,33.33%{opacity:0}35.42%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes r35{0%,35%{opacity:0}37.08%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes r35p83{0%,35.83%{opacity:0}37.92%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes r36p67{0%,36.67%{opacity:0}38.75%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes w29p17_40{0%,29.17%{opacity:0}30.42%,40%{opacity:1}41.25%,100%{opacity:0}}
+    @keyframes w48p33_52p08{0%,48.33%{opacity:0}49.58%,52.08%{opacity:1}53.33%,100%{opacity:0}}
+    @keyframes w51p67_55p42{0%,51.67%{opacity:0}52.92%,55.42%{opacity:1}56.67%,100%{opacity:0}}
+    @keyframes w55_58p75{0%,55%{opacity:0}56.25%,58.75%{opacity:1}60%,100%{opacity:0}}
+    @keyframes w84p58_92p08{0%,84.58%{opacity:0}85.83%,92.08%{opacity:1}93.33%,100%{opacity:0}}
+    @keyframes w87p08_92p08{0%,87.08%{opacity:0}88.33%,92.08%{opacity:1}93.33%,100%{opacity:0}}
+    @keyframes w89p58_92p08{0%,89.58%{opacity:0}90.83%,92.08%{opacity:1}93.33%,100%{opacity:0}}
+    @keyframes r92p5{0%,92.5%{opacity:0}94.58%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes w0_91p67{0%,0%{opacity:0}1.25%,91.67%{opacity:1}92.92%,100%{opacity:0}}
+    @keyframes w47p5_58p33{0%,47.5%{opacity:0}48.75%,58.33%{opacity:1}59.58%,100%{opacity:0}}
+    @keyframes w83p33_97p5{0%,83.33%{opacity:0}84.58%,97.5%{opacity:1}98.75%,100%{opacity:0}}
+    @keyframes r57p5{0%,57.5%{opacity:0}59.58%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes w60_66p25{0%,60%{opacity:0}61.25%,66.25%{opacity:1}67.5%,100%{opacity:0}}
+    @keyframes r71p67{0%,71.67%{opacity:0}73.75%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes w68p33_76p67{0%,68.33%{opacity:0}69.58%,76.67%{opacity:1}77.92%,100%{opacity:0}}
+    @keyframes r78p33{0%,78.33%{opacity:0}80.42%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes w77p5_82p92{0%,77.5%{opacity:0}78.75%,82.92%{opacity:1}84.17%,100%{opacity:0}}
+    @keyframes sym_aug{0%,10%{opacity:0}11.04%,26.67%{opacity:1}27.71%,100%{opacity:0}}
+    @keyframes sym_batch{0%,26.67%{opacity:0}27.71%,58.33%{opacity:1}59.38%,100%{opacity:0}}
+    @keyframes sym_pred{0%,58.33%{opacity:0}59.38%,76.67%{opacity:1}77.71%,100%{opacity:0}}
+    @keyframes sym_loss{0%,76.67%{opacity:0}77.71%,83.33%{opacity:1}84.38%,100%{opacity:0}}
+    @keyframes sym_grad{0%,83.33%{opacity:0}84.38%,91.67%{opacity:1}92.71%,100%{opacity:0}}
+    @keyframes sym_w{0%,91.67%{opacity:0}92.71%,98.75%{opacity:1}99.79%,100%{opacity:0}}
+    @keyframes sym_img{0%,9.58%{opacity:1}10.62%,100%{opacity:0}}
+    @keyframes tok{0%{transform:translate(370px,162px);opacity:0}1.67%{transform:translate(370px,162px);opacity:1}5.83%{transform:translate(370px,162px);opacity:1}7.92%{transform:translate(215px,290px);opacity:1}10.42%{transform:translate(370px,332px);opacity:1}25%{transform:translate(370px,332px);opacity:1}27.08%{transform:translate(215px,540px);opacity:1}29.58%{transform:translate(370px,582px);opacity:1}40%{transform:translate(370px,582px);opacity:1}41.67%{transform:translate(410px,600px);opacity:1}45.83%{transform:translate(410px,255px);opacity:1}47.08%{transform:translate(450px,255px);opacity:1}49.17%{transform:translate(780px,162px);opacity:1}58.33%{transform:translate(780px,162px);opacity:1}60.42%{transform:translate(625px,430px);opacity:1}62.5%{transform:translate(780px,472px);opacity:1}68.33%{transform:translate(780px,472px);opacity:1}70.42%{transform:translate(625px,570px);opacity:1}72.5%{transform:translate(780px,612px);opacity:1}75.83%{transform:translate(780px,612px);opacity:1}77.92%{transform:translate(625px,780px);opacity:1}80%{transform:translate(780px,822px);opacity:1}82.92%{transform:translate(780px,822px);opacity:1}84.58%{transform:translate(850px,860px);opacity:1}87.5%{transform:translate(850px,255px);opacity:1}90%{transform:translate(803px,255px);opacity:1}91.67%{transform:translate(780px,162px);opacity:1}97.92%{transform:translate(780px,162px);opacity:1}99.58%{transform:translate(780px,162px);opacity:0}100%{transform:translate(370px,162px);opacity:0}}
+    @keyframes gt{0%{transform:translate(390px,690px);opacity:0}39.58%{transform:translate(390px,690px);opacity:0}41.25%{transform:translate(390px,690px);opacity:1}43.33%{transform:translate(430px,690px);opacity:1}45%{transform:translate(430px,680px);opacity:1}46.67%{transform:translate(450px,680px);opacity:1}50.83%{transform:translate(736px,616px);opacity:1}77.5%{transform:translate(736px,616px);opacity:1}79.58%{transform:translate(736px,616px);opacity:0}100%{transform:translate(390px,690px);opacity:0}}
+    @keyframes colL{0%,40%{opacity:1}44.17%,97.92%{opacity:0.38}99.58%,100%{opacity:1}}
+    @keyframes colR{0%,40%{opacity:0.38}44.17%,97.92%{opacity:1}99.58%,100%{opacity:0.38}}
+    @media (prefers-reduced-motion: reduce) { .a { animation: none !important; } .tok, .gt { display: none; } }
+  </style>
+  <rect x="1" y="1" width="888" height="1108" rx="16" fill="#FFFFFF" stroke="#E8D2FF" stroke-width="2"/>
+  <rect x="1" y="1" width="888" height="1108" rx="16" fill="url(#grid)"/>
+  <text class="title" x="40" y="38">One training step, drawn as a blueprint</text>
+  <text class="s" x="40" y="60">Left: the data path. Right: the model. Follow the symbol; the half that is working is bright.</text>
+  <g class=""><rect x="40" y="74" width="96" height="24" rx="12" fill="#A5F9EA"/><text class="pill" x="52" y="90.5" style="fill:#4A176F">CHANGES</text></g>
+  <text class="sm" x="146" y="91">this value is rewritten here</text>
+  <g class=""><rect x="360" y="74" width="100" height="24" rx="12" fill="none" stroke="#B9B4C6" stroke-width="1.4"/><text class="pill" x="372" y="90.5" style="fill:#6F6C79">unchanged</text></g>
+  <text class="sm" x="470" y="91">read only</text>
+  <g class=""><rect x="560" y="74" width="82" height="24" rx="12" fill="none" stroke="#0B7A6B" stroke-width="1.4"/><text class="pill" x="572" y="90.5" style="fill:#0B7A6B">output</text></g>
+  <text class="sm" x="652" y="91">a new value is made</text>
+  <path d="M390 600 H410 V255 H448" fill="none" stroke="#6706CE" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#am)"/>
+  <path d="M390 690 H430 V680 H448" fill="none" stroke="#6706CE" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#am)"/>
+  <text class="sm" transform="translate(401 430) rotate(-90)" text-anchor="middle" style="fill:#6706CE">images</text>
+  <text class="sm" transform="translate(422 646) rotate(-90)" text-anchor="middle" style="fill:#6706CE">annotations</text>
+  <circle cx="410" cy="600" r="3.5" fill="#6706CE"/><circle cx="430" cy="690" r="3.5" fill="#6706CE"/>
+  <g class="a colL">
+  <text class="mono b" x="215" y="128" text-anchor="middle" style="fill:#6F6C79">DATA PATH</text>
+  <rect x="40" y="140" width="350" height="130" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <rect x="52" y="149" width="20" height="20" fill="none" stroke="#6706CE" stroke-width="1.4"/><text class="mono" x="62" y="164" text-anchor="middle" style="fill:#6706CE">1</text>
+  <text class="mono b" x="82" y="164">DATASET</text>
+  <text class="sm" x="54" y="186">images + annotations</text>
+  <text class="mono" x="54" y="206">dataset_dir/</text>
+  <text class="mono" x="54" y="222">&#160;&#160;train/</text>
+  <text class="mono" x="54" y="238">&#160;&#160;valid/  test/</text>
+  <g class=""><g transform="translate(250 168) scale(0.72)"><g clip-path="url(#clip)">
+  <rect x="-60" y="-60" width="250" height="216" fill="#E8D2FF"/>
+  <g transform=""><use href="#scene"/>
+  <rect x="18" y="16" width="30" height="64" fill="none" stroke="#6706CE" stroke-width="3"/><rect x="72" y="50" width="36" height="28" fill="none" stroke="#0B7A6B" stroke-width="3"/></g></g></g>
+  <rect x="250" y="168" width="93.6" height="69.12" rx="4.32" fill="none" stroke="#A351FB" stroke-width="1.5"/></g>
+  <text class="sm" x="250" y="252">image + annotations</text>
+  <g class=""><rect x="54" y="242" width="160" height="24" rx="12" fill="none" stroke="#B9B4C6" stroke-width="1.4"/><text class="pill" x="66" y="258.5" style="fill:#6F6C79">unchanged · on disk</text></g>
+  <rect class="a w0p42_7p92" opacity="0" x="37" y="137" width="356" height="136" fill="#8315F9" fill-opacity="0.06" stroke="#8315F9" stroke-width="3"/>
+  <path d="M215 270 V308" fill="none" stroke="#6706CE" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#am)"/>
+  <rect x="40" y="310" width="350" height="210" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <rect x="52" y="319" width="20" height="20" fill="none" stroke="#6706CE" stroke-width="1.4"/><text class="mono" x="62" y="334" text-anchor="middle" style="fill:#6706CE">2</text>
+  <text class="mono b" x="82" y="334">AUGMENT</text>
+  <text class="sm" x="54" y="356">a random set of transforms on every draw</text>
+  <g class=""><g transform="translate(56 360) scale(0.52)"><g clip-path="url(#clip)">
+  <rect x="-60" y="-60" width="250" height="216" fill="#E8D2FF"/>
+  <g transform=""><use href="#scene"/>
+  <rect x="18" y="16" width="30" height="64" fill="none" stroke="#6706CE" stroke-width="3"/><rect x="72" y="50" width="36" height="28" fill="none" stroke="#0B7A6B" stroke-width="3"/></g></g></g>
+  <rect x="56" y="360" width="67.60000000000001" height="49.92" rx="3.12" fill="none" stroke="#A351FB" stroke-width="1.5"/></g>
+  <path d="M128 384 h14 m-5 -5 l5 5 l-5 5" fill="none" stroke="#6706CE" stroke-width="2"/>
+  <g class="a r12p5"><g transform="translate(150 360) scale(0.52)"><g clip-path="url(#clip)">
+  <rect x="-60" y="-60" width="250" height="216" fill="#E8D2FF"/>
+  <g transform="rotate(-14 65 48)"><use href="#scene"/>
+  <rect x="-60" y="-60" width="250" height="216" fill="#A5F9EA" fill-opacity="0.3"/>
+  <rect x="18" y="16" width="30" height="64" fill="none" stroke="#6706CE" stroke-width="3"/><rect x="72" y="50" width="36" height="28" fill="none" stroke="#0B7A6B" stroke-width="3"/></g></g></g>
+  <rect x="150" y="360" width="67.60000000000001" height="49.92" rx="3.12" fill="none" stroke="#A351FB" stroke-width="1.5"/></g>
+  <g class="a r12p5"><text class="sm" x="150" y="424">rotate</text></g>
+  <g class="a r15"><g transform="translate(222 360) scale(0.52)"><g clip-path="url(#clip)">
+  <rect x="-60" y="-60" width="250" height="216" fill="#E8D2FF"/>
+  <g transform="translate(65 48) scale(1.45) translate(-65 -48)"><use href="#scene"/>
+  <rect x="-60" y="-60" width="250" height="216" fill="#A5F9EA" fill-opacity="0.3"/>
+  <rect x="18" y="16" width="30" height="64" fill="none" stroke="#6706CE" stroke-width="3"/><rect x="72" y="50" width="36" height="28" fill="none" stroke="#0B7A6B" stroke-width="3"/></g></g></g>
+  <rect x="222" y="360" width="67.60000000000001" height="49.92" rx="3.12" fill="none" stroke="#A351FB" stroke-width="1.5"/></g>
+  <g class="a r15"><text class="sm" x="222" y="424">scale</text></g>
+  <g class="a r17p5"><g transform="translate(294 360) scale(0.52)"><g clip-path="url(#clip)">
+  <rect x="-60" y="-60" width="250" height="216" fill="#E8D2FF"/>
+  <g transform="translate(130 0) scale(-1 1)"><use href="#scene"/>
+  <rect x="-60" y="-60" width="250" height="216" fill="#A5F9EA" fill-opacity="0.3"/>
+  <rect x="18" y="16" width="30" height="64" fill="none" stroke="#6706CE" stroke-width="3"/><rect x="72" y="50" width="36" height="28" fill="none" stroke="#0B7A6B" stroke-width="3"/></g></g></g>
+  <rect x="294" y="360" width="67.60000000000001" height="49.92" rx="3.12" fill="none" stroke="#A351FB" stroke-width="1.5"/></g>
+  <g class="a r17p5"><text class="sm" x="294" y="424">flip</text></g>
+  <text class="sm" x="56" y="424">stored</text>
+  <text class="d" x="56" y="452">The annotations move with the image.</text>
+  <text class="d" x="56" y="468">Crop and colour change at random too.</text>
+  <g class=""><rect x="54" y="484" width="220" height="24" rx="12" fill="#A5F9EA"/><text class="pill" x="66" y="500.5" style="fill:#4A176F">CHANGES · pixels and boxes</text></g>
+  <rect class="a w10_24p58" opacity="0" x="37" y="307" width="356" height="216" fill="#8315F9" fill-opacity="0.06" stroke="#8315F9" stroke-width="3"/>
+  <path d="M215 520 V558" fill="none" stroke="#6706CE" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#am)"/>
+  <rect x="40" y="560" width="350" height="160" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <rect x="52" y="569" width="20" height="20" fill="none" stroke="#6706CE" stroke-width="1.4"/><text class="mono" x="62" y="584" text-anchor="middle" style="fill:#6706CE">3</text>
+  <text class="mono b" x="82" y="584">BATCH</text>
+  <text class="sm" x="54" y="606">composed and sent on; the data on disk stays as it was</text>
+  <g class="a r30"><g transform="translate(56 622) scale(0.42)"><g clip-path="url(#clip)">
+  <rect x="-60" y="-60" width="250" height="216" fill="#E8D2FF"/>
+  <g transform="rotate(-14 65 48)"><use href="#scene"/>
+  <rect x="-60" y="-60" width="250" height="216" fill="#A5F9EA" fill-opacity="0.3"/>
+  <rect x="18" y="16" width="30" height="64" fill="none" stroke="#6706CE" stroke-width="3"/><rect x="72" y="50" width="36" height="28" fill="none" stroke="#0B7A6B" stroke-width="3"/></g></g></g>
+  <rect x="56" y="622" width="54.6" height="40.32" rx="2.52" fill="none" stroke="#A351FB" stroke-width="1.5"/></g>
+  <g class="a r31p67"><g transform="translate(116 622) scale(0.42)"><g clip-path="url(#clip)">
+  <rect x="-60" y="-60" width="250" height="216" fill="#E8D2FF"/>
+  <g transform="translate(130 0) scale(-1 1)"><use href="#scene"/>
+  <rect x="-60" y="-60" width="250" height="216" fill="#A5F9EA" fill-opacity="0.3"/>
+  <rect x="18" y="16" width="30" height="64" fill="none" stroke="#6706CE" stroke-width="3"/><rect x="72" y="50" width="36" height="28" fill="none" stroke="#0B7A6B" stroke-width="3"/></g></g></g>
+  <rect x="116" y="622" width="54.6" height="40.32" rx="2.52" fill="none" stroke="#A351FB" stroke-width="1.5"/></g>
+  <g class="a r33p33"><g transform="translate(176 622) scale(0.42)"><g clip-path="url(#clip)">
+  <rect x="-60" y="-60" width="250" height="216" fill="#E8D2FF"/>
+  <g transform="translate(65 48) scale(1.45) translate(-65 -48)"><use href="#scene"/>
+  <rect x="-60" y="-60" width="250" height="216" fill="#A5F9EA" fill-opacity="0.3"/>
+  <rect x="18" y="16" width="30" height="64" fill="none" stroke="#6706CE" stroke-width="3"/><rect x="72" y="50" width="36" height="28" fill="none" stroke="#0B7A6B" stroke-width="3"/></g></g></g>
+  <rect x="176" y="622" width="54.6" height="40.32" rx="2.52" fill="none" stroke="#A351FB" stroke-width="1.5"/></g>
+  <text class="sm" x="56" y="678">B augmented samples + targets</text>
+  <path d="M238 636 h14 m-5 -5 l5 5 l-5 5" fill="none" stroke="#6706CE" stroke-width="2"/>
+  <g class="a r35"><rect x="262" y="610" width="62" height="40" rx="4" fill="#FFFFFF" stroke="#A351FB" stroke-width="1.6"/></g>
+  <g class="a r35p83"><rect x="269" y="617" width="62" height="40" rx="4" fill="#FFFFFF" stroke="#A351FB" stroke-width="1.6"/></g>
+  <g class="a r36p67"><rect x="276" y="624" width="62" height="40" rx="4" fill="#FFFFFF" stroke="#A351FB" stroke-width="1.6"/></g>
+  <text class="mono" x="262" y="678">[B, 3, H, W]</text>
+  <g class=""><rect x="54" y="688" width="270" height="24" rx="12" fill="#A5F9EA"/><text class="pill" x="66" y="704.5" style="fill:#4A176F">CHANGES · format: pixels to tensors</text></g>
+  <rect class="a w29p17_40" opacity="0" x="37" y="557" width="356" height="166" fill="#8315F9" fill-opacity="0.06" stroke="#8315F9" stroke-width="3"/>
+  <rect x="40" y="760" width="350" height="160" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <text class="mono b" x="54" y="784">TRAINCONFIG</text>
+  <text class="mono" x="54" y="812">batch_size</text><text class="sm" x="200" y="812">images per batch</text>
+  <text class="mono" x="54" y="831">multi_scale</text><text class="sm" x="200" y="831">image size varies per batch</text>
+  <text class="mono" x="54" y="850">grad_accum_steps</text><text class="sm" x="200" y="850">batches added up per update</text>
+  <text class="mono" x="54" y="869">use_ema</text><text class="sm" x="200" y="869">keep an EMA copy of the weights</text>
+  <text class="mono" x="54" y="888">aug_config</text><text class="sm" x="200" y="888">which augmentations to apply</text>
+  </g>
+  <g class="a colR">
+  <text class="mono b" x="625" y="128" text-anchor="middle" style="fill:#6F6C79">MODEL</text>
+  <rect x="450" y="140" width="350" height="270" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <rect x="462" y="149" width="20" height="20" fill="none" stroke="#6706CE" stroke-width="1.4"/><text class="mono" x="472" y="164" text-anchor="middle" style="fill:#6706CE">4</text>
+  <text class="mono b" x="492" y="164">NETWORK</text>
+  <text class="sm" x="464" y="186">images in, boxes and scores out</text>
+  <path d="M520 226 L600 214" stroke="#C9B0F5" stroke-width="0.90" fill="none"/><path d="M520 226 L600 238" stroke="#C9B0F5" stroke-width="2.10" fill="none"/><path d="M520 226 L600 262" stroke="#C9B0F5" stroke-width="3.30" fill="none"/><path d="M520 226 L600 286" stroke="#C9B0F5" stroke-width="1.70" fill="none"/><path d="M520 250 L600 214" stroke="#C9B0F5" stroke-width="2.90" fill="none"/><path d="M520 250 L600 238" stroke="#C9B0F5" stroke-width="1.30" fill="none"/><path d="M520 250 L600 262" stroke="#C9B0F5" stroke-width="2.50" fill="none"/><path d="M520 250 L600 286" stroke="#C9B0F5" stroke-width="0.90" fill="none"/><path d="M520 274 L600 214" stroke="#C9B0F5" stroke-width="2.10" fill="none"/><path d="M520 274 L600 238" stroke="#C9B0F5" stroke-width="3.30" fill="none"/><path d="M520 274 L600 262" stroke="#C9B0F5" stroke-width="1.70" fill="none"/><path d="M520 274 L600 286" stroke="#C9B0F5" stroke-width="2.90" fill="none"/><path d="M600 214 L680 214" stroke="#C9B0F5" stroke-width="0.90" fill="none"/><path d="M600 214 L680 238" stroke="#C9B0F5" stroke-width="2.10" fill="none"/><path d="M600 214 L680 262" stroke="#C9B0F5" stroke-width="3.30" fill="none"/><path d="M600 214 L680 286" stroke="#C9B0F5" stroke-width="1.70" fill="none"/><path d="M600 238 L680 214" stroke="#C9B0F5" stroke-width="2.90" fill="none"/><path d="M600 238 L680 238" stroke="#C9B0F5" stroke-width="1.30" fill="none"/><path d="M600 238 L680 262" stroke="#C9B0F5" stroke-width="2.50" fill="none"/><path d="M600 238 L680 286" stroke="#C9B0F5" stroke-width="0.90" fill="none"/><path d="M600 262 L680 214" stroke="#C9B0F5" stroke-width="2.10" fill="none"/><path d="M600 262 L680 238" stroke="#C9B0F5" stroke-width="3.30" fill="none"/><path d="M600 262 L680 262" stroke="#C9B0F5" stroke-width="1.70" fill="none"/><path d="M600 262 L680 286" stroke="#C9B0F5" stroke-width="2.90" fill="none"/><path d="M600 286 L680 214" stroke="#C9B0F5" stroke-width="1.30" fill="none"/><path d="M600 286 L680 238" stroke="#C9B0F5" stroke-width="2.50" fill="none"/><path d="M600 286 L680 262" stroke="#C9B0F5" stroke-width="0.90" fill="none"/><path d="M600 286 L680 286" stroke="#C9B0F5" stroke-width="2.10" fill="none"/><path d="M680 214 L760 226" stroke="#C9B0F5" stroke-width="0.90" fill="none"/><path d="M680 214 L760 274" stroke="#C9B0F5" stroke-width="2.10" fill="none"/><path d="M680 238 L760 226" stroke="#C9B0F5" stroke-width="2.90" fill="none"/><path d="M680 238 L760 274" stroke="#C9B0F5" stroke-width="1.30" fill="none"/><path d="M680 262 L760 226" stroke="#C9B0F5" stroke-width="2.10" fill="none"/><path d="M680 262 L760 274" stroke="#C9B0F5" stroke-width="3.30" fill="none"/><path d="M680 286 L760 226" stroke="#C9B0F5" stroke-width="1.30" fill="none"/><path d="M680 286 L760 274" stroke="#C9B0F5" stroke-width="2.50" fill="none"/>
+  <g class="a w48p33_52p08" opacity="0"><path d="M520 226 L600 214" stroke="#0B7A6B" stroke-width="0.90" fill="none"/><path d="M520 226 L600 238" stroke="#0B7A6B" stroke-width="2.10" fill="none"/><path d="M520 226 L600 262" stroke="#0B7A6B" stroke-width="3.30" fill="none"/><path d="M520 226 L600 286" stroke="#0B7A6B" stroke-width="1.70" fill="none"/><path d="M520 250 L600 214" stroke="#0B7A6B" stroke-width="2.90" fill="none"/><path d="M520 250 L600 238" stroke="#0B7A6B" stroke-width="1.30" fill="none"/><path d="M520 250 L600 262" stroke="#0B7A6B" stroke-width="2.50" fill="none"/><path d="M520 250 L600 286" stroke="#0B7A6B" stroke-width="0.90" fill="none"/><path d="M520 274 L600 214" stroke="#0B7A6B" stroke-width="2.10" fill="none"/><path d="M520 274 L600 238" stroke="#0B7A6B" stroke-width="3.30" fill="none"/><path d="M520 274 L600 262" stroke="#0B7A6B" stroke-width="1.70" fill="none"/><path d="M520 274 L600 286" stroke="#0B7A6B" stroke-width="2.90" fill="none"/></g>
+  <g class="a w51p67_55p42" opacity="0"><path d="M600 214 L680 214" stroke="#0B7A6B" stroke-width="0.90" fill="none"/><path d="M600 214 L680 238" stroke="#0B7A6B" stroke-width="2.10" fill="none"/><path d="M600 214 L680 262" stroke="#0B7A6B" stroke-width="3.30" fill="none"/><path d="M600 214 L680 286" stroke="#0B7A6B" stroke-width="1.70" fill="none"/><path d="M600 238 L680 214" stroke="#0B7A6B" stroke-width="2.90" fill="none"/><path d="M600 238 L680 238" stroke="#0B7A6B" stroke-width="1.30" fill="none"/><path d="M600 238 L680 262" stroke="#0B7A6B" stroke-width="2.50" fill="none"/><path d="M600 238 L680 286" stroke="#0B7A6B" stroke-width="0.90" fill="none"/><path d="M600 262 L680 214" stroke="#0B7A6B" stroke-width="2.10" fill="none"/><path d="M600 262 L680 238" stroke="#0B7A6B" stroke-width="3.30" fill="none"/><path d="M600 262 L680 262" stroke="#0B7A6B" stroke-width="1.70" fill="none"/><path d="M600 262 L680 286" stroke="#0B7A6B" stroke-width="2.90" fill="none"/><path d="M600 286 L680 214" stroke="#0B7A6B" stroke-width="1.30" fill="none"/><path d="M600 286 L680 238" stroke="#0B7A6B" stroke-width="2.50" fill="none"/><path d="M600 286 L680 262" stroke="#0B7A6B" stroke-width="0.90" fill="none"/><path d="M600 286 L680 286" stroke="#0B7A6B" stroke-width="2.10" fill="none"/></g>
+  <g class="a w55_58p75" opacity="0"><path d="M680 214 L760 226" stroke="#0B7A6B" stroke-width="0.90" fill="none"/><path d="M680 214 L760 274" stroke="#0B7A6B" stroke-width="2.10" fill="none"/><path d="M680 238 L760 226" stroke="#0B7A6B" stroke-width="2.90" fill="none"/><path d="M680 238 L760 274" stroke="#0B7A6B" stroke-width="1.30" fill="none"/><path d="M680 262 L760 226" stroke="#0B7A6B" stroke-width="2.10" fill="none"/><path d="M680 262 L760 274" stroke="#0B7A6B" stroke-width="3.30" fill="none"/><path d="M680 286 L760 226" stroke="#0B7A6B" stroke-width="1.30" fill="none"/><path d="M680 286 L760 274" stroke="#0B7A6B" stroke-width="2.50" fill="none"/></g>
+  <g class="a w84p58_92p08" opacity="0"><path d="M680 214 L760 226" stroke="#8315F9" stroke-width="0.90" fill="none"/><path d="M680 214 L760 274" stroke="#4FD6BF" stroke-width="2.10" fill="none"/><path d="M680 238 L760 226" stroke="#4FD6BF" stroke-width="2.90" fill="none"/><path d="M680 238 L760 274" stroke="#8315F9" stroke-width="1.30" fill="none"/><path d="M680 262 L760 226" stroke="#8315F9" stroke-width="2.10" fill="none"/><path d="M680 262 L760 274" stroke="#4FD6BF" stroke-width="3.30" fill="none"/><path d="M680 286 L760 226" stroke="#4FD6BF" stroke-width="1.30" fill="none"/><path d="M680 286 L760 274" stroke="#8315F9" stroke-width="2.50" fill="none"/></g>
+  <g class="a w87p08_92p08" opacity="0"><path d="M600 214 L680 214" stroke="#4FD6BF" stroke-width="0.90" fill="none"/><path d="M600 214 L680 238" stroke="#8315F9" stroke-width="2.10" fill="none"/><path d="M600 214 L680 262" stroke="#4FD6BF" stroke-width="3.30" fill="none"/><path d="M600 214 L680 286" stroke="#8315F9" stroke-width="1.70" fill="none"/><path d="M600 238 L680 214" stroke="#8315F9" stroke-width="2.90" fill="none"/><path d="M600 238 L680 238" stroke="#4FD6BF" stroke-width="1.30" fill="none"/><path d="M600 238 L680 262" stroke="#8315F9" stroke-width="2.50" fill="none"/><path d="M600 238 L680 286" stroke="#4FD6BF" stroke-width="0.90" fill="none"/><path d="M600 262 L680 214" stroke="#4FD6BF" stroke-width="2.10" fill="none"/><path d="M600 262 L680 238" stroke="#8315F9" stroke-width="3.30" fill="none"/><path d="M600 262 L680 262" stroke="#4FD6BF" stroke-width="1.70" fill="none"/><path d="M600 262 L680 286" stroke="#8315F9" stroke-width="2.90" fill="none"/><path d="M600 286 L680 214" stroke="#8315F9" stroke-width="1.30" fill="none"/><path d="M600 286 L680 238" stroke="#4FD6BF" stroke-width="2.50" fill="none"/><path d="M600 286 L680 262" stroke="#8315F9" stroke-width="0.90" fill="none"/><path d="M600 286 L680 286" stroke="#4FD6BF" stroke-width="2.10" fill="none"/></g>
+  <g class="a w89p58_92p08" opacity="0"><path d="M520 226 L600 214" stroke="#8315F9" stroke-width="0.90" fill="none"/><path d="M520 226 L600 238" stroke="#4FD6BF" stroke-width="2.10" fill="none"/><path d="M520 226 L600 262" stroke="#8315F9" stroke-width="3.30" fill="none"/><path d="M520 226 L600 286" stroke="#4FD6BF" stroke-width="1.70" fill="none"/><path d="M520 250 L600 214" stroke="#4FD6BF" stroke-width="2.90" fill="none"/><path d="M520 250 L600 238" stroke="#8315F9" stroke-width="1.30" fill="none"/><path d="M520 250 L600 262" stroke="#4FD6BF" stroke-width="2.50" fill="none"/><path d="M520 250 L600 286" stroke="#8315F9" stroke-width="0.90" fill="none"/><path d="M520 274 L600 214" stroke="#8315F9" stroke-width="2.10" fill="none"/><path d="M520 274 L600 238" stroke="#4FD6BF" stroke-width="3.30" fill="none"/><path d="M520 274 L600 262" stroke="#8315F9" stroke-width="1.70" fill="none"/><path d="M520 274 L600 286" stroke="#4FD6BF" stroke-width="2.90" fill="none"/></g>
+  <g class="a r92p5"><path d="M520 226 L600 214" stroke="#4A176F" stroke-width="1.80" fill="none"/><path d="M520 226 L600 238" stroke="#4A176F" stroke-width="1.20" fill="none"/><path d="M520 226 L600 262" stroke="#4A176F" stroke-width="4.20" fill="none"/><path d="M520 226 L600 286" stroke="#4A176F" stroke-width="0.80" fill="none"/><path d="M520 250 L600 214" stroke="#4A176F" stroke-width="2.00" fill="none"/><path d="M520 250 L600 238" stroke="#4A176F" stroke-width="2.20" fill="none"/><path d="M520 250 L600 262" stroke="#4A176F" stroke-width="1.60" fill="none"/><path d="M520 250 L600 286" stroke="#4A176F" stroke-width="1.80" fill="none"/><path d="M520 274 L600 214" stroke="#4A176F" stroke-width="3.00" fill="none"/><path d="M520 274 L600 238" stroke="#4A176F" stroke-width="2.40" fill="none"/><path d="M520 274 L600 262" stroke="#4A176F" stroke-width="2.60" fill="none"/><path d="M520 274 L600 286" stroke="#4A176F" stroke-width="2.00" fill="none"/><path d="M600 214 L680 214" stroke="#4A176F" stroke-width="0.70" fill="none"/><path d="M600 214 L680 238" stroke="#4A176F" stroke-width="3.00" fill="none"/><path d="M600 214 L680 262" stroke="#4A176F" stroke-width="2.40" fill="none"/><path d="M600 214 L680 286" stroke="#4A176F" stroke-width="2.60" fill="none"/><path d="M600 238 L680 214" stroke="#4A176F" stroke-width="3.80" fill="none"/><path d="M600 238 L680 238" stroke="#4A176F" stroke-width="0.70" fill="none"/><path d="M600 238 L680 262" stroke="#4A176F" stroke-width="3.40" fill="none"/><path d="M600 238 L680 286" stroke="#4A176F" stroke-width="0.70" fill="none"/><path d="M600 262 L680 214" stroke="#4A176F" stroke-width="1.20" fill="none"/><path d="M600 262 L680 238" stroke="#4A176F" stroke-width="4.20" fill="none"/><path d="M600 262 L680 262" stroke="#4A176F" stroke-width="0.80" fill="none"/><path d="M600 262 L680 286" stroke="#4A176F" stroke-width="3.80" fill="none"/><path d="M600 286 L680 214" stroke="#4A176F" stroke-width="2.20" fill="none"/><path d="M600 286 L680 238" stroke="#4A176F" stroke-width="1.60" fill="none"/><path d="M600 286 L680 262" stroke="#4A176F" stroke-width="1.80" fill="none"/><path d="M600 286 L680 286" stroke="#4A176F" stroke-width="1.20" fill="none"/><path d="M680 214 L760 226" stroke="#4A176F" stroke-width="1.80" fill="none"/><path d="M680 214 L760 274" stroke="#4A176F" stroke-width="1.20" fill="none"/><path d="M680 238 L760 226" stroke="#4A176F" stroke-width="2.00" fill="none"/><path d="M680 238 L760 274" stroke="#4A176F" stroke-width="2.20" fill="none"/><path d="M680 262 L760 226" stroke="#4A176F" stroke-width="3.00" fill="none"/><path d="M680 262 L760 274" stroke="#4A176F" stroke-width="2.40" fill="none"/><path d="M680 286 L760 226" stroke="#4A176F" stroke-width="0.70" fill="none"/><path d="M680 286 L760 274" stroke="#4A176F" stroke-width="3.40" fill="none"/></g>
+  <circle cx="520" cy="226" r="6.5" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <circle cx="520" cy="250" r="6.5" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <circle cx="520" cy="274" r="6.5" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <circle cx="600" cy="214" r="6.5" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <circle cx="600" cy="238" r="6.5" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <circle cx="600" cy="262" r="6.5" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <circle cx="600" cy="286" r="6.5" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <circle cx="680" cy="214" r="6.5" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <circle cx="680" cy="238" r="6.5" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <circle cx="680" cy="262" r="6.5" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <circle cx="680" cy="286" r="6.5" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <circle cx="760" cy="226" r="6.5" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <circle cx="760" cy="274" r="6.5" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <text class="sm" x="464" y="318">edges are the weights: pale before the step, dark after</text>
+  <text class="d" x="464" y="336">forward: weights are read, not changed</text>
+  <text class="d" x="464" y="352">backward: a gradient for every weight, norm clipped to 0.1</text>
+  <text class="d" x="464" y="368">AdamW step: w ← w − lr · update, the EMA copy follows</text>
+  <g class="a w0_91p67" opacity="0"><rect x="464" y="378" width="190" height="24" rx="12" fill="none" stroke="#B9B4C6" stroke-width="1.4"/><text class="pill" x="476" y="394.5" style="fill:#6F6C79">unchanged until the step</text></g>
+  <g class="a r92p5"><rect x="464" y="378" width="290" height="24" rx="12" fill="#A5F9EA"/><text class="pill" x="476" y="394.5" style="fill:#4A176F">CHANGES · the weights and the EMA copy</text></g>
+  <rect class="a w47p5_58p33" opacity="0" x="447" y="137" width="356" height="276" fill="#8315F9" fill-opacity="0.06" stroke="#8315F9" stroke-width="3"/>
+  <rect class="a w83p33_97p5" opacity="0" x="447" y="137" width="356" height="276" fill="#8315F9" fill-opacity="0.06" stroke="#8315F9" stroke-width="3"/>
+  <path d="M625 410 V448" fill="none" stroke="#6706CE" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#am)"/>
+  <rect x="450" y="450" width="350" height="100" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <rect x="462" y="459" width="20" height="20" fill="none" stroke="#6706CE" stroke-width="1.4"/><text class="mono" x="472" y="474" text-anchor="middle" style="fill:#6706CE">5</text>
+  <text class="mono b" x="492" y="474">PREDICTIONS</text>
+  <text class="sm" x="464" y="496">what the network answers for each image</text>
+  <g class="a r57p5"><g transform="translate(464 502) scale(0.4)"><g clip-path="url(#clip)">
+  <rect x="-60" y="-60" width="250" height="216" fill="#E8D2FF"/>
+  <g transform=""><use href="#scene"/>
+  <rect x="20" y="14" width="30" height="66" fill="none" stroke="#8315F9" stroke-width="4"/><rect x="70" y="48" width="38" height="30" fill="none" stroke="#8315F9" stroke-width="4"/></g></g></g>
+  <rect x="464" y="502" width="52.0" height="38.400000000000006" rx="2.4000000000000004" fill="none" stroke="#A351FB" stroke-width="1.5"/></g>
+  <text class="d" x="550" y="514">300 boxes with class scores</text>
+  <g class=""><rect x="550" y="520" width="190" height="24" rx="12" fill="none" stroke="#0B7A6B" stroke-width="1.4"/><text class="pill" x="562" y="536.5" style="fill:#0B7A6B">output · boxes + scores</text></g>
+  <rect class="a w60_66p25" opacity="0" x="447" y="447" width="356" height="106" fill="#8315F9" fill-opacity="0.06" stroke="#8315F9" stroke-width="3"/>
+  <path d="M625 550 V588" fill="none" stroke="#6706CE" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#am)"/>
+  <rect x="450" y="590" width="350" height="170" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <rect x="462" y="599" width="20" height="20" fill="none" stroke="#6706CE" stroke-width="1.4"/><text class="mono" x="472" y="614" text-anchor="middle" style="fill:#6706CE">6</text>
+  <text class="mono b" x="492" y="614">COMPARE</text>
+  <text class="sm" x="464" y="636">predictions against the annotations (ground truth)</text>
+  <g class="a r71p67"><g transform="translate(474 650) scale(0.62)"><g clip-path="url(#clip)">
+  <rect x="-60" y="-60" width="250" height="216" fill="#E8D2FF"/>
+  <g transform=""><use href="#scene"/>
+  <rect x="20" y="14" width="30" height="66" fill="none" stroke="#8315F9" stroke-width="4"/><rect x="70" y="48" width="38" height="30" fill="none" stroke="#8315F9" stroke-width="4"/></g></g></g>
+  <rect x="474" y="650" width="80.6" height="59.519999999999996" rx="3.7199999999999998" fill="none" stroke="#A351FB" stroke-width="1.5"/></g>
+  <g class="a r71p67"><text class="mono b" x="600" y="682" text-anchor="middle">vs</text></g>
+  <g class="a r71p67"><g transform="translate(630 650) scale(0.62)"><g clip-path="url(#clip)">
+  <rect x="-60" y="-60" width="250" height="216" fill="#E8D2FF"/>
+  <g transform=""><use href="#scene"/>
+  <rect x="18" y="16" width="30" height="64" fill="none" stroke="#0B7A6B" stroke-width="4" stroke-dasharray="9 6"/><rect x="72" y="50" width="36" height="28" fill="none" stroke="#0B7A6B" stroke-width="4" stroke-dasharray="9 6"/></g></g></g>
+  <rect x="630" y="650" width="80.6" height="59.519999999999996" rx="3.7199999999999998" fill="none" stroke="#A351FB" stroke-width="1.5"/></g>
+  <text class="sm" x="474" y="724">prediction</text><text class="sm" x="630" y="724">ground truth</text>
+  <g class=""><rect x="464" y="732" width="200" height="24" rx="12" fill="none" stroke="#0B7A6B" stroke-width="1.4"/><text class="pill" x="476" y="748.5" style="fill:#0B7A6B">output · matched pairs</text></g>
+  <rect class="a w68p33_76p67" opacity="0" x="447" y="587" width="356" height="176" fill="#8315F9" fill-opacity="0.06" stroke="#8315F9" stroke-width="3"/>
+  <path d="M625 760 V798" fill="none" stroke="#6706CE" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#am)"/>
+  <rect x="450" y="800" width="350" height="120" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <rect x="462" y="809" width="20" height="20" fill="none" stroke="#6706CE" stroke-width="1.4"/><text class="mono" x="472" y="824" text-anchor="middle" style="fill:#6706CE">7</text>
+  <text class="mono b" x="492" y="824">LOSS</text>
+  <text class="sm" x="464" y="846">L = class + L1 + GIoU, averaged over the batch</text>
+  <g class="a r78p33"><rect x="464" y="862" width="116" height="38" fill="#A5F9EA"/><text class="mono b" x="522" y="887" text-anchor="middle" style="font-size:16px;fill:#4A176F">L = 2.31</text></g>
+  <text class="d" x="596" y="878">one number</text><text class="d" x="596" y="894">per batch</text>
+  <g class=""><rect x="700" y="878" width="84" height="24" rx="12" fill="none" stroke="#0B7A6B" stroke-width="1.4"/><text class="pill" x="712" y="894.5" style="fill:#0B7A6B">output</text></g>
+  <rect class="a w77p5_82p92" opacity="0" x="447" y="797" width="356" height="126" fill="#8315F9" fill-opacity="0.06" stroke="#8315F9" stroke-width="3"/>
+  <path d="M800 860 H850 V255 H803" fill="none" stroke="#8315F9" stroke-width="2.2" stroke-dasharray="7 5" marker-end="url(#amp)"/>
+  <text class="sm" transform="translate(872 560) rotate(-90)" text-anchor="middle" style="fill:#8315F9">gradient dL/dw: back into the network, never into the data</text>
+  </g>
+  <rect x="24" y="960" width="842" height="130" fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"/>
+  <text class="mono b" x="40" y="986">AFTER THE LAST BATCH OF THE EPOCH</text>
+  <rect x="44" y="1000" width="180" height="48" fill="none" stroke="#6706CE" stroke-width="1.5"/><text class="mono b" x="134" y="1021" text-anchor="middle" style="font-size:12px">Validate</text><text class="sm" x="134" y="1038" text-anchor="middle">no augmentation</text>
+  <rect x="254" y="1000" width="180" height="48" fill="none" stroke="#6706CE" stroke-width="1.5"/><text class="mono b" x="344" y="1021" text-anchor="middle" style="font-size:12px">COCOEvalCallback</text><text class="sm" x="344" y="1038" text-anchor="middle">val/mAP_50_95</text>
+  <rect x="464" y="1000" width="180" height="48" fill="none" stroke="#6706CE" stroke-width="1.5"/><text class="mono b" x="554" y="1021" text-anchor="middle" style="font-size:12px">BestModelCallback</text><text class="sm" x="554" y="1038" text-anchor="middle">checkpoint_best_*.pth</text>
+  <rect x="674" y="1000" width="180" height="48" fill="none" stroke="#6706CE" stroke-width="1.5"/><text class="mono b" x="764" y="1021" text-anchor="middle" style="font-size:12px">Early stopping</text><text class="sm" x="764" y="1038" text-anchor="middle">patience used up? stop</text>
+  <path d="M224 1024 H252" fill="none" stroke="#6706CE" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#am)"/>
+  <path d="M434 1024 H462" fill="none" stroke="#6706CE" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#am)"/>
+  <path d="M644 1024 H672" fill="none" stroke="#6706CE" stroke-width="1.8" stroke-linejoin="round" marker-end="url(#am)"/>
+  <text class="sm" x="40" y="1072">Then the next epoch starts, or the run ends. Loggers get train/loss every step and val/* every epoch.</text>
+  <g class="a tok" style="transform:translate(370px,162px);opacity:0"><circle r="23" fill="#FFFFFF" stroke="#6706CE" stroke-width="2.5"/><g class="a sym_img"><g transform="translate(-15 -11)"><rect width="30" height="22" rx="3" fill="#F3EEFF" stroke="#A351FB" stroke-width="1.5"/><circle cx="9" cy="7" r="3" fill="#B58AF5"/><path d="M2 20 l9 -9 l6 6 l5 -5 l6 8 z" fill="#B58AF5"/><rect x="3" y="3" width="11" height="16" fill="none" stroke="#6706CE" stroke-width="1.8"/></g></g><g class="a sym_aug"><g transform="rotate(-16)"><g transform="translate(-15 -11)"><rect width="30" height="22" rx="3" fill="#F3EEFF" stroke="#A351FB" stroke-width="1.5"/><circle cx="9" cy="7" r="3" fill="#B58AF5"/><path d="M2 20 l9 -9 l6 6 l5 -5 l6 8 z" fill="#B58AF5"/><rect width="30" height="22" rx="3" fill="#A5F9EA" fill-opacity="0.45"/></g></g></g><g class="a sym_batch"><rect x="-15" y="-11" width="24" height="16" rx="3" fill="#FFFFFF" stroke="#A351FB" stroke-width="1.5"/><rect x="-10" y="-6" width="24" height="16" rx="3" fill="#FFFFFF" stroke="#A351FB" stroke-width="1.5"/><rect x="-5" y="-1" width="24" height="16" rx="3" fill="#F3EEFF" stroke="#8315F9" stroke-width="1.5"/></g><g class="a sym_pred"><g transform="translate(-15 -11)"><rect width="30" height="22" rx="3" fill="#F3EEFF" stroke="#A351FB" stroke-width="1.5"/><rect x="3" y="3" width="11" height="16" fill="none" stroke="#8315F9" stroke-width="2.4"/><rect x="17" y="10" width="10" height="9" fill="none" stroke="#8315F9" stroke-width="2.4"/></g></g><g class="a sym_loss"><circle r="15" fill="#8315F9"/><text x="0" y="6" text-anchor="middle" style="font-size:17px;font-weight:700;fill:#FFFFFF">L</text></g><g class="a sym_grad"><path d="M-7 9 V-9 m-5 6 l5 -6 l5 6" fill="none" stroke="#8315F9" stroke-width="2.6"/><path d="M7 -9 V9 m-5 -6 l5 6 l5 -6" fill="none" stroke="#0B7A6B" stroke-width="2.6"/></g><g class="a sym_w"><g stroke="#4A176F" fill="none"><path d="M-12 -8 L12 -6" stroke-width="1"/><path d="M-12 -8 L12 8" stroke-width="3"/><path d="M-12 8 L12 -6" stroke-width="1.6"/><path d="M-12 8 L12 8" stroke-width="2.4"/></g><g fill="#FFFFFF" stroke="#6706CE" stroke-width="1.6"><circle cx="-12" cy="-8" r="3.5"/><circle cx="-12" cy="8" r="3.5"/><circle cx="12" cy="-6" r="3.5"/><circle cx="12" cy="8" r="3.5"/></g></g></g>
+  <g class="a gt" style="transform:translate(390px,690px);opacity:0"><circle r="16" fill="#FFFFFF" stroke="#0B7A6B" stroke-width="2.5"/><text x="0" y="4.5" text-anchor="middle" style="font-size:12px;font-weight:700;fill:#0B7A6B">GT</text></g>
+</svg>
