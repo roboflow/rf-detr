@@ -783,6 +783,115 @@ class TestNestedTensorNoPadding:
         assert nested.mask.shape == (4, 640, 640)
 
 
+class TestNestedTensorTo:
+    """``NestedTensor.to`` preserves the boolean-mask contract across conversions."""
+
+    @pytest.mark.parametrize(
+        "args,kwargs,expected_dtype",
+        [
+            pytest.param(("meta",), {}, torch.float32, id="string-device"),
+            pytest.param(
+                (torch.device("meta"),),
+                {"dtype": torch.float16},
+                torch.float16,
+                id="device-with-dtype",
+            ),
+        ],
+    )
+    def test_to_moves_mask_to_converted_tensor_device(
+        self,
+        args: tuple[torch.device | str, ...],
+        kwargs: dict[str, object],
+        expected_dtype: torch.dtype,
+    ) -> None:
+        """Moving tensors from CPU to meta also moves the boolean mask."""
+        mask = torch.zeros(1, 2, 2, dtype=torch.bool)
+        nested = NestedTensor(torch.rand(1, 3, 2, 2), mask)
+
+        converted = nested.to(*args, **kwargs)
+
+        assert converted.tensors.device.type == "meta"
+        assert converted.tensors.dtype is expected_dtype
+        assert converted.mask is not None
+        assert converted.mask.device.type == "meta"
+        assert converted.mask.dtype is torch.bool
+
+    def test_to_preserves_none_mask(self) -> None:
+        """A NestedTensor without a mask keeps ``None`` through conversion."""
+        nested = NestedTensor(torch.rand(1, 3, 2, 2), None)
+
+        converted = nested.to(torch.float16)
+
+        assert converted.tensors.dtype is torch.float16
+        assert converted.mask is None
+
+    @pytest.mark.parametrize(
+        "args,kwargs,expected_dtype,expected_channels_last",
+        [
+            pytest.param(
+                (torch.device("cpu"),),
+                {"dtype": torch.float16},
+                torch.float16,
+                False,
+                id="dtype-kwarg",
+            ),
+            pytest.param(
+                (torch.float16,),
+                {},
+                torch.float16,
+                False,
+                id="positional-dtype",
+            ),
+            pytest.param(
+                (torch.device("cpu"),),
+                {"memory_format": torch.channels_last},
+                torch.float32,
+                True,
+                id="channels-last",
+            ),
+        ],
+    )
+    def test_to_converts_tensors_without_converting_mask(
+        self,
+        args: tuple[torch.device | torch.dtype, ...],
+        kwargs: dict[str, object],
+        expected_dtype: torch.dtype,
+        expected_channels_last: bool,
+    ) -> None:
+        """Tensor conversions leave mask values and boolean dtype unchanged."""
+        mask = torch.tensor(
+            [
+                [[False, False, True, True], [False, False, True, True]],
+                [[False, True, True, True], [False, True, True, True]],
+            ]
+        )
+        nested = NestedTensor(torch.rand(2, 3, 2, 4), mask, no_padding=False)
+
+        converted = nested.to(*args, **kwargs)
+
+        assert converted.tensors.dtype is expected_dtype
+        assert converted.tensors.is_contiguous(memory_format=torch.channels_last) is expected_channels_last
+        assert converted.mask is not None
+        assert converted.mask.dtype is torch.bool
+        assert converted.mask.device == converted.tensors.device
+        assert torch.equal(converted.mask, mask)
+        assert converted.no_padding is nested.no_padding
+
+    def test_to_copy_does_not_share_mask_storage(self) -> None:
+        """``copy=True`` allocates distinct storage for the boolean mask."""
+        mask = torch.zeros(1, 2, 2, dtype=torch.bool)
+        nested = NestedTensor(torch.rand(1, 3, 2, 2), mask, no_padding=True)
+
+        converted = nested.to(torch.device("cpu"), dtype=torch.float16, copy=True)
+
+        assert converted.tensors.dtype is torch.float16
+        assert converted.mask is not None
+        assert converted.mask.dtype is torch.bool
+        assert converted.mask.untyped_storage().data_ptr() != mask.untyped_storage().data_ptr()
+        assert torch.equal(converted.mask, mask)
+        assert converted.no_padding is nested.no_padding
+
+
 class TestMakeCollateFn:
     """``make_collate_fn`` returns a picklable collate callable with block_size rounding baked in."""
 
