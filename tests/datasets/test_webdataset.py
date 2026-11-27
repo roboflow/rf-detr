@@ -5,8 +5,8 @@
 # ------------------------------------------------------------------------
 """Tests for the WebDataset shard pack and streaming-load package.
 
-Cover the packer (standard library only), the shard index contract, epoch planning arithmetic, and — behind a ``skipif``
-decorator on the optional ``data`` extra — streaming, sizing and parity against the loose-file
+Cover the packer (standard library only), the shard index contract, epoch planning arithmetic, and — behind a
+``skipif`` decorator on the optional ``data`` extra — streaming, sizing and parity against the loose-file
 :class:`~rfdetr.datasets.coco.CocoDetection` the shards were packed from.
 """
 
@@ -27,6 +27,7 @@ import numpy as np
 import pytest
 import torch
 from PIL import Image
+from pytest_mock import MockerFixture
 
 from rfdetr.datasets import build_dataset
 from rfdetr.datasets.coco import CocoDetection, make_coco_transforms
@@ -1064,9 +1065,10 @@ class TestStreamingShuffle:
         Regression test for the root cause behind the PR's own reported 2-3x seed-to-seed accuracy variance:
         ``webdataset``'s ``nodesplitter``/``workersplitter`` run on the shard-URL list's existing order, *before* its
         own shard-order shuffler (verified against the pinned ``webdataset==1.0.2`` source), so leaving that list
-        unshuffled gave every worker the same fixed shard subset every epoch — only the order *within* that fixed subset
-        varied. The test above stays a partition either way (it would pass against the pre-fix code too), so it cannot
-        tell the two apart; this one checks the actual set one worker sees, which the pre-fix code could not change.
+        unshuffled gave every worker the same fixed shard subset every epoch — only the order *within* that fixed
+        subset varied. The test above stays a partition either way (it would pass against the pre-fix code too), so it
+        cannot tell the two apart; this one checks the actual set one worker sees, which the pre-fix code could not
+        change.
         """
         dataset = WebDatasetDetection(_pack(tmp_path, count=24), "train", transforms=None, shard_shuffle=4)
         monkeypatch.setattr(
@@ -1593,6 +1595,41 @@ class TestBuildWebdataset:
         pack_coco_to_shards(val_images, val_annotations, shard_dir, split="val", category_ids="raw")
         dataset = build_webdataset("val", self._namespace(shard_dir), 224)
         assert dataset.cat2label is None
+
+    @pytest.mark.parametrize(
+        ("resolution", "expected_shape", "expected_logged"),
+        [
+            pytest.param(64, (3, 64, 64), "resolution 64 from", id="int"),
+            pytest.param((64, 96), (3, 64, 96), "resolution (64, 96) from", id="pair"),
+            pytest.param((96, 64), (3, 96, 64), "resolution (96, 64) from", id="transposed-pair"),
+        ],
+    )
+    def test_resolution_reaches_the_samples_and_the_log_line(
+        self,
+        tmp_path: Path,
+        mocker: MockerFixture,
+        resolution: int | tuple[int, int],
+        expected_shape: tuple[int, int, int],
+        expected_logged: str,
+    ) -> None:
+        """An int or a ``(height, width)`` pair sets the ``val_speed`` sample shape and is named in the build log."""
+        shard_dir = _pack(tmp_path, count=2)
+        val_images, val_annotations = _build_coco_split(tmp_path, count=2, subdir="va_res")
+        pack_coco_to_shards(val_images, val_annotations, shard_dir, split="val")
+        info = mocker.patch.object(load.logger, "info")
+
+        dataset = build_webdataset("val_speed", self._namespace(shard_dir), resolution)
+
+        image, _ = next(iter(dataset))
+        assert tuple(image.shape) == expected_shape
+        logged = [
+            call.args[0] % call.args[1:]
+            for call in info.call_args_list
+            if call.args and str(call.args[0]).startswith("Building WebDataset")
+        ]
+        assert len(logged) == 1, logged
+        assert logged[0].startswith("Building WebDataset val_speed dataset at resolution")
+        assert expected_logged in logged[0]
 
     def test_build_dataset_routes_the_webdataset_format(self, tmp_path: Path) -> None:
         """``build_dataset`` returns a WebDatasetDetection for ``dataset_file='webdataset'``."""

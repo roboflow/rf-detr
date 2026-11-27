@@ -443,6 +443,61 @@ def test_forward_rejects_indivisible_spatial_dims(h: int, w: int, num_windows: i
         model(pixel_values)
 
 
+class TestNonSquarePositionGrid:
+    """Position embeddings on a ``(height, width)`` grid are used as stored only for an input of that grid."""
+
+    @staticmethod
+    def _embeddings(image_size: tuple[int, int]) -> WindowedDinov2WithRegistersEmbeddings:
+        """Return patch-16 embeddings whose position table is laid out for ``image_size``."""
+        config = WindowedDinov2WithRegistersConfig(
+            hidden_size=32, patch_size=16, num_windows=1, image_size=image_size, num_register_tokens=0
+        )
+        return WindowedDinov2WithRegistersEmbeddings(config)
+
+    def test_grid_is_recorded_in_height_width_order(self) -> None:
+        """The embeddings record the grid, which the token count alone does not give."""
+        embeddings = self._embeddings((32, 96))
+
+        assert embeddings.patch_grid_size == (2, 6)
+        assert embeddings.position_embeddings.shape == (1, 2 * 6 + 1, 32)
+
+    def test_matching_input_uses_the_stored_table(self) -> None:
+        """An input of the stored grid gets the stored position embeddings, not an interpolated copy."""
+        embeddings = self._embeddings((32, 96))
+        tokens = torch.zeros(1, 2 * 6 + 1, 32)
+
+        assert embeddings.interpolate_pos_encoding(tokens, 32, 96) is embeddings.position_embeddings
+
+    def test_transposed_input_is_interpolated(self) -> None:
+        """A transposed input has the same token count but must not reuse the stored table."""
+        embeddings = self._embeddings((32, 96))
+        tokens = torch.zeros(1, 6 * 2 + 1, 32)
+
+        position = embeddings.interpolate_pos_encoding(tokens, 96, 32)
+
+        stored = embeddings.position_embeddings
+        expected = torch.nn.functional.interpolate(
+            stored[:, 1:].reshape(1, 2, 6, 32).permute(0, 3, 1, 2),
+            size=(6, 2),
+            mode="bicubic",
+            align_corners=False,
+            antialias=True,
+        )
+        assert position is not stored
+        torch.testing.assert_close(position[:, 1:], expected.permute(0, 2, 3, 1).reshape(1, 12, 32))
+        torch.testing.assert_close(position[:, 0], stored[:, 0])
+
+    def test_square_grid_with_the_token_count_of_a_non_square_input_is_interpolated(self) -> None:
+        """A 4x4 table serves a 2x8 input only after interpolation, although both have 16 tokens."""
+        embeddings = self._embeddings((64, 64))
+        tokens = torch.zeros(1, 2 * 8 + 1, 32)
+
+        position = embeddings.interpolate_pos_encoding(tokens, 32, 128)
+
+        assert position is not embeddings.position_embeddings
+        assert position.shape == (1, 2 * 8 + 1, 32)
+
+
 def _make_small_model() -> WindowedDinov2WithRegistersModel:
     """Return the smallest valid WindowedDinov2WithRegistersModel for unit tests.
 

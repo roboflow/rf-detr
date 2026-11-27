@@ -79,7 +79,7 @@ Published checkpoints download from `https://repo.roboflow.com/rfdetr`. On a net
 
 ## What input resolutions are allowed?
 
-`resolution` must be a positive integer divisible by `patch_size × num_windows` for the selected variant (for example, current detection checkpoints use a block size of 32). A non-divisible value raises `ValueError` indicating the required divisor. Input is square; each variant ships a sensible default resolution.
+`resolution` must be a positive integer divisible by `patch_size × num_windows` for the selected variant (for example, current detection checkpoints use a block size of 32). A non-divisible value raises `ValueError` indicating the required divisor. An integer gives a square input, and each variant ships a sensible default resolution. For a non-square input, pass a `(height, width)` pair whose sides are both divisible by the block size, such as `resolution=(384, 672)`; see [Non-square resolution](learn/train/training-parameters.md#non-square-resolution).
 
 ## Does my effective batch size have to be 16?
 

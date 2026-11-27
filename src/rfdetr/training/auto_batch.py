@@ -43,6 +43,7 @@ from rfdetr.datasets.coco import compute_multi_scale_scales
 from rfdetr.models import build_criterion_from_config
 from rfdetr.training.module_model import _is_builtin_fused_adamw
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.shapes import as_pair
 from rfdetr.utilities.tensors import NestedTensor
 
 logger = get_logger()
@@ -72,7 +73,7 @@ def _is_cuda_oom(exc: BaseException) -> bool:
 
 def _make_synthetic_batch(
     micro_batch_size: int,
-    resolution: int,
+    resolution: int | tuple[int, int],
     device: torch.device,
     num_classes: int,
     segmentation_head: bool = False,
@@ -86,11 +87,10 @@ def _make_synthetic_batch(
 
     Args:
         micro_batch_size: Number of images in the batch.
-        resolution: Square image size in pixels.
+        resolution: Image size in pixels: a side length (square) or a ``(height, width)`` pair.
         device: Device the batch is allocated on.
         num_classes: Number of classes; picks the synthetic label when there is no keypoint schema.
-        segmentation_head: If True, each target includes "masks" of shape (max_targets_per_image, resolution,
-            resolution).
+        segmentation_head: If True, each target includes "masks" of shape (max_targets_per_image, height, width).
         max_targets_per_image: Number of synthetic targets per image.
         num_channels: Number of image channels.
         num_keypoints_per_class: The criterion's keypoint schema, or ``None`` for a model without keypoints. When
@@ -107,8 +107,9 @@ def _make_synthetic_batch(
         >>> targets[0]["labels"].tolist(), tuple(targets[0]["keypoints"].shape)
         ([1], (1, 17, 3))
     """
-    tensors = torch.randn(micro_batch_size, num_channels, resolution, resolution, device=device)
-    mask = torch.zeros(micro_batch_size, resolution, resolution, dtype=torch.bool, device=device)
+    height, width = as_pair(resolution)
+    tensors = torch.randn(micro_batch_size, num_channels, height, width, device=device)
+    mask = torch.zeros(micro_batch_size, height, width, dtype=torch.bool, device=device)
     samples = NestedTensor(tensors, mask)
 
     max_label = max(0, num_classes - 1)
@@ -134,13 +135,13 @@ def _make_synthetic_batch(
             "boxes": boxes,
             "labels": labels,
             "image_id": torch.tensor(idx, dtype=torch.int64, device=device),
-            "orig_size": torch.tensor([resolution, resolution], dtype=torch.int64, device=device),
-            "size": torch.tensor([resolution, resolution], dtype=torch.int64, device=device),
+            "orig_size": torch.tensor([height, width], dtype=torch.int64, device=device),
+            "size": torch.tensor([height, width], dtype=torch.int64, device=device),
             "iscrowd": iscrowd,
             "area": area,
         }
         if segmentation_head:
-            t["masks"] = torch.zeros(n, resolution, resolution, dtype=torch.bool, device=device)
+            t["masks"] = torch.zeros(n, height, width, dtype=torch.bool, device=device)
         if keypoints is not None:
             t["keypoints"] = keypoints
         targets.append(t)
@@ -253,7 +254,7 @@ def _probe_step(
     model: torch.nn.Module,
     criterion: torch.nn.Module,
     micro_batch_size: int,
-    resolution: int,
+    resolution: int | tuple[int, int],
     device: torch.device,
     num_classes: int,
     amp: bool,
@@ -287,7 +288,7 @@ def _probe_step(
         criterion: The loss criterion (must match model output and target format). When it runs the "keypoints"
             loss, the synthetic targets carry keypoints in its ``num_keypoints_per_class`` schema.
         micro_batch_size: Per-device batch size to attempt in this single step.
-        resolution: Input spatial size (square) for the synthetic images.
+        resolution: Input spatial size for the synthetic images: a side length (square) or ``(height, width)``.
         device: CUDA device the synthetic batch is allocated on.
         num_classes: Number of classes; picks the synthetic label when the criterion has no keypoint schema.
         amp: Whether to run the forward under autocast.
@@ -381,7 +382,7 @@ def _probe_step(
 def probe_max_micro_batch(
     model: torch.nn.Module,
     criterion: torch.nn.Module,
-    resolution: int,
+    resolution: int | tuple[int, int],
     device: torch.device,
     num_classes: int,
     amp: bool,
@@ -411,7 +412,7 @@ def probe_max_micro_batch(
     Args:
         model: The model to probe (will be set to train mode).
         criterion: The loss criterion (must match model output and target format).
-        resolution: Input spatial size (square).
+        resolution: Input spatial size: a side length (square) or ``(height, width)``.
         device: CUDA device to run on.
         num_classes: Number of classes; picks the synthetic label when the criterion has no keypoint schema.
         amp: Whether to use autocast for the forward.
@@ -638,8 +639,9 @@ def resolve_auto_batch_config(
 
     # Use max multi-scale resolution when multi_scale is True so probe reflects worst-case.
     # Both "batch" and "sample" modes can hit the largest scale, so probe it for either.
-    # The probe is square; with square_resize_div_64=False the aspect-preserving resize lets the long side reach
-    # 1333 px and collate pads per axis, so a mixed portrait/landscape batch can exceed this probe's footprint.
+    # The probe has the model resolution's shape; with square_resize_div_64=False the aspect-preserving resize lets
+    # the long side reach 1333 px and collate pads per axis, so a mixed portrait/landscape batch can exceed this
+    # probe's footprint.
     multi_scale = MultiScale.from_value(getattr(train_config, "multi_scale", False))
     if multi_scale is not MultiScale.OFF:
         expanded_scales = getattr(train_config, "expanded_scales", True)
@@ -651,7 +653,10 @@ def resolve_auto_batch_config(
             patch_size,
             num_windows,
         )
-        probe_resolution = max(scales) if scales else model_config.resolution
+        # The worst case is the scale with the largest area, whether scales are side lengths or (height, width).
+        probe_resolution = (
+            max(scales, key=lambda scale: math.prod(as_pair(scale))) if scales else model_config.resolution
+        )
     else:
         probe_resolution = model_config.resolution
 

@@ -468,7 +468,7 @@ class RFDETRDataModule(LightningDataModule):
             if self._dataset_val is None:
                 self._dataset_val = build_dataset("val", ns, resolution)
 
-    def _build_test_dataset(self, ns: Any, resolution: int) -> torch.utils.data.Dataset[Any]:
+    def _build_test_dataset(self, ns: Any, resolution: int | tuple[int, int]) -> torch.utils.data.Dataset[Any]:
         """Build the dataset backing ``setup("test")``, preferring a real test split.
 
         ``roboflow`` and ``yolo`` datasets carry a labelled ``test`` split, so it is used directly.  A YOLO-format
@@ -489,7 +489,7 @@ class RFDETRDataModule(LightningDataModule):
 
         Args:
             ns: Merged model/train config namespace forwarded to :func:`build_dataset`.
-            resolution: Target square resolution in pixels.
+            resolution: Target resolution in pixels: a side length, or ``(height, width)``.
 
         Returns:
             The dataset to evaluate during the ``test`` stage.

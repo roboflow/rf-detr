@@ -9,7 +9,6 @@ import contextlib
 import importlib
 import json
 import ntpath
-import operator
 import os
 import pickle
 import tempfile
@@ -60,6 +59,7 @@ from rfdetr.utilities.files import _mkstemp_default_mode, _replace_keeping_mode
 from rfdetr.utilities.keypoints import _is_bg_first_schema
 from rfdetr.utilities.logger import get_logger
 from rfdetr.utilities.package import is_installed
+from rfdetr.utilities.shapes import as_pair
 from rfdetr.utilities.tensors import _native_grid_sample
 
 if TYPE_CHECKING:
@@ -501,6 +501,50 @@ def _ensure_model_on_device(method: Callable[Concatenate[Any, _P], _R]) -> Calla
     return typed_wrapper
 
 
+def _restore_resolution_on_failure(
+    method: Callable[Concatenate[RFDETR, _P], _R],
+) -> Callable[Concatenate[RFDETR, _P], _R]:
+    """Restore the detector's resolution metadata if training raises.
+
+    Args:
+        method: Training method whose resolution changes are guarded.
+    """
+
+    @wraps(method)
+    def wrapper(self: RFDETR, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+        """Snapshot resolution metadata and restore it if the method raises."""
+        missing: Any = object()
+        model_config = getattr(self, "model_config", None)
+        resolution = getattr(model_config, "resolution", missing)
+        positional_encoding_size = getattr(model_config, "positional_encoding_size", missing)
+        model = getattr(self, "model", None)
+        model_args = getattr(model, "args", None) if model is not None else None
+        model_resolution = getattr(model, "resolution", missing)
+        args_resolution = getattr(model_args, "resolution", missing)
+        args_pe = getattr(model_args, "positional_encoding_size", missing)
+
+        try:
+            return method(self, *args, **kwargs)
+        except BaseException:
+            if resolution is not missing:
+                model_config.resolution = resolution
+            if positional_encoding_size is not missing:
+                model_config.positional_encoding_size = positional_encoding_size
+            if model is not None:
+                if model_resolution is not missing and hasattr(model, "resolution"):
+                    model.resolution = model_resolution
+                # Training replaces model.args after fit, before the final config write.
+                model_args = getattr(model, "args", None)
+                if model_args is not None:
+                    if args_resolution is not missing and hasattr(model_args, "resolution"):
+                        model_args.resolution = args_resolution
+                    if args_pe is not missing and hasattr(model_args, "positional_encoding_size"):
+                        model_args.positional_encoding_size = args_pe
+            raise
+
+    return wrapper
+
+
 def _prepare_run_config(
     detector: RFDETR, *, for_eval: bool = False, **kwargs: Any
 ) -> tuple[TrainConfig, str | None, list[int] | None]:
@@ -510,9 +554,9 @@ def _prepare_run_config(
     Handles the kwargs that are not plain ``TrainConfig`` fields: ``device`` (mapped to PyTorch Lightning
     accelerator/devices), and
     ``resolution`` (a ``ModelConfig`` field applied to ``detector.model_config`` in place, with the positional-encoding
-    size and cached inference context kept in sync). Remaining kwargs are forwarded to
-    :meth:`RFDETR.get_train_config`; ``batch_size="auto"`` is resolved by auto-batch probing (skipped when
-    ``for_eval=True`` — see below).
+    size and cached inference context kept in sync). Square resolutions are stored as a single side length.
+    Remaining kwargs are forwarded to :meth:`RFDETR.get_train_config`. Auto-batch probing resolves
+    ``batch_size="auto"`` for training.
     ``model_config.model_name`` is set to the concrete subclass name.
 
     Defined at module scope (rather than as a method) so that :meth:`RFDETR.train` / :meth:`RFDETR.evaluate`, which are
@@ -533,8 +577,8 @@ def _prepare_run_config(
         from the ``device`` kwarg (``None`` when ``device`` was not provided).
 
     Raises:
-        ValueError: If ``resolution`` is not a positive integer or is not divisible by
-            ``patch_size * num_windows`` for the model variant.
+        ValueError: If ``resolution`` is not a positive integer or ``(height, width)`` pair of positive integers, or
+            is not divisible by ``patch_size * num_windows`` for the model variant.
     """
     # Imported eagerly (not only under batch_size="auto") so a broken/absent training
     # submodule surfaces its original ModuleNotFoundError here rather than being masked.
@@ -550,16 +594,15 @@ def _prepare_run_config(
     # here to avoid it being silently ignored by TrainConfig.
     _resolution = kwargs.pop("resolution", None)
     if _resolution is not None:
-        if isinstance(_resolution, bool):
-            raise ValueError("resolution must be a positive integer")
         try:
-            _resolution = operator.index(_resolution)
-        except TypeError as error:
-            raise ValueError("resolution must be a positive integer") from error
-        if _resolution <= 0:
-            raise ValueError("resolution must be a positive integer")
+            _height, _width = as_pair(_resolution)
+        except ValueError as error:
+            raise ValueError(
+                "resolution must be a positive integer or a (height, width) pair of positive integers"
+            ) from error
+        _resolution = _height if _height == _width else (_height, _width)
         block_size = detector.model_config.patch_size * detector.model_config.num_windows
-        if _resolution % block_size != 0:
+        if _height % block_size != 0 or _width % block_size != 0:
             raise ValueError(
                 f"resolution={_resolution} is not divisible by "
                 f"patch_size ({detector.model_config.patch_size}) * num_windows "
@@ -571,11 +614,15 @@ def _prepare_run_config(
         # Configs with a pretrained-specific PE (e.g. RFDETRBase uses DINOv2's
         # PE=37 at 518 px, training at 560 px) must not have PE silently changed
         # — doing so causes shape mismatches when loading pretrained checkpoints.
+        _patch_size = detector.model_config.patch_size
         _current_pe = detector.model_config.positional_encoding_size
-        _derived_pe = detector.model_config.resolution // detector.model_config.patch_size
-        if _current_pe == _derived_pe:
-            # Formula-derived: update PE proportionally to the new resolution.
-            new_pe = _resolution // detector.model_config.patch_size
+        _current_height, _current_width = as_pair(detector.model_config.resolution)
+        new_pe: int | tuple[int, int]
+        if as_pair(_current_pe) == (_current_height // _patch_size, _current_width // _patch_size):
+            # Formula-derived: update PE proportionally to the new resolution (an int while the grid is square).
+            new_pe = (_height // _patch_size, _width // _patch_size)
+            if new_pe[0] == new_pe[1]:
+                new_pe = new_pe[0]
             detector.model_config.positional_encoding_size = new_pe
         else:
             # Pretrained-specific PE; leave it unchanged.
@@ -776,7 +823,7 @@ class RFDETR:
         self._has_warned_about_not_being_optimized_for_inference = False
         self._optimized_has_been_compiled = False
         self._optimized_batch_size: int | None = None
-        self._optimized_resolution: int | None = None
+        self._optimized_resolution: int | tuple[int, int] | None = None
         self._optimized_dtype: torch.dtype | None = None
         self._optimized_inplace = False
         self._has_been_trained = False
@@ -1321,6 +1368,7 @@ class RFDETR:
         )
         return None, None
 
+    @_restore_resolution_on_failure
     def train(self, **kwargs: Any) -> None:
         """Train an RF-DETR model via the PyTorch Lightning stack.
 
@@ -1329,8 +1377,9 @@ class RFDETR:
 
         * ``resolution`` — updates the model's input resolution by mutating
           :attr:`model_config.resolution` in place before the train config is built. This change persists on
-          :attr:`model_config` after :meth:`train` returns. The value must be a positive integer divisible by
-          ``patch_size * num_windows`` for the model variant; a :class:`ValueError` is raised otherwise.
+          :attr:`model_config` after :meth:`train` returns. The value must be a positive integer, or a ``(height,
+          width)`` pair of them for a non-square input, divisible by ``patch_size * num_windows`` for the model
+          variant; a :class:`ValueError` is raised otherwise.
           :attr:`model_config.positional_encoding_size` is also updated when the config derives it formulaically (``PE
           == resolution // patch_size``); configs with a pretrained-specific PE value (e.g. ``RFDETRBase`` uses DINOv2's
           PE=37 at 560 px) are left unchanged to preserve checkpoint compatibility.
@@ -1356,8 +1405,8 @@ class RFDETR:
         Raises:
             ImportError: If training dependencies are not installed. Install with
                 ``pip install "rfdetr[train,loggers]"``.
-            ValueError: If ``resolution`` is not a positive integer or is not
-                divisible by ``patch_size * num_windows`` for the model variant.
+            ValueError: If ``resolution`` is not a positive integer or ``(height, width)`` pair of positive integers,
+                or is not divisible by ``patch_size * num_windows`` for the model variant.
         """
         # The training stack lives in the `rfdetr[train]` extras group — a missing
         # `pytorch_lightning` (or any other training-extras package) causes the import to fail,
@@ -1380,7 +1429,7 @@ class RFDETR:
                 "The new training run will start from the original pretrained weights (pretrain_weights), "
                 "NOT from the in-memory trained state. To continue training, pass resume=<checkpoint_path>.",
                 UserWarning,
-                stacklevel=2,
+                stacklevel=3,
             )
 
         # Absorb the special train/evaluate kwargs (device, resolution, deprecated knobs),
@@ -1672,7 +1721,7 @@ class RFDETR:
                 ``pip install "rfdetr[train,loggers]"``.
             ValueError: If ``split`` is not ``"test"`` or ``"val"``.
         """
-        from rfdetr.models.weights import interpolate_position_embeddings
+        from rfdetr.models.weights import _recorded_pe_grid, interpolate_position_embeddings
 
         # Training extras (pytorch_lightning et al.) are optional; mirror train()'s import guard.
         try:
@@ -1741,7 +1790,11 @@ class RFDETR:
             source_state = source_model.state_dict()
             # Reconcile DINOv2 positional embeddings when a `resolution` override changed the PE grid
             # (no-op when unchanged), so the transplant works at the evaluation resolution.
-            interpolate_position_embeddings(source_state, eval_model_config.positional_encoding_size)
+            # The live weights lie on the grid the config had before the override.
+            source_pe_size = _recorded_pe_grid({"model_config": {"positional_encoding_size": _orig_pe}}, source_state)
+            interpolate_position_embeddings(
+                source_state, eval_model_config.positional_encoding_size, source_pe_size=source_pe_size
+            )
             module.model.load_state_dict(source_state)
         finally:
             if _moved_to_cpu:
@@ -1897,8 +1950,7 @@ class RFDETR:
                 dummy_input = torch.randn(
                     batch_size,
                     snapshot.model_config.num_channels,
-                    snapshot.model.resolution,
-                    snapshot.model.resolution,
+                    *as_pair(snapshot.model.resolution),
                     device=device,
                     dtype=dtype,
                 )
@@ -2042,7 +2094,7 @@ class RFDETR:
         Args:
             artifact: Existing exported file or model bundle.
             format: Export format, with the same names and aliases accepted by :meth:`export`.
-            shape: Exported ``(height, width)``; defaults to the source model's square resolution.
+            shape: Exported ``(height, width)``; defaults to the source model's resolution.
             patch_size: Backbone patch size; must match the source model when supplied.
             batch_size: Positive batch size used to export the artifact.
             dynamic_batch: Whether the artifact was exported with a dynamic batch dimension.
@@ -2159,7 +2211,7 @@ class RFDETR:
                 when a separate cross-attention projector is present.
             opset_version: ONNX opset version to target.
             verbose: Print export progress information.
-            shape: ``(height, width)`` tuple; defaults to square at model resolution.
+            shape: ``(height, width)`` tuple; defaults to the model resolution.
                 Both dimensions must be divisible by ``patch_size * num_windows``.
             batch_size: Static batch size to bake into the ONNX graph; a positive integer. With ``dynamic_batch=True``
                 and ``format="tensorrt"`` it is also the batch the engine's optimization profile is tuned for.
@@ -3127,13 +3179,15 @@ class RFDETR:
         # _prediction_context moves the model to its device; reading runtime_info must not.
         config = self.model_config
         batch_size = self._optimized_batch_size if self._optimized_has_been_compiled else None
-        spatial_size = self._optimized_resolution if self._is_optimized_for_inference else None
+        spatial_size: tuple[int | None, int | None] = (None, None)
+        if self._is_optimized_for_inference and self._optimized_resolution is not None:
+            spatial_size = as_pair(self._optimized_resolution)
         return {
             "backend": "pytorch",
             "device": str(self.model.device),
             "task": _task_of(config),
-            "input_shape": (batch_size, config.num_channels, spatial_size, spatial_size),
-            "default_shape": (self.model.resolution, self.model.resolution),
+            "input_shape": (batch_size, config.num_channels, *spatial_size),
+            "default_shape": as_pair(self.model.resolution),
             "batch_size": batch_size,
             "max_batch_size": None,
         }
@@ -3150,7 +3204,7 @@ class RFDETR:
         return PredictionContext(
             config=self.model_config,
             device=self.model.device,
-            default_shape=(self.model.resolution, self.model.resolution),
+            default_shape=as_pair(self.model.resolution),
             means=self.means,
             stds=self.stds,
             class_names=labels.class_names,
@@ -3170,19 +3224,19 @@ class RFDETR:
     def _run_inference_batch(self, batch_tensor: torch.Tensor) -> dict[str, torch.Tensor]:
         """Execute the current eager or optimized native model."""
         if self._is_optimized_for_inference:
-            if (
-                self._optimized_resolution != batch_tensor.shape[2]
-                or self._optimized_resolution != batch_tensor.shape[3]
-            ):
+            optimized_height, optimized_width = (
+                (None, None) if self._optimized_resolution is None else as_pair(self._optimized_resolution)
+            )
+            if optimized_height != batch_tensor.shape[2] or optimized_width != batch_tensor.shape[3]:
                 # this could happen if someone manually changes self.model.resolution after optimizing the model,
-                # or if predict(shape=...) is used with a shape that doesn't match the compiled square resolution.
+                # or if predict(shape=...) is used with a shape that doesn't match the compiled resolution.
                 _restore_hint = (
                     " Use native_model.predict(..., shape=...) on the source model for a different resolution,"
                     " or create a new predictor from a source configured for that resolution."
                 )
                 raise ValueError(
                     f"Resolution mismatch. "
-                    f"Model was optimized for resolution {self._optimized_resolution}x{self._optimized_resolution}, "
+                    f"Model was optimized for resolution {optimized_height}x{optimized_width}, "
                     f"but got {batch_tensor.shape[2]}x{batch_tensor.shape[3]}." + _restore_hint,
                 )
             if self._optimized_has_been_compiled:

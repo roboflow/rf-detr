@@ -739,8 +739,47 @@ class TestBuildShadowOptimizer:
         assert optimizer.defaults["fused"] is True
 
 
+class TestSyntheticBatch:
+    """``_make_synthetic_batch`` builds the probe batch at a side length or at ``(height, width)``."""
+
+    @pytest.mark.parametrize(
+        ("resolution", "expected"),
+        [pytest.param(64, (64, 64), id="int"), pytest.param((64, 96), (64, 96), id="pair")],
+    )
+    def test_batch_follows_the_resolution(self, resolution: int | tuple[int, int], expected: tuple[int, int]) -> None:
+        """Images, padding masks, instance masks and target sizes all take the resolution's height and width."""
+        samples, targets = auto_batch._make_synthetic_batch(
+            2, resolution, torch.device("cpu"), num_classes=3, segmentation_head=True, max_targets_per_image=4
+        )
+
+        assert samples.tensors.shape == (2, 3, *expected)
+        assert samples.mask.shape == (2, *expected)
+        assert targets[0]["masks"].shape == (4, *expected)
+        assert targets[0]["size"].tolist() == list(expected)
+        assert targets[0]["orig_size"].tolist() == list(expected)
+
+
 class TestResolveAutoBatchConfig:
     """``resolve_auto_batch_config`` turns a probed safe micro batch into a batch size and accumulation steps."""
+
+    @pytest.mark.parametrize(
+        ("resolution", "multi_scale", "expected"),
+        [
+            pytest.param((64, 128), False, (64, 128), id="pair"),
+            pytest.param((128, 256), True, (384, 768), id="pair-multi-scale"),
+            pytest.param(128, True, 384, id="int-multi-scale"),
+        ],
+    )
+    def test_probes_the_largest_training_resolution(
+        self, mock_probe: MagicMock, resolution: int | tuple[int, int], multi_scale: bool, expected: Any
+    ) -> None:
+        """The probe runs at the model resolution, or at the largest multi-scale size when multi-scale is on."""
+        model_config = _model_config(resolution=resolution, patch_size=16, num_windows=4)
+        train_config = _train_config(multi_scale=multi_scale, expanded_scales=False)
+
+        auto_batch.resolve_auto_batch_config(_model_context(), model_config, train_config)
+
+        assert mock_probe.call_args.kwargs["resolution"] == expected
 
     def test_requires_cuda(self, mocker: MockerFixture):
         """Auto batch resolution raises when CUDA is unavailable."""

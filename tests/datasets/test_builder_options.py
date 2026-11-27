@@ -64,13 +64,13 @@ def _call_coco_builder(
     mock_plain: MagicMock,
     mock_dataset: MagicMock,
     *,
-    resolution: int = 512,
+    resolution: int | tuple[int, int] = 512,
 ) -> dict[str, Any]:
     """Run the standard COCO builder with external dataset operations mocked.
 
     Args:
         args: Namespace forwarded to the builder.
-        resolution: Base square resolution.
+        resolution: Base resolution: a side length, or ``(height, width)``.
 
     Returns:
         Captured transform and dataset arguments.
@@ -87,6 +87,7 @@ def _call_coco_builder(
     used = mock_square if mock_square.called else mock_plain
     return {
         "square_resize_used": mock_square.called,
+        "transform_resolution": used.call_args.args[1],
         "transform_kwargs": used.call_args.kwargs,
         "dataset_kwargs": mock_dataset.call_args.kwargs,
     }
@@ -105,13 +106,13 @@ def _call_roboflow_coco_builder(
     mock_plain: MagicMock,
     mock_dataset: MagicMock,
     *,
-    resolution: int = 512,
+    resolution: int | tuple[int, int] = 512,
 ) -> dict[str, Any]:
     """Run the Roboflow COCO builder with external dataset operations mocked.
 
     Args:
         args: Namespace forwarded to the builder.
-        resolution: Base square resolution.
+        resolution: Base resolution: a side length, or ``(height, width)``.
 
     Returns:
         Captured transform and dataset arguments.
@@ -128,6 +129,7 @@ def _call_roboflow_coco_builder(
     used = mock_square if mock_square.called else mock_plain
     return {
         "square_resize_used": mock_square.called,
+        "transform_resolution": used.call_args.args[1],
         "transform_kwargs": used.call_args.kwargs,
         "dataset_kwargs": mock_dataset.call_args.kwargs,
     }
@@ -146,13 +148,13 @@ def _call_yolo_builder(
     mock_plain: MagicMock,
     mock_dataset: MagicMock,
     *,
-    resolution: int = 512,
+    resolution: int | tuple[int, int] = 512,
 ) -> dict[str, Any]:
     """Run the YOLO builder with filesystem and dataset operations mocked.
 
     Args:
         args: Namespace forwarded to the builder.
-        resolution: Base square resolution.
+        resolution: Base resolution: a side length, or ``(height, width)``.
 
     Returns:
         Captured transform and dataset arguments.
@@ -170,6 +172,7 @@ def _call_yolo_builder(
     used = mock_square if mock_square.called else mock_plain
     return {
         "square_resize_used": mock_square.called,
+        "transform_resolution": used.call_args.args[1],
         "transform_kwargs": used.call_args.kwargs,
         "dataset_kwargs": mock_dataset.call_args.kwargs,
     }
@@ -184,13 +187,13 @@ def _call_o365_builder(
     mock_plain: MagicMock,
     mock_dataset: MagicMock,
     *,
-    resolution: int = 512,
+    resolution: int | tuple[int, int] = 512,
 ) -> dict[str, Any]:
     """Run the Object365 builder with dataset and transform operations mocked.
 
     Args:
         args: Namespace forwarded to the builder.
-        resolution: Base square resolution.
+        resolution: Base resolution: a side length, or ``(height, width)``.
 
     Returns:
         Captured transform and dataset arguments.
@@ -206,6 +209,7 @@ def _call_o365_builder(
     used = mock_square if mock_square.called else mock_plain
     return {
         "square_resize_used": mock_square.called,
+        "transform_resolution": used.call_args.args[1],
         "transform_kwargs": used.call_args.kwargs,
         "dataset_kwargs": mock_dataset.call_args.kwargs,
     }
@@ -288,18 +292,21 @@ class TestConfigValuesReachTheTransformPipeline:
         ],
     )
     @pytest.mark.parametrize("square_resize_div_64", [True, False])
+    @pytest.mark.parametrize("resolution", [512, (320, 448), (448, 320)])
     def test_builder_selects_configured_resize_branch(
         self,
         builder: BuilderCall,
         square_resize_div_64: bool,
+        resolution: int | tuple[int, int],
     ) -> None:
-        """The configured square-resize flag must select the matching branch."""
+        """The configured square-resize flag selects the matching branch, which receives the resolution unchanged."""
         namespace = _training_namespace(RFDETRSmallConfig())
         namespace.square_resize_div_64 = square_resize_div_64
 
-        captured = builder(namespace, resolution=512)
+        captured = builder(namespace, resolution=resolution)
 
         assert captured["square_resize_used"] is square_resize_div_64
+        assert captured["transform_resolution"] == resolution
 
     @pytest.mark.parametrize(
         "builder",

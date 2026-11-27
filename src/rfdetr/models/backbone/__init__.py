@@ -123,7 +123,7 @@ def build_backbone(
     load_dinov2_weights: bool,
     patch_size: int,
     num_windows: int,
-    positional_encoding_size: int,
+    positional_encoding_size: int | tuple[int, int],
     dual_projector: bool = False,
 ) -> Joiner:
     """

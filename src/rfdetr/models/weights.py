@@ -19,6 +19,8 @@ import copy
 import math
 import os
 import re
+import warnings
+from collections.abc import Mapping
 from typing import Any, cast
 
 import torch
@@ -31,6 +33,7 @@ from rfdetr.models.backbone.backbone import Backbone
 from rfdetr.models.backbone.dinov2 import DinoV2
 from rfdetr.models.lwdetr import LWDETR
 from rfdetr.utilities.logger import get_logger
+from rfdetr.utilities.shapes import as_pair
 from rfdetr.utilities.state_dict import (
     _LORA_ENCODER_KEY_PREFIX,
     _ckpt_args_get,
@@ -306,9 +309,48 @@ def _warn_on_partial_load(incompatible: Any, pretrain_weights_path: str) -> None
     )
 
 
+def _recorded_pe_grid(checkpoint: Mapping[str, Any], state: Mapping[str, Any]) -> tuple[int, int] | None:
+    """Return the positional-embedding grid a checkpoint records for the weights in *state*.
+
+    The grid is read from the checkpoint's ``model_config``, then from its ``args``. It is the only way to tell a
+    non-square grid from a square or transposed one with the same number of tokens.
+
+    Args:
+        checkpoint: Loaded checkpoint dict.
+        state: The checkpoint's model state dict.
+
+    Returns:
+        The recorded ``(height, width)`` grid, or ``None`` when the checkpoint records none or the recorded grid does
+        not account for the token count of every PE tensor in *state*.
+
+    Examples:
+        >>> import torch
+        >>> state = {"encoder.embeddings.position_embeddings": torch.zeros(1, 2 * 6 + 1, 8)}
+        >>> _recorded_pe_grid({"model_config": {"positional_encoding_size": (2, 6)}}, state)
+        (2, 6)
+        >>> _recorded_pe_grid({"model_config": {"positional_encoding_size": 4}}, state) is None
+        True
+    """
+    recorded = None
+    model_config = checkpoint.get("model_config")
+    if isinstance(model_config, Mapping):
+        recorded = model_config.get("positional_encoding_size")
+    if recorded is None and checkpoint.get("args") is not None:
+        recorded = _ckpt_args_get(checkpoint["args"], "positional_encoding_size")
+    if recorded is None:
+        return None
+    try:
+        height, width = as_pair(recorded)
+    except (TypeError, ValueError):
+        return None
+    token_counts = {tensor.shape[1] - 1 for key, tensor in state.items() if key.endswith(_PE_KEY_SUFFIX)}
+    return (height, width) if token_counts == {height * width} else None
+
+
 def interpolate_position_embeddings(
     checkpoint_state: dict[str, Any],
-    pe_size: int,
+    pe_size: int | tuple[int, int],
+    source_pe_size: int | tuple[int, int] | None = None,
 ) -> None:
     """Interpolate DINOv2 positional embeddings in *checkpoint_state* to match *pe_size*.
 
@@ -316,40 +358,79 @@ def interpolate_position_embeddings(
     the DINOv2 backbone's ``position_embeddings`` parameter has an incompatible shape.
     ``load_state_dict(strict=False)`` does **not** skip shape mismatches on matching keys — it raises ``RuntimeError``.
 
-    This function bicubic-interpolates every PE tensor in the checkpoint whose shape differs from the target grid,
+    This function bicubic-interpolates every PE tensor in the checkpoint whose grid differs from the target grid,
     modifying *checkpoint_state* in-place before ``load_state_dict`` is called.
+
+    A token count does not identify a non-square grid: 576 tokens are a 24x24 grid, an 18x32 one or a 32x18 one.
+    Without *source_pe_size* a perfect-square count is read as a square grid. For other counts, the target grid is
+    assumed if the counts match, and interpolation is skipped with a warning if they differ. An inferred source grid
+    for a non-square target emits a warning once per call.
 
     Args:
         checkpoint_state: The ``"model"`` sub-dict from a loaded checkpoint.
-        pe_size: Target grid side length in patches (number of patches per spatial
-            dimension, assuming a square grid).  Typically ``model_config.positional_encoding_size``.
-    """
-    n_target = pe_size * pe_size  # target number of patch tokens
+        pe_size: Target grid in patches: a side length for a square grid, or ``(height, width)``. Typically
+            ``model_config.positional_encoding_size``.
+        source_pe_size: Grid the checkpoint's embeddings are laid out on, as a side length or ``(height, width)``.
+            Use the actual source grid to disambiguate a checkpoint with a non-square grid.
 
+    Raises:
+        ValueError: If *source_pe_size* does not account for the number of tokens of a PE tensor.
+
+    Examples:
+        >>> import torch
+        >>> state = {"backbone.0.encoder.encoder.embeddings.position_embeddings": torch.zeros(1, 4 * 4 + 1, 8)}
+        >>> interpolate_position_embeddings(state, (2, 6), source_pe_size=4)
+        >>> state["backbone.0.encoder.encoder.embeddings.position_embeddings"].shape
+        torch.Size([1, 13, 8])
+    """
     pe_keys = [k for k in checkpoint_state if k.endswith(_PE_KEY_SUFFIX)]
+    if not pe_keys:
+        return
+
+    h_tgt, w_tgt = as_pair(pe_size)
+    n_target = h_tgt * w_tgt  # target number of patch tokens
+    warned_about_inferred_grid = False
     for key in pe_keys:
         ckpt_pe = checkpoint_state[key]  # [1, N_src+1, dim]
         n_source = ckpt_pe.shape[1] - 1  # exclude class token
-        if n_source == n_target:
-            continue  # no mismatch — skip
 
-        h_src = int(math.isqrt(n_source))
-        h_tgt = int(math.isqrt(n_target))
-        if h_src * h_src != n_source or h_tgt * h_tgt != n_target:
-            logger.warning(
-                f"Skipping PE interpolation for {key}:"
-                f" grid size is not a perfect square (source {n_source}, target {n_target}).",
-            )
-            continue
+        if source_pe_size is not None:
+            h_src, w_src = as_pair(source_pe_size)
+            if h_src * w_src != n_source:
+                raise ValueError(
+                    f"source_pe_size={(h_src, w_src)} has {h_src * w_src} patch tokens, but {key} has {n_source}."
+                )
+        else:
+            h_src = w_src = math.isqrt(n_source)
+            if h_src * w_src != n_source:
+                if n_source != n_target:
+                    logger.warning(
+                        f"Skipping PE interpolation for {key}:"
+                        f" grid size is not a perfect square (source {n_source}, target {n_target}),"
+                        " so its (height, width) is unknown. Pass source_pe_size.",
+                    )
+                    continue
+                h_src, w_src = h_tgt, w_tgt
+            if h_tgt != w_tgt and not warned_about_inferred_grid:
+                warnings.warn(
+                    f"{key} has {n_source} patch tokens and no recorded grid. Inferring a {h_src}x{w_src} source grid"
+                    f" for the {h_tgt}x{w_tgt} target grid. Pass source_pe_size=(height, width) or load a checkpoint"
+                    " that records its model_config.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+                warned_about_inferred_grid = True
+        if (h_src, w_src) == (h_tgt, w_tgt):
+            continue  # no mismatch — skip
 
         dim = ckpt_pe.shape[-1]
         class_token = ckpt_pe[:, :1]  # [1, 1, dim] — keeps the sequence dimension
         patch_pe = ckpt_pe[:, 1:]  # [1, N_src, dim]
 
-        patch_pe = patch_pe.reshape(1, h_src, h_src, dim).permute(0, 3, 1, 2)  # [1, dim, H, W]
+        patch_pe = patch_pe.reshape(1, h_src, w_src, dim).permute(0, 3, 1, 2)  # [1, dim, H, W]
         patch_pe = F.interpolate(
             patch_pe.float(),
-            size=(h_tgt, h_tgt),
+            size=(h_tgt, w_tgt),
             mode="bicubic",
             align_corners=False,
             antialias=patch_pe.device.type != "mps",
@@ -841,7 +922,11 @@ def load_pretrain_weights(
             tuple(model_kp_active_mask.shape),
         )
         checkpoint["model"].pop("_kp_active_mask", None)
-    interpolate_position_embeddings(checkpoint["model"], mc.positional_encoding_size)
+    interpolate_position_embeddings(
+        checkpoint["model"],
+        mc.positional_encoding_size,
+        source_pe_size=_recorded_pe_grid(checkpoint, checkpoint["model"]),
+    )
     _widen_stem_for_checkpoint(nn_model, checkpoint["model"], mc)
     incompatible = _load_model_state(nn_model, checkpoint["model"], backbone_lora=mc.backbone_lora)
     _warn_on_partial_load(incompatible, pretrain_weights)

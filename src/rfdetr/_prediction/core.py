@@ -1410,10 +1410,9 @@ def _plan_views(
     block_size = patch_size * num_windows
 
     if shape is None:
-        default_res = context.default_shape[0]
-        if default_res % block_size != 0:
+        if any(side % block_size for side in context.default_shape):
             raise ValueError(
-                f"Model's default resolution ({default_res}) is not divisible by "
+                f"Model's default resolution {tuple(context.default_shape)!r} is not divisible by "
                 f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "
                 f"Provide an explicit shape divisible by {block_size}.",
             )
