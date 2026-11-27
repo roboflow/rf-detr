@@ -5,8 +5,8 @@
 # ------------------------------------------------------------------------
 """Tests for which read failures the opt-in substitution of unreadable images covers, and what it costs and reports.
 
-The substitution itself is pinned in ``test_unreadable_images.py``; these tests cover the decoder errors it must catch,
-the reads it must not retry, the pause before it gives up, and the detail its errors carry.
+The substitution itself is pinned in ``tests/datasets/io/test_unreadable_images.py``. These tests cover the decoder
+errors it must catch, the reads it must not retry, the pause before it gives up, and the detail its errors carry.
 """
 
 from __future__ import annotations

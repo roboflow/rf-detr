@@ -374,8 +374,8 @@ def _make_module(mc=None, tc=None) -> RFDETRModelModule:
 class TestRFDETRModelModuleInit:
     """Pin RFDETRModelModule.__init__() structural outputs.
 
-    The existing test_module_model.py tests the init via mocked build_model and build_namespace. These tests exercise
-    the REAL init path (no mocks) to characterize what a freshly built module looks like.
+    The existing tests in ``tests/training/model/`` test the init via mocked build_model and build_namespace. These
+    tests exercise the REAL init path (no mocks) to characterize what a freshly built module looks like.
     """
 
     def test_model_attribute_is_lwdetr(self) -> None:

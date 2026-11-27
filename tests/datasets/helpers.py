@@ -5,16 +5,17 @@
 # ------------------------------------------------------------------------
 """Shared test helpers for the dataset tests.
 
-Plain classes and functions shared by ``test_unreadable_images*.py`` and ``tests/training/test_module_data.py`` so the
-fake reader and the on-disk dataset writers exist once.  Import with an absolute import::
+Plain classes and functions shared by the unreadable-image tests in ``tests/datasets/io/`` and
+``tests/training/datamodule/test_setup.py`` so the fake reader and the on-disk dataset writers exist once.
+Import with an absolute import::
 
     from tests.datasets.helpers import _Reader, _path_of, _write_coco_dataset, _write_yolo_dataset
 
 The retry pause is patched by :func:`_patch_retry_sleep`.  A module that needs it applies it explicitly, as
 ``sleep = pytest.fixture(autouse=True)(_patch_retry_sleep)``; it is never made autouse for all dataset tests.
 
-The Kornia augmentation tests (``test_kornia_*.py``) share :func:`_only_child`, which picks one child module of a
-built pipeline, and :func:`_logged_messages`, which renders the calls recorded on a mocked logger method::
+The Kornia augmentation tests (``tests/datasets/kornia/test_*.py``) share :func:`_only_child`, which picks one child
+module of a built pipeline, and :func:`_logged_messages`, which renders the calls recorded on a mocked logger method::
 
     from tests.datasets.helpers import _logged_messages, _only_child
 """

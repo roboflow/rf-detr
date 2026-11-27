@@ -450,7 +450,7 @@ def test_ddp_spawn_preserves_minimum_optimizer_steps(
 ):
     """ddp_spawn with a below-threshold dataset must still complete five optimizer steps per rank.
 
-    ``TestTrainDataloader.test_ddp_preserves_minimum_effective_batches_per_rank`` in test_module_data.py covers the
+    ``TestTrainDataloader.test_ddp_preserves_minimum_effective_batches_per_rank`` in test_loaders.py covers the
     replacement-length arithmetic before Lightning injects its ``DistributedSampler``. This test exercises the real
     ``ddp_spawn`` strategy end to end and fails (via ``_DDPMinStepsModule.on_train_epoch_end``) if that injection
     discards the replacement sample count, which the arithmetic-only test cannot observe.
