@@ -1,0 +1,1257 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
+"""Tests for the shared image decoder in ``rfdetr.datasets.io_utils``.
+
+Also covers its EXIF orientation checks as the COCO-style readers use them: the warning for boxes drawn on the stored
+pixels of a quarter-turned photo.
+
+Tests for which Pillow image modes ``convert_image`` accepts for 1 and 4 channel targets.
+"""
+
+import io
+import json
+import struct
+import warnings
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+import pytest
+from PIL import Image, ImageOps, UnidentifiedImageError
+from pytest_mock import MockerFixture
+
+from rfdetr.datasets import io_utils
+from rfdetr.datasets._pillow_worker import convert_image, image_mode, to_8bit_grayscale
+from rfdetr.datasets.coco import CocoDetection
+from rfdetr.datasets.io_utils import (
+    _boxes_fit_only_turned,
+    decode_image,
+    decode_image_bytes,
+    decode_pil_image,
+    decode_pil_image_bytes,
+)
+from rfdetr.datasets.webdataset.load import WebDatasetDetection
+from rfdetr.datasets.webdataset.pack import pack_coco_to_shards
+from rfdetr.utilities.imports import _IS_WEBDATASET_INSTALLED
+from tests._exif import move_exif_after_pixels
+from tests._markers import _requires_simplejpeg
+from tests._oriented_photo import write_oriented_photo
+from tests.datasets._memory import peak_traced_bytes
+
+
+def _write_test_image(path: Path, width: int, height: int, mode: str = "RGB") -> None:
+    """Write deterministic noise in the format ``path``'s suffix names, so JPEG comparisons exercise real DCT content.
+
+    JPEG files are written at quality 90; lossless formats keep the noise exactly.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     jpeg_path = Path(tmp) / "img.jpg"
+        ...     _write_test_image(jpeg_path, 8, 6)
+        ...     with Image.open(jpeg_path) as image:
+        ...         print(image.format, image.size)
+        JPEG (8, 6)
+    """
+    pixels = np.random.default_rng(0).integers(0, 256, size=(height, width, 3), dtype=np.uint8)
+    image = Image.fromarray(pixels).convert(mode)
+    if path.suffix.lower() in (".jpg", ".jpeg"):
+        image.save(path, quality=90)
+    else:
+        image.save(path)
+
+
+def _pillow_decode(path: Path, draft_size: int | None = None) -> tuple[np.ndarray, tuple[float, float]]:
+    """Reference decode through Pillow alone, mirroring what ``decode_image`` did before ``simplejpeg`` support.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     jpeg_path = Path(tmp) / "img.jpg"
+        ...     _write_test_image(jpeg_path, 64, 32)
+        ...     pixels, scales = _pillow_decode(jpeg_path, draft_size=16)
+        ...     pixels.shape, scales
+        ((16, 32, 3), (0.5, 0.5))
+    """
+    with Image.open(path) as image:
+        full_width, full_height = image.size
+        if draft_size is not None:
+            image.draft("RGB", (draft_size, draft_size))
+        pixels = np.asarray(image.convert("RGB"))
+    return pixels, (pixels.shape[1] / full_width, pixels.shape[0] / full_height)
+
+
+def _write_cmyk_jpeg(path: Path, width: int, height: int) -> None:
+    """Write an Adobe-marked CMYK JPEG with gradient content, for tolerance checks against RGB decoders.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     jpeg_path = Path(tmp) / "cmyk.jpg"
+        ...     _write_cmyk_jpeg(jpeg_path, 8, 6)
+        ...     Image.open(jpeg_path).mode
+        'CMYK'
+    """
+    cyan = np.linspace(0, 255, width, dtype=np.uint8)
+    magenta = np.linspace(0, 255, height, dtype=np.uint8)
+    image = Image.new("CMYK", (width, height))
+    image.putdata([(int(cyan[x]), int(magenta[y]), 128, 64) for y in range(height) for x in range(width)])
+    image.save(path, format="JPEG", quality=90)
+
+
+class TestDecodeImage:
+    """``decode_image`` yields Pillow's pixel arrays whichever decoder handles the file.
+
+    Comparisons between ``simplejpeg`` and Pillow assert exact equality for RGB and grayscale JPEG sources, on
+    purpose.  The two packages may bundle different libjpeg-turbo builds, so equality is not guaranteed in general,
+    but it holds for the PyPI wheels on every CI leg, and exactness is what catches a decoder-setting drift:
+    ``fastdct=True`` moves these noisy test images by a mean of ~1.1 levels and smooth content by ~0.5, so a
+    mean-difference tolerance near 1 would barely or not at all separate it from rounding.  If a future wheel pair
+    diverges by rounding alone, loosen these to a bounded difference rather than chasing the pixels.
+
+    CMYK sources are the one exception: ``simplejpeg`` and Pillow both apply the Adobe CMYK-to-RGB conversion but
+    round it slightly differently, so that comparison uses a small tolerance (measured max absolute difference of 2
+    on the fixture below) instead of exact equality.
+    """
+
+    @_requires_simplejpeg
+    def test_jpeg_pixels_match_pillow(self, tmp_path: Path) -> None:
+        """Full-resolution simplejpeg output equals Pillow's."""
+        jpeg_path = tmp_path / "img.jpg"
+        _write_test_image(jpeg_path, 457, 301)
+        expected, _ = _pillow_decode(jpeg_path)
+
+        pixels, scales = decode_image(jpeg_path)
+
+        assert pixels.dtype == np.uint8
+        assert scales == (1.0, 1.0)
+        np.testing.assert_array_equal(pixels, expected)
+
+    @_requires_simplejpeg
+    @pytest.mark.parametrize(
+        ("width", "height", "draft_size"),
+        [
+            (1000, 1000, 350),
+            (961, 541, 256),
+            (640, 480, 560),
+            (513, 1024, 512),
+            (1000, 1000, 100),
+        ],
+    )
+    def test_draft_reduction_matches_pillow(self, tmp_path: Path, width: int, height: int, draft_size: int) -> None:
+        """Reduced decodes pick Pillow's power-of-two factor, not libjpeg-turbo's finer N/8 steps."""
+        jpeg_path = tmp_path / "img.jpg"
+        _write_test_image(jpeg_path, width, height)
+        expected, expected_scales = _pillow_decode(jpeg_path, draft_size)
+
+        pixels, scales = decode_image(jpeg_path, draft_size)
+
+        assert pixels.shape == expected.shape
+        assert scales == expected_scales
+        np.testing.assert_array_equal(pixels, expected)
+
+    @_requires_simplejpeg
+    def test_grayscale_jpeg_decodes_to_rgb(self, tmp_path: Path) -> None:
+        """Single-channel JPEG sources come back as three-channel RGB like Pillow's ``convert``."""
+        jpeg_path = tmp_path / "gray.jpg"
+        _write_test_image(jpeg_path, 40, 30, mode="L")
+        expected, _ = _pillow_decode(jpeg_path)
+
+        pixels, _ = decode_image(jpeg_path)
+
+        assert pixels.shape == (30, 40, 3)
+        np.testing.assert_array_equal(pixels, expected)
+
+    @_requires_simplejpeg
+    def test_cmyk_jpeg_matches_pillow_within_rounding_tolerance(self, tmp_path: Path) -> None:
+        """CMYK JPEG sources decode to RGB pixels within a small rounding tolerance of Pillow's conversion.
+
+        ``simplejpeg`` and Pillow both apply the Adobe CMYK-to-RGB conversion but round it slightly differently
+        (measured max absolute difference of 2 on this fixture), so unlike every other comparison in this class this one
+        does not assert exact equality — see the class docstring.
+        """
+        jpeg_path = tmp_path / "cmyk.jpg"
+        _write_cmyk_jpeg(jpeg_path, 40, 32)
+        expected, _ = _pillow_decode(jpeg_path)
+
+        pixels, scales = decode_image(jpeg_path)
+
+        assert scales == (1.0, 1.0)
+        assert pixels.shape == expected.shape
+        np.testing.assert_allclose(pixels.astype(int), expected.astype(int), atol=2)
+
+    @_requires_simplejpeg
+    def test_truncated_jpeg_raises_pillow_error(self, tmp_path: Path) -> None:
+        """A JPEG simplejpeg rejects falls through to Pillow, so callers see the same ``OSError`` as before."""
+        jpeg_path = tmp_path / "img.jpg"
+        _write_test_image(jpeg_path, 457, 301)
+        jpeg_path.write_bytes(jpeg_path.read_bytes()[:3000])
+
+        with pytest.raises(OSError, match="truncated"):
+            decode_image(jpeg_path)
+
+    @_requires_simplejpeg
+    def test_jpeg_over_pixel_limit_raises_decompression_bomb_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The simplejpeg path enforces Pillow's pixel limit on the header size, as ``Image.open`` does."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+        jpeg_path = tmp_path / "img.jpg"
+        _write_test_image(jpeg_path, 64, 32)  # 2048 pixels, above the 2 * MAX_IMAGE_PIXELS raise tier
+
+        with pytest.raises(Image.DecompressionBombError):
+            decode_image(jpeg_path)
+
+    @_requires_simplejpeg
+    def test_jpeg_between_pixel_limit_tiers_warns_and_decodes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Above ``MAX_IMAGE_PIXELS`` but within twice it, the simplejpeg path warns and still decodes, like Pillow."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1500)
+        jpeg_path = tmp_path / "img.jpg"
+        _write_test_image(jpeg_path, 64, 32)  # 2048 pixels
+
+        with pytest.warns(Image.DecompressionBombWarning):
+            pixels, _ = decode_image(jpeg_path)
+
+        assert pixels.shape == (32, 64, 3)
+
+    def test_png_uses_pillow_and_ignores_draft(self, tmp_path: Path) -> None:
+        """Non-JPEG files decode through Pillow at full resolution regardless of ``draft_size``."""
+        png_path = tmp_path / "img.png"
+        expected = np.random.default_rng(0).integers(0, 256, size=(30, 40, 3), dtype=np.uint8)
+        Image.fromarray(expected).save(png_path)
+
+        pixels, scales = decode_image(png_path, draft_size=8)
+
+        assert scales == (1.0, 1.0)
+        np.testing.assert_array_equal(pixels, expected)
+
+    def test_bytes_png_uses_pillow_and_ignores_draft(self, tmp_path: Path) -> None:
+        """Non-JPEG bytes decode through Pillow at full resolution regardless of ``draft_size``.
+
+        Confirms the final ``Image.open`` fallback also handles a non-JPEG payload, which is what an archive member
+        whose extension does not guarantee JPEG content can be.
+        """
+        png_path = tmp_path / "img.png"
+        expected = np.random.default_rng(0).integers(0, 256, size=(30, 40, 3), dtype=np.uint8)
+        Image.fromarray(expected).save(png_path)
+
+        pixels, scales = decode_image_bytes(png_path.read_bytes(), draft_size=8)
+
+        assert scales == (1.0, 1.0)
+        np.testing.assert_array_equal(pixels, expected)
+
+    @pytest.mark.parametrize("draft_size", [None, 256])
+    def test_bytes_entry_point_matches_path_entry_point(self, tmp_path: Path, draft_size: int | None) -> None:
+        """``decode_image_bytes`` is the policy ``decode_image`` applies, so bytes and files decode alike."""
+        jpeg_path = tmp_path / "img.jpg"
+        _write_test_image(jpeg_path, 961, 541)
+        expected, expected_scales = decode_image(jpeg_path, draft_size)
+
+        pixels, scales = decode_image_bytes(jpeg_path.read_bytes(), draft_size)
+
+        assert scales == expected_scales
+        np.testing.assert_array_equal(pixels, expected)
+
+    def test_without_simplejpeg_falls_back_to_pillow(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """With ``simplejpeg`` unavailable, JPEG decoding still drafts through Pillow."""
+        monkeypatch.setattr(io_utils, "simplejpeg", None)
+        jpeg_path = tmp_path / "img.jpg"
+        _write_test_image(jpeg_path, 961, 541)
+        expected, expected_scales = _pillow_decode(jpeg_path, 256)
+
+        pixels, scales = decode_image(jpeg_path, 256)
+
+        assert scales == expected_scales
+        np.testing.assert_array_equal(pixels, expected)
+
+    @pytest.mark.parametrize("draft_size", [None, 256])
+    def test_bytes_without_simplejpeg_falls_back_to_pillow(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, draft_size: int | None
+    ) -> None:
+        """With ``simplejpeg`` unavailable, ``decode_image_bytes`` still drafts through Pillow.
+
+        The ``test_without_simplejpeg_falls_back_to_pillow`` case above only exercises this fallback through
+        ``decode_image``'s file-based wrapper.
+        """
+        monkeypatch.setattr(io_utils, "simplejpeg", None)
+        jpeg_path = tmp_path / "img.jpg"
+        _write_test_image(jpeg_path, 961, 541)
+        expected, expected_scales = _pillow_decode(jpeg_path, draft_size)
+
+        pixels, scales = decode_image_bytes(jpeg_path.read_bytes(), draft_size)
+
+        assert scales == expected_scales
+        np.testing.assert_array_equal(pixels, expected)
+
+    @_requires_simplejpeg
+    def test_bytes_garbage_after_soi_raises_pillow_error(self) -> None:
+        """Bytes with a valid JPEG SOI marker but a garbage payload raise the same error Pillow would.
+
+        Exercises the ``except ValueError`` fallback in ``_decode_with_simplejpeg``: ``simplejpeg.decode_jpeg_header``
+        rejects the corrupt payload with a ``ValueError``, so decoding must fall through to Pillow and surface Pillow's
+        own error instead of swallowing it.
+        """
+        data = b"\xff\xd8" + bytes(range(256))
+
+        with pytest.raises(Image.UnidentifiedImageError):
+            decode_image_bytes(data)
+
+
+#: Each PIL-out entry point and the array-out entry point whose decoder policy it shares, by the source both take.
+_ENTRY_POINTS = {
+    "path": (decode_pil_image, decode_image),
+    "bytes": (decode_pil_image_bytes, decode_image_bytes),
+}
+
+
+class TestDecodePilImage:
+    """``decode_pil_image``/``decode_pil_image_bytes`` hand PIL consumers what the array entry points decode.
+
+    Same decoder policy, same pixels and decode scales; the difference is that a Pillow-decoded image is returned as is
+    instead of being copied into an array that the caller would copy straight back into a PIL image (#1544).
+    """
+
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    @pytest.mark.parametrize("extension", ["jpg", "png", "bmp"])
+    @pytest.mark.parametrize("draft_size", [None, 256])
+    def test_pixels_and_scales_match_array_entry_point(
+        self, tmp_path: Path, source_kind: str, extension: str, draft_size: int | None
+    ) -> None:
+        """Every format, drafted or not, yields the array entry point's RGB pixels and decode scales."""
+        decode_pil, decode_array = _ENTRY_POINTS[source_kind]
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 961, 541)
+        source = image_path.read_bytes() if source_kind == "bytes" else image_path
+        expected, expected_scales = decode_array(source, draft_size)
+
+        image, scales = decode_pil(source, draft_size)
+
+        assert (image.mode, scales) == ("RGB", expected_scales)
+        np.testing.assert_array_equal(np.asarray(image), expected)
+
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    @pytest.mark.parametrize("mode", ["L", "P", "RGBA"])
+    def test_non_rgb_png_decodes_to_rgb(self, tmp_path: Path, source_kind: str, mode: str) -> None:
+        """Grayscale, palette and alpha sources come back as the three-channel RGB of Pillow's ``convert("RGB")``."""
+        decode_pil, _ = _ENTRY_POINTS[source_kind]
+        image_path = tmp_path / "img.png"
+        _write_test_image(image_path, 40, 30, mode=mode)
+        source = image_path.read_bytes() if source_kind == "bytes" else image_path
+        expected, _ = _pillow_decode(image_path)
+
+        image, _ = decode_pil(source)
+
+        np.testing.assert_array_equal(np.asarray(image), expected)
+
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    def test_without_simplejpeg_drafts_through_pillow(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str
+    ) -> None:
+        """With ``simplejpeg`` unavailable, a JPEG still gets Pillow's reduced-scale decode."""
+        monkeypatch.setattr(io_utils, "simplejpeg", None)
+        decode_pil, _ = _ENTRY_POINTS[source_kind]
+        jpeg_path = tmp_path / "img.jpg"
+        _write_test_image(jpeg_path, 961, 541)
+        source = jpeg_path.read_bytes() if source_kind == "bytes" else jpeg_path
+        expected, expected_scales = _pillow_decode(jpeg_path, 256)
+
+        image, scales = decode_pil(source, 256)
+
+        assert scales == expected_scales
+        np.testing.assert_array_equal(np.asarray(image), expected)
+
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    @pytest.mark.parametrize("extension", ["png", "bmp"])
+    def test_pillow_decode_is_not_copied_through_numpy(self, tmp_path: Path, source_kind: str, extension: str) -> None:
+        """A Pillow-decoded image allocates no frame-sized NumPy buffer on its way to a PIL consumer.
+
+        Regression test for #1544: the round trip through ``np.array`` and back through ``Image.fromarray`` slowed data
+        loading on large PNG and BMP files. A Pillow-only decode peaks at its read buffers (about 0.14 MB here); the
+        round trip peaks at about twice the 1.44 MB frame.
+        """
+        decode_pil, _ = _ENTRY_POINTS[source_kind]
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 800, 600)
+        source = image_path.read_bytes() if source_kind == "bytes" else image_path
+
+        # The bound is loose on purpose: the real floor is Pillow's read buffers (~138-142 KB, frame-independent),
+        # not a fraction of the 800x600 frame. The bytes variant stays near that floor too, because CPython's
+        # `io.BytesIO(data)` shares `data`'s buffer instead of copying it.
+        assert peak_traced_bytes(decode_pil, source) < 800 * 600 * 3 // 2
+
+    @_requires_simplejpeg
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    def test_jpeg_over_pixel_limit_raises_decompression_bomb_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str
+    ) -> None:
+        """The simplejpeg path reached through the PIL entry points still enforces Pillow's pixel limit."""
+        decode_pil, _ = _ENTRY_POINTS[source_kind]
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+        jpeg_path = tmp_path / "img.jpg"
+        _write_test_image(jpeg_path, 64, 32)  # 2048 pixels, above the 2 * MAX_IMAGE_PIXELS raise tier
+        source = jpeg_path.read_bytes() if source_kind == "bytes" else jpeg_path
+
+        with pytest.raises(Image.DecompressionBombError):
+            decode_pil(source)
+
+    @_requires_simplejpeg
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    def test_truncated_jpeg_raises_pillow_error(self, tmp_path: Path, source_kind: str) -> None:
+        """A truncated JPEG falls through to Pillow, raising the same ``OSError`` for the PIL entry points."""
+        decode_pil, _ = _ENTRY_POINTS[source_kind]
+        jpeg_path = tmp_path / "img.jpg"
+        _write_test_image(jpeg_path, 457, 301)
+        jpeg_path.write_bytes(jpeg_path.read_bytes()[:3000])
+        source = jpeg_path.read_bytes() if source_kind == "bytes" else jpeg_path
+
+        with pytest.raises(OSError, match="truncated"):
+            decode_pil(source)
+
+    @_requires_simplejpeg
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    def test_garbage_after_soi_raises_pillow_error(self, tmp_path: Path, source_kind: str) -> None:
+        """A JPEG SOI marker followed by a garbage payload raises Pillow's error through the PIL entry points.
+
+        Exercises the ``except ValueError`` fallback in ``_decode_with_simplejpeg`` the same way
+        ``TestDecodeImage.test_bytes_garbage_after_soi_raises_pillow_error`` does for the array entry point.
+        """
+        decode_pil, _ = _ENTRY_POINTS[source_kind]
+        jpeg_path = tmp_path / "img.jpg"
+        data = b"\xff\xd8" + bytes(range(256))
+        jpeg_path.write_bytes(data)
+        source = data if source_kind == "bytes" else jpeg_path
+
+        with pytest.raises(Image.UnidentifiedImageError):
+            decode_pil(source)
+
+
+class TestDecodePilImagePixelLimit:
+    """``max_image_pixels`` raises the decompression-bomb limit for one decode, never for the process (#1716).
+
+    Each case runs on JPEG, PNG and TIFF inputs.
+    """
+
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
+    def test_decodes_image_above_process_limit_without_warning(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str, extension: str
+    ) -> None:
+        """An image the process limit rejects decodes silently when the per-call limit admits it."""
+        decode_pil, _ = _ENTRY_POINTS[source_kind]
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 64, 32)  # 2048 pixels, above the process limit's raise tier
+        source = image_path.read_bytes() if source_kind == "bytes" else image_path
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            image, _ = decode_pil(source, max_image_pixels=5000)
+
+        assert image.size == (64, 32)
+
+    def test_gif_disposal_uses_per_image_limit(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A GIF disposal buffer admitted by the per-image limit decodes under a lower process limit."""
+        encoded = io.BytesIO()
+        Image.new("RGB", (64, 32), "red").save(encoded, format="GIF", disposal=2)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+
+        image, _ = decode_pil_image_bytes(encoded.getvalue(), max_image_pixels=5000)
+
+        assert image.size == (64, 32)
+        assert Image.MAX_IMAGE_PIXELS == 1000
+
+    def test_rejected_header_does_not_read_entire_file(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Reject an oversized image before reading its trailing encoded payload."""
+        path = tmp_path / "image.png"
+        _write_test_image(path, 64, 32)
+        data = path.read_bytes() + bytes(100_000)
+
+        class _BoundedStream(io.BytesIO):
+            def read(self, size: int = -1) -> bytes:
+                assert 0 <= size <= 4096, "read beyond the header before rejecting the image"
+                return super().read(size)
+
+        monkeypatch.setattr(Path, "open", lambda self, *args, **kwargs: _BoundedStream(data))
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
+
+        with pytest.raises(Image.DecompressionBombError):
+            io_utils._open_image(path, max_image_pixels=500)
+
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    def test_four_channel_decode_in_warning_tier_retries_and_keeps_alpha(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str
+    ) -> None:
+        """An RGBA image between the per-call limit and twice that limit warns once, then decodes with its alpha."""
+        decode_pil, _ = _ENTRY_POINTS[source_kind]
+        pixels = np.random.default_rng(2).integers(0, 256, size=(32, 64, 4), dtype=np.uint8)
+        image_path = tmp_path / "img.png"
+        Image.fromarray(pixels).save(image_path)
+        source = image_path.read_bytes() if source_kind == "bytes" else image_path
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)  # 2048 pixels fall in the warning tier of a 1500 limit
+
+        with pytest.warns(Image.DecompressionBombWarning):
+            image, scales = decode_pil(source, max_image_pixels=1500, num_channels=4)
+
+        np.testing.assert_array_equal(np.asarray(image), pixels)
+        assert (image.mode, scales) == ("RGBA", (1.0, 1.0))
+
+    @pytest.mark.parametrize("compression", ["raw", "tiff_deflate"])
+    def test_tiff_pixels_match_with_a_raised_limit(self, monkeypatch: pytest.MonkeyPatch, compression: str) -> None:
+        """Raw and compressed TIFF pixels survive decoding under the per-image limit."""
+        pixels = np.random.default_rng(1).integers(0, 256, size=(32, 64, 3), dtype=np.uint8)
+        encoded = io.BytesIO()
+        Image.fromarray(pixels).save(encoded, format="TIFF", compression=compression)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+
+        image, scales = decode_pil_image_bytes(encoded.getvalue(), max_image_pixels=5000)
+
+        np.testing.assert_array_equal(np.asarray(image), pixels)
+        assert scales == (1.0, 1.0)
+        assert Image.MAX_IMAGE_PIXELS == 1000
+
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
+    def test_process_limit_is_unchanged_after_decode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
+    ) -> None:
+        """The process-wide limit is the application's once the decode returns."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 64, 32)
+
+        decode_pil_image(image_path, max_image_pixels=5000)
+
+        assert Image.MAX_IMAGE_PIXELS == 1000
+
+    def test_bomb_warning_as_error_precedes_pixel_decode(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A warning promoted to an error stops before a damaged image is decoded."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+        encoded = io.BytesIO()
+        Image.new("RGB", (64, 32)).save(encoded, format="PNG")
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with pytest.raises(Image.DecompressionBombWarning):
+                decode_pil_image_bytes(encoded.getvalue()[:45], max_image_pixels=1500)
+
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
+    def test_image_above_twice_the_per_call_limit_raises(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
+    ) -> None:
+        """The per-call limit is still a guard: more than twice it raises, as Pillow's own limit does."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 64, 32)  # 2048 pixels
+
+        with pytest.raises(Image.DecompressionBombError):
+            decode_pil_image(image_path, max_image_pixels=1000)
+
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
+    def test_process_limit_is_restored_after_rejected_image(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
+    ) -> None:
+        """A decode that raises leaves the process-wide limit as it found it."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 100)
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 64, 32)
+
+        with pytest.raises(Image.DecompressionBombError):
+            decode_pil_image(image_path, max_image_pixels=1000)
+
+        assert Image.MAX_IMAGE_PIXELS == 100
+
+    @pytest.mark.parametrize("process_limit", [None, 1_000_000])
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
+    def test_never_lowers_a_more_permissive_process_limit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, process_limit: int | None, extension: str
+    ) -> None:
+        """A process limit that is disabled or already higher wins over a smaller per-call limit."""
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", process_limit)
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 64, 32)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            image, _ = decode_pil_image(image_path, max_image_pixels=10)
+
+        assert image.size == (64, 32)
+
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
+    def test_process_limit_is_never_changed_while_pillow_reads(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
+    ) -> None:
+        """Pillow's own path never raises the process-wide limit, so another thread's ``Image.open`` keeps it."""
+        monkeypatch.setattr(io_utils, "simplejpeg", None)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+        image_path = tmp_path / f"img.{extension}"
+        _write_test_image(image_path, 64, 32)
+        limits_during_read: set[int | None] = set()
+
+        class _RecordingStream(io.BytesIO):
+            def read(self, size: int | None = -1) -> bytes:
+                limits_during_read.add(Image.MAX_IMAGE_PIXELS)
+                return super().read(size)
+
+        io_utils._decode_with_pillow(_RecordingStream(image_path.read_bytes()), None, max_image_pixels=5000)
+
+        assert limits_during_read == {1000}
+
+    def test_jpeg_without_simplejpeg_still_drafts(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Pillow's JPEG reduction still applies when the per-call limit routes the open around ``Image.open``."""
+        monkeypatch.setattr(io_utils, "simplejpeg", None)
+        jpeg_path = tmp_path / "img.jpg"
+        _write_test_image(jpeg_path, 961, 541)
+        expected, expected_scales = _pillow_decode(jpeg_path, 256)
+
+        image, scales = decode_pil_image(jpeg_path, 256, max_image_pixels=10**9)
+
+        assert scales == expected_scales
+        np.testing.assert_array_equal(np.asarray(image), expected)
+
+    def test_unidentified_image_raises_pillow_error(self) -> None:
+        """Bytes no Pillow plugin recognises raise the error ``Image.open`` raises for them."""
+        with pytest.raises(UnidentifiedImageError):
+            decode_pil_image_bytes(b"not an image", max_image_pixels=5000)
+
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
+    def test_coco_detection_applies_its_limit_to_the_images_it_reads(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str
+    ) -> None:
+        """``CocoDetection(max_image_pixels=...)`` reads an image the process limit rejects."""
+        root = _single_image_coco_dataset(tmp_path, f"img1.{extension}", 64, 32).root
+        dataset = CocoDetection(root, tmp_path / "annotations.json", transforms=None, max_image_pixels=5000)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+
+        image, _ = dataset[0]
+
+        assert image.size == (64, 32)
+
+
+class TestReadSimplejpegCandidate:
+    """``_read_simplejpeg_candidate`` decides, by marker, whether a file is ``simplejpeg``'s to decode."""
+
+    @_requires_simplejpeg
+    def test_jpeg_file_returns_its_bytes(self, tmp_path: Path) -> None:
+        """A JPEG file's raw bytes come back unchanged, the positive branch the module doctest does not cover."""
+        jpeg_path = tmp_path / "img.jpg"
+        _write_test_image(jpeg_path, 8, 6)
+
+        candidate = io_utils._read_simplejpeg_candidate(jpeg_path)
+
+        assert candidate == jpeg_path.read_bytes()
+
+
+def _single_image_coco_dataset(root: Path, file_name: str, width: int, height: int) -> CocoDetection:
+    """Write one noise image named ``file_name`` under ``root/images`` with an empty COCO annotation file and load it.
+
+    Examples:
+        >>> import contextlib, io, tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stdout(io.StringIO()):
+        ...     size = _single_image_coco_dataset(Path(tmp), "img1.png", 8, 6)[0][0].size
+        >>> size
+        (8, 6)
+    """
+    img_dir = root / "images"
+    img_dir.mkdir()
+    _write_test_image(img_dir / file_name, width, height)
+    ann_file = root / "annotations.json"
+    ann_file.write_text(
+        json.dumps(
+            {
+                "images": [{"id": 1, "file_name": file_name, "width": width, "height": height}],
+                "annotations": [],
+                "categories": [{"id": 1, "name": "cat", "supercategory": "animal"}],
+            }
+        )
+    )
+    return CocoDetection(img_dir, ann_file, transforms=None)
+
+
+class TestCocoDetectionRealPathParity:
+    """The dataset's real read path preserves the pixel-parity contract the ``io_utils`` entry points provide."""
+
+    @pytest.mark.parametrize("extension", ["jpg", "png"])
+    def test_getitem_image_matches_pillow_reference(self, tmp_path: Path, extension: str) -> None:
+        """``CocoDetection.__getitem__`` returns pixels identical to a direct Pillow decode of the same file.
+
+        Every other test in this file calls the ``io_utils`` entry points directly.  This drives the real consumer path
+        instead -- ``CocoDetection._decode_image`` -> ``ConvertCoco`` -> the returned image -- so a mismatch introduced
+        anywhere along that chain, not only inside ``io_utils``, would surface here.
+        """
+        dataset = _single_image_coco_dataset(tmp_path, f"img1.{extension}", 64, 48)
+        expected, _ = _pillow_decode(tmp_path / "images" / f"img1.{extension}")
+
+        image, _ = dataset[0]
+
+        np.testing.assert_array_equal(np.array(image), expected)
+
+    @pytest.mark.parametrize("extension", ["png", "bmp"])
+    def test_getitem_does_not_copy_pillow_decode_through_numpy(self, tmp_path: Path, extension: str) -> None:
+        """A PNG or BMP training sample reaches the transforms without a frame-sized NumPy copy.
+
+        #1544's scenario: 1.11.0 routed every non-JPEG sample through ``np.array`` and ``Image.fromarray``, which made
+        the train DataLoader slower than 1.10.1 on large PNG and BMP files.
+        """
+        dataset = _single_image_coco_dataset(tmp_path, f"img1.{extension}", 800, 600)
+
+        assert peak_traced_bytes(dataset.__getitem__, 0) < 800 * 600 * 3 // 2
+
+
+def _write_oriented_photo(path: Path, orientation: int, width: int = 29, height: int = 17, mode: str = "RGB") -> None:
+    """Write noise in the format ``path``'s suffix names, tagged with ``orientation`` the way a camera tags a photo.
+
+    The pixels are stored ``width`` x ``height`` in Pillow ``mode``; a viewer shows them turned by the tag. JPEG files
+    use quality 90.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     photo = Path(tmp) / "photo.jpg"
+        ...     _write_oriented_photo(photo, 6)
+        ...     with Image.open(photo) as image:
+        ...         print(image.size, image.getexif()[0x0112])
+        (29, 17) 6
+    """
+    pixels = ((np.arange(height * width * 3).reshape(height, width, 3) * 37 + 13) % 256).astype(np.uint8)
+    exif = Image.Exif()
+    exif[0x0112] = orientation
+    options = {"quality": 90} if path.suffix.lower() in (".jpg", ".jpeg") else {}
+    Image.fromarray(pixels).convert(mode).save(path, exif=exif.tobytes(), **options)
+
+
+def _upright_reference(path: Path, mode: str = "RGB") -> np.ndarray:
+    """Decode ``path`` through Pillow alone into ``mode`` and turn it upright with ``ImageOps.exif_transpose``.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     photo = Path(tmp) / "photo.png"
+        ...     _write_oriented_photo(photo, 6)
+        ...     _upright_reference(photo).shape
+        (29, 17, 3)
+    """
+    with Image.open(path) as image:
+        return np.asarray(ImageOps.exif_transpose(image).convert(mode))
+
+
+class TestDecodeExifOrientation:
+    """Every entry point returns a photo upright for its EXIF orientation, as viewers and annotation tools show it."""
+
+    @pytest.mark.parametrize("orientation", [1, 2, 3, 4, 5, 6, 7, 8])
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    def test_jpeg_pixels_are_upright(self, tmp_path: Path, source_kind: str, orientation: int) -> None:
+        """PIL and array entry points both return the photo as ``ImageOps.exif_transpose`` shows it."""
+        decode_pil, decode_array = _ENTRY_POINTS[source_kind]
+        path = tmp_path / "photo.jpg"
+        _write_oriented_photo(path, orientation)
+        source = path.read_bytes() if source_kind == "bytes" else path
+        expected = _upright_reference(path)
+
+        image, pil_scales = decode_pil(source)
+        pixels, array_scales = decode_array(source)
+
+        np.testing.assert_array_equal(np.array(image), expected)
+        np.testing.assert_array_equal(pixels, expected)
+        assert pil_scales == array_scales == (1.0, 1.0)
+
+    @pytest.mark.parametrize("extension", ["png", "tif"])
+    def test_lossless_formats_are_upright(self, tmp_path: Path, extension: str) -> None:
+        """Formats Pillow always decodes are turned the same way."""
+        path = tmp_path / f"photo.{extension}"
+        _write_oriented_photo(path, 6)
+
+        image, _ = decode_pil_image(path)
+
+        np.testing.assert_array_equal(np.array(image), _upright_reference(path))
+
+    def test_without_simplejpeg_jpeg_is_upright(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """The Pillow-only install turns the photo as the ``[train]`` install does."""
+        path = tmp_path / "photo.jpg"
+        _write_oriented_photo(path, 8)
+        monkeypatch.setattr(io_utils, "simplejpeg", None)
+
+        pixels, _ = decode_image(path)
+
+        np.testing.assert_array_equal(pixels, _upright_reference(path))
+
+    def test_draft_scales_follow_the_upright_axes(self, tmp_path: Path) -> None:
+        """A quarter turn swaps the decode scales with the axes, so annotations still scale correctly.
+
+        The stored 100 x 37 JPEG drafts by 2 to 50 x 19, stored-axis scales ``(0.5, 19 / 37)``; upright it is 19 x 50.
+        """
+        path = tmp_path / "photo.jpg"
+        _write_oriented_photo(path, 6, width=100, height=37)
+
+        image, scales = decode_pil_image(path, draft_size=16)
+
+        assert image.size == (19, 50)
+        assert scales == (19 / 37, 0.5)
+
+    @pytest.mark.parametrize("extension", ["jpg", "png", "tif"])
+    def test_decode_under_a_raised_pixel_limit_is_upright(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture, extension: str
+    ) -> None:
+        """The subprocess decoder used for a raised per-image limit reports the tag, and the photo is turned."""
+        path = tmp_path / f"photo.{extension}"
+        _write_oriented_photo(path, 6, width=64, height=32)
+        expected = _upright_reference(path)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+        worker = mocker.spy(io_utils.subprocess, "run")
+
+        image, scales = decode_pil_image(path, max_image_pixels=5000)
+
+        np.testing.assert_array_equal(np.array(image), expected)
+        assert (worker.call_count, scales) == (1, (1.0, 1.0))
+
+    @pytest.mark.parametrize("extension", ["jpg", "png"])
+    @pytest.mark.parametrize("orientation", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
+    def test_raised_pixel_limit_decode_equals_the_in_process_decode(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, extension: str, orientation: int
+    ) -> None:
+        """Whatever the tag holds, 0 to 9, the subprocess decoder returns the pixels and scales the in-process one
+        does."""
+        path = tmp_path / f"photo.{extension}"
+        _write_oriented_photo(path, orientation, width=64, height=32)
+        expected, expected_scales = decode_pil_image(path)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+
+        image, scales = decode_pil_image(path, max_image_pixels=5000)
+
+        np.testing.assert_array_equal(np.array(image), np.array(expected))
+        assert scales == expected_scales
+
+    def test_png_tag_after_the_pixels_is_upright(self, tmp_path: Path) -> None:
+        """A PNG that stores its eXIf chunk after the pixel data is turned as ``ImageOps.exif_transpose`` turns it."""
+        path = tmp_path / "photo.png"
+        _write_oriented_photo(path, 6, width=64, height=32)
+        path.write_bytes(move_exif_after_pixels(path.read_bytes()))
+        expected = _upright_reference(path)
+
+        image, _ = decode_pil_image(path)
+
+        assert expected.shape == (64, 32, 3)
+        np.testing.assert_array_equal(np.array(image), expected)
+
+    def test_png_tag_after_the_pixels_is_upright_under_a_raised_pixel_limit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The subprocess decoder finds that chunk too, so both decoders turn the file alike."""
+        path = tmp_path / "photo.png"
+        _write_oriented_photo(path, 6, width=64, height=32)
+        path.write_bytes(move_exif_after_pixels(path.read_bytes()))
+        expected = _upright_reference(path)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+
+        image, scales = decode_pil_image(path, max_image_pixels=5000)
+
+        np.testing.assert_array_equal(np.array(image), expected)
+        assert scales == (1.0, 1.0)
+
+    def test_unusable_orientation_keeps_the_stored_pixels(self, tmp_path: Path) -> None:
+        """A tag outside 1 to 8 names no turn, so the photo decodes as stored, exactly as before."""
+        path = tmp_path / "photo.jpg"
+        _write_oriented_photo(path, 9)
+        expected, _ = _pillow_decode(path)
+
+        pixels, _ = decode_image(path)
+
+        np.testing.assert_array_equal(pixels, expected)
+
+    @_requires_simplejpeg
+    @pytest.mark.parametrize("source_kind", ["path", "bytes"])
+    @pytest.mark.parametrize("entry_point", [0, 1], ids=["pil", "array"])
+    def test_tagged_jpeg_over_pixel_limit_raises_decompression_bomb_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source_kind: str, entry_point: int
+    ) -> None:
+        """A tagged JPEG is left to Pillow by the simplejpeg path, which must still refuse an oversized one."""
+        decode = _ENTRY_POINTS[source_kind][entry_point]
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+        path = tmp_path / "photo.jpg"
+        _write_oriented_photo(path, 6, width=64, height=32)  # 2048 pixels, above the 2 * MAX_IMAGE_PIXELS raise tier
+        source = path.read_bytes() if source_kind == "bytes" else path
+
+        with pytest.raises(Image.DecompressionBombError):
+            decode(source)
+
+    @pytest.mark.parametrize("num_channels", [1, 4])
+    def test_one_and_four_channel_decodes_are_upright(self, tmp_path: Path, num_channels: int) -> None:
+        """A model with ``num_channels`` 1 or 4 gets the photo upright in its own mode, as the RGB decode does."""
+        mode = image_mode(num_channels)
+        path = tmp_path / "photo.png"
+        _write_oriented_photo(path, 6, width=64, height=32, mode=mode)
+        expected = _upright_reference(path, mode)
+
+        image, scales = decode_pil_image(path, num_channels=num_channels)
+
+        assert image.mode == mode
+        np.testing.assert_array_equal(np.array(image), expected)
+        assert scales == (1.0, 1.0)
+
+    @pytest.mark.parametrize("num_channels", [1, 4])
+    def test_one_and_four_channel_decodes_are_upright_under_a_raised_pixel_limit(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, num_channels: int
+    ) -> None:
+        """The subprocess decoder reports the tag in those modes too, so both decoders turn the photo alike."""
+        mode = image_mode(num_channels)
+        path = tmp_path / "photo.png"
+        _write_oriented_photo(path, 6, width=64, height=32, mode=mode)
+        expected = _upright_reference(path, mode)
+        monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", 1000)
+
+        image, scales = decode_pil_image(path, max_image_pixels=5000, num_channels=num_channels)
+
+        assert image.mode == mode
+        np.testing.assert_array_equal(np.array(image), expected)
+        assert scales == (1.0, 1.0)
+
+
+class TestCocoDetectionExifOrientation:
+    """A COCO box drawn on the upright photo covers the same object in the training sample."""
+
+    @pytest.mark.parametrize("orientation", [3, 6, 8])
+    def test_box_lands_on_the_labelled_object(self, tmp_path: Path, orientation: int) -> None:
+        """The labelled white rectangle is under its box in the decoded sample, whatever the stored orientation."""
+        upright = np.zeros((100, 160, 3), dtype=np.uint8)
+        upright[10:40, 20:60] = 255
+        stored = Image.fromarray(upright)
+        # The transpose exif_transpose undoes for each tag, so a viewer shows ``upright``.
+        undo = {3: Image.Transpose.ROTATE_180, 6: Image.Transpose.ROTATE_90, 8: Image.Transpose.ROTATE_270}
+        exif = Image.Exif()
+        exif[0x0112] = orientation
+        stored.transpose(undo[orientation]).save(tmp_path / "photo.jpg", quality=95, exif=exif.tobytes())
+        ann_file = tmp_path / "annotations.json"
+        ann_file.write_text(
+            json.dumps(
+                {
+                    "images": [{"id": 1, "file_name": "photo.jpg", "width": 160, "height": 100}],
+                    "annotations": [
+                        {"id": 1, "image_id": 1, "category_id": 1, "bbox": [20, 10, 40, 30], "area": 1200, "iscrowd": 0}
+                    ],
+                    "categories": [{"id": 1, "name": "carton"}],
+                }
+            )
+        )
+        dataset = CocoDetection(tmp_path, ann_file, transforms=None, remap_category_ids=True)
+
+        image, target = dataset[0]
+
+        x1, y1, x2, y2 = (int(value) for value in target["boxes"][0].tolist())
+        assert image.size == (160, 100)
+        assert np.asarray(image.convert("L"))[y1:y2, x1:x2].min() > 128
+
+
+_requires_webdataset = pytest.mark.skipif(not _IS_WEBDATASET_INSTALLED, reason="webdataset is not installed")
+
+
+#: Part of the warning for boxes that fit a quarter-turned photo only as its file stores the pixels.
+_STORED_FRAME_WARNING = "boxes fit the photo only as the file stores the pixels"
+
+
+# The photos below are stored 160 x 100. Orientation 6 shows them 100 x 160; orientations 1 and 3 keep 160 x 100.
+#: Right edge at 150: past the upright width of 100, inside the stored width of 160.
+_STORED_FRAME_BOX = [100.0, 10.0, 50.0, 30.0]
+
+
+#: Bottom edge at 140: inside the upright height of 160.
+_UPRIGHT_BOX = [10.0, 100.0, 50.0, 40.0]
+
+
+#: Bottom edge at 140: past a 160 x 100 photo, inside it turned a quarter.
+_TURNED_FRAME_BOX = [10.0, 110.0, 20.0, 30.0]
+
+
+def _write_tagged_coco_split(root: Path, orientation: int, bbox: list[float], count: int = 2) -> tuple[Path, Path]:
+    """Write ``count`` JPEG photos stored 160 x 100 and tagged ``orientation``, each with one box, as a COCO split.
+
+    Args:
+        root: Directory to write the ``images`` folder and ``annotations.json`` into.
+        orientation: EXIF orientation of every photo.
+        bbox: COCO ``[x, y, width, height]`` box of every photo.
+        count: Number of photos.
+
+    Returns:
+        The image directory and the annotation file.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     image_dir, ann_file = _write_tagged_coco_split(Path(tmp), 6, _UPRIGHT_BOX)
+        ...     sorted(path.name for path in image_dir.iterdir()), ann_file.name
+        (['photo_0.jpg', 'photo_1.jpg'], 'annotations.json')
+    """
+    image_dir = root / "images"
+    image_dir.mkdir(parents=True)
+    images: list[dict[str, Any]] = []
+    annotations: list[dict[str, Any]] = []
+    for index in range(count):
+        name = f"photo_{index}.jpg"
+        write_oriented_photo(image_dir / name, orientation, width=160, height=100)
+        images.append({"id": index + 1, "file_name": name, "width": 160, "height": 100})
+        annotations.append(
+            {
+                "id": index + 1,
+                "image_id": index + 1,
+                "category_id": 1,
+                "bbox": bbox,
+                "area": bbox[2] * bbox[3],
+                "iscrowd": 0,
+            }
+        )
+    ann_file = root / "annotations.json"
+    ann_file.write_text(
+        json.dumps({"images": images, "annotations": annotations, "categories": [{"id": 1, "name": "carton"}]})
+    )
+    return image_dir, ann_file
+
+
+class TestBoxesFitOnlyTurned:
+    """Only a clear overrun of the upright photo that fits it turned counts as a sign of stored-frame labels."""
+
+    @pytest.mark.parametrize(
+        "annotations",
+        [
+            pytest.param([{"bbox": [50.0, 10.0, 50.5, 20.0]}], id="overrun-within-tolerance"),
+            pytest.param([{"bbox": _STORED_FRAME_BOX}, {"bbox": [1.0, 2.0, 3.0]}], id="malformed-box"),
+            pytest.param([], id="no-boxes"),
+        ],
+    )
+    def test_no_sign_without_a_clear_overrun(self, annotations: list[dict[str, Any]]) -> None:
+        """Rounding at the edge, a box that is not four numbers, and an empty sample give no sign."""
+        assert not _boxes_fit_only_turned(annotations, (100, 160))
+
+
+class TestStoredFrameLabelWarning:
+    """The readers warn once when boxes fit a quarter-turned photo only as its file stores the pixels."""
+
+    def test_coco_labels_on_stored_pixels_warn_once(self, tmp_path: Path) -> None:
+        """Two such samples give one warning per dataset, naming the first photo."""
+        image_dir, ann_file = _write_tagged_coco_split(tmp_path, 6, _STORED_FRAME_BOX)
+        dataset = CocoDetection(image_dir, ann_file, transforms=None, remap_category_ids=True)
+
+        with pytest.warns(UserWarning, match=_STORED_FRAME_WARNING) as record:
+            [dataset[index] for index in range(len(dataset))]
+
+        messages = [str(warning.message) for warning in record if _STORED_FRAME_WARNING in str(warning.message)]
+        assert len(messages) == 1
+        assert "photo_0.jpg" in messages[0]
+
+    def test_coco_upright_labels_do_not_warn(self, tmp_path: Path, recwarn: pytest.WarningsRecorder) -> None:
+        """Boxes drawn on the upright photo fit it, so the reader reads no header and says nothing."""
+        image_dir, ann_file = _write_tagged_coco_split(tmp_path, 6, _UPRIGHT_BOX)
+        dataset = CocoDetection(image_dir, ann_file, transforms=None, remap_category_ids=True)
+
+        [dataset[index] for index in range(len(dataset))]
+
+        assert not [warning for warning in recwarn if _STORED_FRAME_WARNING in str(warning.message)]
+
+    @pytest.mark.parametrize("orientation", [1, 3])
+    def test_coco_photo_without_a_quarter_turn_does_not_warn(
+        self, tmp_path: Path, recwarn: pytest.WarningsRecorder, orientation: int
+    ) -> None:
+        """A box past the photo that would fit it turned is no sign when the photo is not turned a quarter."""
+        image_dir, ann_file = _write_tagged_coco_split(tmp_path, orientation, _TURNED_FRAME_BOX)
+        dataset = CocoDetection(image_dir, ann_file, transforms=None, remap_category_ids=True)
+
+        [dataset[index] for index in range(len(dataset))]
+
+        assert not [warning for warning in recwarn if _STORED_FRAME_WARNING in str(warning.message)]
+
+    @_requires_webdataset
+    def test_webdataset_labels_on_stored_pixels_warn_once(self, tmp_path: Path) -> None:
+        """A packed split warns the same way when its shards are streamed, naming the sample."""
+        image_dir, ann_file = _write_tagged_coco_split(tmp_path, 6, _STORED_FRAME_BOX)
+        shard_dir = tmp_path / "shards"
+        pack_coco_to_shards(image_dir, ann_file, shard_dir, split="train")
+        dataset = WebDatasetDetection(shard_dir, "train", transforms=None)
+
+        with pytest.warns(UserWarning, match=_STORED_FRAME_WARNING) as record:
+            list(dataset)
+
+        messages = [str(warning.message) for warning in record if _STORED_FRAME_WARNING in str(warning.message)]
+        assert len(messages) == 1
+        assert messages[0].startswith("WebDataset sample ")
+
+
+def _16_bit_ramp() -> np.ndarray:
+    """Return 16-bit pixels spanning the full range, as a one-row image."""
+    return np.array([[0, 257, 32768, 65535]], dtype=np.uint16)
+
+
+class TestTo8BitGrayscale:
+    """16-bit grayscale scales to 8 bits by 1/257 instead of clipping to white (#1728)."""
+
+    def test_scales_16_bit_array_image(self) -> None:
+        """An ``I;16`` image scales to ``L`` with its full dynamic range."""
+        scaled = to_8bit_grayscale(Image.fromarray(_16_bit_ramp()))
+        assert scaled.mode == "L"
+        np.testing.assert_array_equal(np.asarray(scaled), [[0, 1, 127, 255]])
+
+    @pytest.mark.parametrize("mode", ["I;16B", "I;16L"])
+    def test_scales_explicit_endianness_modes(self, mode: str) -> None:
+        """The explicit-endianness ``I;16`` spellings scale the same way."""
+        order = ">" if mode.endswith("B") else "<"
+        raw = np.array([[0, 257, 65535]], dtype=f"{order}u2").tobytes()
+        scaled = to_8bit_grayscale(Image.frombytes(mode, (3, 1), raw))
+        assert scaled.mode == "L"
+        np.testing.assert_array_equal(np.asarray(scaled), [[0, 1, 255]])
+
+    def test_leaves_in_range_32_bit_int_pixels(self) -> None:
+        """Mode ``I`` pixels already in [0, 255] are genuine 32-bit data and keep their levels."""
+        image = Image.fromarray(np.array([[0, 128, 255]], dtype=np.int32))
+        assert image.mode == "I"
+        assert to_8bit_grayscale(image) is image
+
+    def test_leaves_out_of_range_32_bit_int_pixels(self) -> None:
+        """Mode ``I`` pixels outside the 16-bit range are not 16-bit data and stay untouched."""
+        image = Image.fromarray(np.array([[0, 70000]], dtype=np.int32))
+        assert to_8bit_grayscale(image) is image
+
+    def test_leaves_8_bit_and_float_images(self) -> None:
+        """8-bit and float images pass through unchanged."""
+        rgb = Image.new("RGB", (2, 2))
+        assert to_8bit_grayscale(rgb) is rgb
+        assert to_8bit_grayscale(Image.new("F", (2, 2))).mode == "F"
+
+
+@pytest.fixture
+def signed_tiff(tmp_path: Path) -> Path:
+    """Write a signed 32-bit TIFF whose values also fit in 16 unsigned bits."""
+    path = tmp_path / "signed.tiff"
+    Image.fromarray(np.array([[0, 128, 256, 1028]], dtype=np.int32)).save(path)
+    return path
+
+
+class TestDeepGrayscale:
+    """Preserve the channel contract for signed and floating-point images."""
+
+    def test_refuses_signed_tiff_on_grayscale_target(self, signed_tiff: Path) -> None:
+        """A true signed TIFF is refused for 1-channel decode even if its levels fit in 16 bits."""
+        with pytest.raises(ValueError, match=r"signed\.tiff.*deeper than 8 bits"):
+            decode_image(signed_tiff, num_channels=1)
+
+    def test_keeps_signed_tiff_rgb_conversion(self, signed_tiff: Path) -> None:
+        """RGB decode preserves the low levels of a signed TIFF and clips only values above 255."""
+        pixels, _ = decode_image(signed_tiff)
+        assert pixels.shape == (1, 4, 3)
+        np.testing.assert_array_equal(pixels[..., 0], [[0, 128, 255, 255]])
+
+    def test_refuses_float_pixels_naming_the_file(self) -> None:
+        """``F`` images raise a ``ValueError`` that names the image."""
+        with pytest.raises(ValueError, match=r"thermal\.png.*deeper than 8 bits"):
+            convert_image(Image.new("F", (2, 2)), "L", "thermal.png")
+
+    def test_scales_16_bit_png_file(self, tmp_path: Path) -> None:
+        """A 16-bit PNG decoded with ``num_channels=1`` scales to 8-bit grayscale."""
+        path = tmp_path / "depth.png"
+        Image.fromarray(_16_bit_ramp()).save(path)
+        pixels, _ = decode_image(path, num_channels=1)
+        assert pixels.shape == (1, 4)
+        np.testing.assert_array_equal(pixels, [[0, 1, 127, 255]])
+
+    def test_scales_16_bit_png_on_default_path(self, tmp_path: Path) -> None:
+        """The 3-channel default path scales a 16-bit PNG instead of clipping it to white."""
+        path = tmp_path / "depth.png"
+        Image.fromarray(_16_bit_ramp()).save(path)
+        pixels, _ = decode_image(path)
+        assert pixels.shape == (1, 4, 3)
+        np.testing.assert_array_equal(pixels, [[[0, 0, 0], [1, 1, 1], [127, 127, 127], [255, 255, 255]]])
+
+    @pytest.mark.parametrize("mode", ["L", "LA", "RGB"])
+    def test_accepts_8_bit_modes(self, mode: str) -> None:
+        """8-bit modes still convert to ``L``."""
+        assert convert_image(Image.new(mode, (2, 2)), "L", "image").mode == "L"
+
+
+def _png_with_transparency(mode: str, transparency: int | tuple[int, int, int]) -> Image.Image:
+    """Return *mode* image re-opened from a PNG that carries a tRNS chunk.
+
+    Examples:
+        >>> _png_with_transparency("RGB", (1, 2, 3)).info["transparency"]
+        (1, 2, 3)
+    """
+    buffer = io.BytesIO()
+    Image.new(mode, (2, 2)).save(buffer, "PNG", transparency=transparency)
+    buffer.seek(0)
+    image = Image.open(buffer)
+    image.load()
+    return image
+
+
+class TestTransparencyKey:
+    """The ``transparency`` info key is a fourth channel for palette images only."""
+
+    @pytest.mark.parametrize(
+        ("mode", "key"),
+        [pytest.param("RGB", (1, 2, 3), id="rgb-colour-key"), pytest.param("L", 5, id="gray-colour-key")],
+    )
+    def test_colour_key_is_not_a_fourth_channel(self, mode: str, key: int | tuple[int, int, int]) -> None:
+        """A tRNS colour key on an RGB or L PNG is refused for 4 channels."""
+        image = _png_with_transparency(mode, key)
+        assert "transparency" in image.info
+        with pytest.raises(ValueError, match="has no fourth channel"):
+            convert_image(image, "RGBA", "key.png")
+
+    def test_palette_alpha_is_a_fourth_channel(self) -> None:
+        """A palette image with tRNS keeps its alpha when converted to RGBA."""
+        image = _png_with_transparency("P", 0)
+        assert convert_image(image, "RGBA", "palette.png").mode == "RGBA"
+
+    @pytest.mark.parametrize("mode", ["LA", "PA", "RGBA"])
+    def test_alpha_modes_stay_admitted(self, mode: str) -> None:
+        """Modes that end in ``A`` are real alpha and stay admitted."""
+        assert convert_image(Image.new(mode, (2, 2)), "RGBA", "image").mode == "RGBA"
+
+
+def _four_sample_tiff(extra_samples: int) -> Image.Image:
+    """Return a 4-sample TIFF of stored ``(100, 50, 25, 128)`` pixels whose ExtraSamples tag is *extra_samples*.
+
+    Pillow rewrites ExtraSamples on save, so the tag value is patched in the written bytes.
+
+    Examples:
+        >>> _four_sample_tiff(2).mode
+        'RGBA'
+        >>> _four_sample_tiff(0).mode
+        'RGB'
+    """
+    pixels = np.zeros((4, 4, 4), np.uint8)
+    pixels[...] = (100, 50, 25, 128)
+    buffer = io.BytesIO()
+    Image.fromarray(pixels, "RGBA").save(buffer, "TIFF")
+    data = bytearray(buffer.getvalue())
+    order = "<" if data[:2] == b"II" else ">"
+    (ifd_offset,) = struct.unpack_from(order + "I", data, 4)
+    (entries,) = struct.unpack_from(order + "H", data, ifd_offset)
+    for index in range(entries):
+        entry = ifd_offset + 2 + 12 * index
+        (tag,) = struct.unpack_from(order + "H", data, entry)
+        if tag == 338:  # ExtraSamples
+            struct.pack_into(order + "H", data, entry + 8, extra_samples)
+    return Image.open(io.BytesIO(bytes(data)))
+
+
+class TestExtraSamplesTiff:
+    """Diagnosis and decode of 4-sample TIFF files by their ExtraSamples tag."""
+
+    def test_unspecified_extra_sample_is_diagnosed(self) -> None:
+        """An unspecified fourth sample is refused with a message that says so and names the fix."""
+        with pytest.raises(ValueError, match=r"4 samples per pixel.*unspecified.*ExtraSamples=2"):
+            convert_image(_four_sample_tiff(0), "RGBA", "extra.tif")
+
+    def test_plain_rgb_keeps_generic_message(self) -> None:
+        """An RGB image that is not a 4-sample TIFF gets the generic refusal."""
+        with pytest.raises(ValueError, match=r"has no fourth channel \(mode 'RGB'\)"):
+            convert_image(Image.new("RGB", (2, 2)), "RGBA", "plain.png")
+
+    def test_associated_alpha_is_unpremultiplied(self) -> None:
+        """ExtraSamples=1 reads as premultiplied alpha: Pillow un-premultiplies the colour bands."""
+        decoded = np.asarray(convert_image(_four_sample_tiff(1), "RGBA", "assoc.tif"))
+        assert tuple(decoded[0, 0]) == (199, 99, 49, 128)
+
+    def test_unassociated_alpha_is_unchanged(self) -> None:
+        """ExtraSamples=2 keeps the stored colour bands, the way to carry a data plane."""
+        decoded = np.asarray(convert_image(_four_sample_tiff(2), "RGBA", "data.tif"))
+        assert tuple(decoded[0, 0]) == (100, 50, 25, 128)

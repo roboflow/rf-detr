@@ -64,7 +64,7 @@ _COREAI_MAX_ABS_DIFF = 1e-4
 _COREAI_GPU_MAX_ABS_DIFF = 5e-3
 #: Queries the e2e parity exports select, small enough that their two-stage ranking is well separated.
 _COREAI_E2E_NUM_QUERIES = 5
-#: Minimum eager gap between neighbouring top-ranked two-stage scores, see ``test_coreml_export.py``.
+#: Minimum eager gap between neighbouring top-ranked two-stage scores, see ``tests/export/coreml/test_export.py``.
 _MIN_TWO_STAGE_RANK_MARGIN = 1e-4
 _COREAI_EXPORT_SEED = 0
 

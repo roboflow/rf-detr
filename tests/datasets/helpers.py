@@ -3,15 +3,21 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Shared test helpers for the unreadable-image tests of the dataset readers.
+"""Shared test helpers for the dataset tests.
 
-Plain classes and functions shared by ``test_unreadable_images*.py`` and ``tests/training/test_module_data.py`` so the
-fake reader and the on-disk dataset writers exist once.  Import with an absolute import::
+Plain classes and functions shared by the unreadable-image tests in ``tests/datasets/io/`` and
+``tests/training/datamodule/test_setup.py`` so the fake reader and the on-disk dataset writers exist once.
+Import with an absolute import::
 
     from tests.datasets.helpers import _Reader, _path_of, _write_coco_dataset, _write_yolo_dataset
 
 The retry pause is patched by :func:`_patch_retry_sleep`.  A module that needs it applies it explicitly, as
 ``sleep = pytest.fixture(autouse=True)(_patch_retry_sleep)``; it is never made autouse for all dataset tests.
+
+The Kornia augmentation tests (``tests/datasets/kornia/test_*.py``) share :func:`_only_child`, which picks one child
+module of a built pipeline, and :func:`_logged_messages`, which renders the calls recorded on a mocked logger method::
+
+    from tests.datasets.helpers import _logged_messages, _only_child
 """
 
 from __future__ import annotations
@@ -21,6 +27,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+import torch
 from PIL import Image
 
 from rfdetr.datasets import io_utils
@@ -225,3 +232,46 @@ def _write_yolo_dataset(root: Path, num_images: int = 3) -> tuple[Path, Path, Pa
     data_file = root / "data.yaml"
     data_file.write_text("names:\n  - object\n", encoding="utf-8")
     return image_dir, label_dir, data_file
+
+
+def _only_child(pipeline: torch.nn.Module, class_name: str) -> torch.nn.Module:
+    """Return the single child module of ``pipeline`` whose class is named ``class_name``.
+
+    Matching on the class name keeps the optional Kornia package out of the test body's imports.
+
+    Args:
+        pipeline: Module whose direct children are searched.
+        class_name: Exact class name of the wanted child.
+
+    Returns:
+        The one matching child; the assertion fails if there is none or more than one.
+
+    Examples:
+        >>> _only_child(torch.nn.Sequential(torch.nn.ReLU(), torch.nn.Tanh()), "Tanh")
+        Tanh()
+    """
+    matches = [child for child in pipeline.children() if child.__class__.__name__ == class_name]
+    assert len(matches) == 1, f"Expected exactly 1 {class_name}, found {len(matches)}"
+    return matches[0]
+
+
+def _logged_messages(logger_method: Any) -> list[str]:
+    """Render each call recorded on a mocked logger method as its final ``%``-formatted message.
+
+    Args:
+        logger_method: A mock standing in for ``logger.warning`` or similar.
+
+    Returns:
+        One formatted string per recorded call.
+
+    Examples:
+        >>> from unittest.mock import MagicMock
+        >>> method = MagicMock()
+        >>> _ = method("ignores %s", "fill")
+        >>> _ = method("plain")
+        >>> _logged_messages(method)
+        ['ignores fill', 'plain']
+    """
+    return [
+        call.args[0] % call.args[1:] if len(call.args) > 1 else call.args[0] for call in logger_method.call_args_list
+    ]

@@ -396,7 +396,7 @@ class TestExportOpenvinoNaming:
         """``variant_name`` must be reduced to a bare filename stem before building the output path.
 
         Regression coverage for the same ``os.path.splitext(os.path.basename(...))`` mitigation
-        ``export_coreml`` applies (see ``tests/export/coreml/test_coreml_export.py::TestVariantNamePathSafety``);
+        ``export_coreml`` applies (see ``tests/export/coreml/test_export.py::TestVariantNamePathSafety``);
         ``OpenVINOExporter`` guards its ``variant_name`` the identical way.
         """
         exporter = OpenVINOExporter(OpenVINOConfig(output_dir=tmp_path, variant_name=variant_name, verbose=False))
@@ -1011,8 +1011,8 @@ class TestExportFormatParameter:
         assert any("notes" in str(warning.message) for warning in caught)
 
     # Invalid-format rejection is format-agnostic (RFDETR.export() validates before any dispatch): covered once by
-    # test_coreml_export.py::TestExportFormatParameter.test_invalid_format_raises_value_error and per format by
-    # test_registry.py::TestResolveExporter.
+    # tests/export/coreml/test_export.py::TestExportFormatParameter.test_invalid_format_raises_value_error
+    # and per format by tests/export/core/test_registry.py::TestResolveExporter.
 
 
 @pytest.mark.usefixtures("openvino_unimportable")

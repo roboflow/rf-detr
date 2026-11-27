@@ -3,9 +3,16 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Tests for the shared ``predict()`` pipeline: return types, source metadata and class-name mapping."""
+
+"""Tests for the shared ``predict()`` pipeline: return types, source metadata and class-name mapping.
+
+Package import compatibility without optional capture dependencies.
+"""
 
 import math
+import os
+import subprocess
+import sys
 import warnings
 from dataclasses import replace
 from pathlib import Path
@@ -1289,3 +1296,22 @@ class TestDefaultBatch:
 
         assert len(results) == 4
         assert [call.args[0].shape[0] for call in run.call_args_list] == [4]
+
+
+def test_package_import_without_capture_dependencies() -> None:
+    """Core model imports must work without video, screenshot, or YouTube packages."""
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys; sys.modules.update(cv2=None, mss=None, yt_dlp=None); "
+            "from rfdetr import RFDETRInference, RFDETRNano; assert RFDETRNano is not None",
+        ],
+        capture_output=True,
+        cwd=Path(__file__).resolve().parents[3],
+        env={**os.environ, "PYTHONPATH": str(Path(__file__).resolve().parents[3] / "src")},
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr

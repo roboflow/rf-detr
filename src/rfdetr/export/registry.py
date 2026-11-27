@@ -39,9 +39,9 @@ class ExporterEntry:
 
     ``label``, ``supports_dynamic_batch`` and ``dynamic_batch_reason`` mirror the exporter class's own
     ``display_name``, ``supports_dynamic_batch`` and ``dynamic_batch_reason``. The duplication is deliberate and
-    test-enforced (``tests/export/test_registry.py``): all three are needed *before* the format's module — and with it
-    its heavy optional dependency — is imported, so a doomed request can be refused, in the format's own words, without
-    paying for ``coremltools`` or TensorFlow.
+    test-enforced (``tests/export/core/test_registry.py``): all three are needed *before* the format's module —
+    and with it its heavy optional dependency — is imported, so a doomed request can be refused, in the format's
+    own words, without paying for ``coremltools`` or TensorFlow.
 
     Attributes:
         module: Dotted path of the module defining the exporter class.

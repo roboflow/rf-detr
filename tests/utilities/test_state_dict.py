@@ -3,8 +3,19 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Unit tests for rfdetr.utilities.state_dict."""
 
+"""Unit tests for rfdetr.utilities.state_dict.
+
+Tests for stripping training state out of a saved checkpoint with ``strip_checkpoint``.
+
+Tests for the ``_safe_torch_load`` helper in ``rfdetr.utilities.io``.
+
+Covers the three-stage safe-load strategy: strict weights_only, safe-globals fallback, and opt-in pickle fallback.
+"""
+
+from __future__ import annotations
+
+import argparse
 import logging
 import stat
 from pathlib import Path
@@ -15,6 +26,7 @@ import torch
 from pytorch_lightning import LightningModule, Trainer
 
 from rfdetr.config import RFDETRNanoConfig
+from rfdetr.utilities.io import _safe_torch_load
 from rfdetr.utilities.state_dict import (
     _make_fit_loop_state,
     remap_projector_to_cross_attn,
@@ -28,6 +40,8 @@ _PROJECTION_KEYS = [
     "backbone.0.encoder.encoder.embeddings.patch_embeddings.projection.weight",
     "backbone.0.encoder.base_model.model.encoder.embeddings.patch_embeddings.projection.weight",
 ]
+
+
 _PROJECTION_KEY = _PROJECTION_KEYS[0]
 
 
@@ -83,11 +97,6 @@ def _load_checkpoint(path: Path) -> dict:
         {'a': 1}
     """
     return torch.load(path, map_location="cpu", weights_only=False)
-
-
-# ---------------------------------------------------------------------------
-# _make_fit_loop_state
-# ---------------------------------------------------------------------------
 
 
 class TestMakeFitLoopState:
@@ -165,11 +174,6 @@ class TestMakeFitLoopState:
         state = _make_fit_loop_state(0)
         missing = required - set(state.keys())
         assert not missing, f"Missing keys: {missing}"
-
-
-# ---------------------------------------------------------------------------
-# validate_checkpoint_compatibility
-# ---------------------------------------------------------------------------
 
 
 class TestValidateCheckpointCompatibility:
@@ -501,7 +505,7 @@ class TestRemapProjectorToCrossAttn:
 
 
 class TestStripCheckpoint:
-    """Tests for strip_checkpoint loop-stub backfill."""
+    """Tests for strip_checkpoint: the entries it keeps, the loop-stub backfill and atomic saves."""
 
     def _make_minimal_ckpt(self, tmp_path, extra: dict | None = None) -> Path:
         """Write a minimal checkpoint to a temp file."""
@@ -583,3 +587,159 @@ class TestStripCheckpoint:
             strip_checkpoint(ckpt_path)
 
         assert "save failed" in str(exc_info.value)
+
+    @pytest.mark.parametrize(
+        ("extra", "expected"),
+        [
+            pytest.param({}, {"model", "args"}, id="no-model-name"),
+            pytest.param({"model_name": "RFDETRSmall"}, {"model", "args", "model_name"}, id="model-name-preserved"),
+        ],
+    )
+    def test_keeps_only_model_args_and_model_name(self, tmp_path, extra: dict, expected: set) -> None:
+        """Optimizer state is dropped; ``model_name`` survives when present and is not invented when absent."""
+        checkpoint_path = tmp_path / "checkpoint_best_total.pth"
+        torch.save(
+            {
+                "model": {"weight": torch.tensor([1.0])},
+                "args": SimpleNamespace(class_names=["a"]),
+                "optimizer": {"lr": 1e-4},
+                **extra,
+            },
+            checkpoint_path,
+        )
+
+        strip_checkpoint(str(checkpoint_path))
+
+        stripped = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        assert set(stripped.keys()) == expected
+        assert stripped.get("model_name") == extra.get("model_name")
+
+    def test_is_atomic_when_save_fails(self, tmp_path, monkeypatch) -> None:
+        """A failed save of the stripped copy leaves the original checkpoint on disk untouched."""
+        checkpoint_path = tmp_path / "checkpoint_best_total.pth"
+        original_checkpoint = {
+            "model": {"weight": torch.tensor([1.0])},
+            "args": SimpleNamespace(class_names=["a"]),
+            "optimizer": {"lr": 1e-4},
+        }
+        torch.save(original_checkpoint, checkpoint_path)
+
+        original_torch_save = torch.save
+
+        def failing_torch_save(obj, destination, *args, **kwargs):
+            if str(destination) != str(checkpoint_path):
+                raise RuntimeError("simulated save failure")
+            return original_torch_save(obj, destination, *args, **kwargs)
+
+        monkeypatch.setattr(torch, "save", failing_torch_save)
+
+        with pytest.raises(RuntimeError) as exc_info:
+            strip_checkpoint(str(checkpoint_path))
+
+        assert "simulated save failure" in str(exc_info.value)
+        recovered = torch.load(checkpoint_path, map_location="cpu", weights_only=False)
+        assert set(recovered.keys()) == set(original_checkpoint.keys())
+        assert recovered["model"]["weight"].equal(original_checkpoint["model"]["weight"])
+        assert recovered["optimizer"] == original_checkpoint["optimizer"]
+
+
+class _ArbitraryObject:
+    """Module-level object that torch.save can pickle but weights_only=True rejects.
+
+    Must be defined at module scope so pickle can resolve its fully-qualified name during serialisation (local/nested
+    classes cannot be pickled by torch.save).
+    """
+
+    value = 42
+
+
+@pytest.fixture
+def tensor_checkpoint(tmp_path: Path) -> Path:
+    """Save a checkpoint containing only tensors and plain dicts and return its path.
+
+    Examples:
+        Pytest fixtures cannot be called directly outside fixture injection.
+
+        >>> tensor_checkpoint(None)  # doctest: +SKIP
+    """
+    path = tmp_path / "ckpt.pth"
+    torch.save({"model": {"weight": torch.tensor([1.0, 2.0]), "bias": torch.tensor([0.0])}}, path)
+    return path
+
+
+@pytest.fixture
+def pickle_checkpoint(tmp_path: Path) -> Path:
+    """Save a checkpoint that embeds an arbitrary class (requires pickle) and return its path.
+
+    Examples:
+        Pytest fixtures cannot be called directly outside fixture injection.
+
+        >>> pickle_checkpoint(None)  # doctest: +SKIP
+    """
+    path = tmp_path / "ckpt.pth"
+    torch.save({"model": {"weight": torch.tensor([1.0])}, "extra": _ArbitraryObject()}, path)
+    return path
+
+
+class TestSafeTorchLoadSafePath:
+    """Tensor-only checkpoints load without trust=True."""
+
+    @pytest.mark.parametrize("path_type", [Path, str])
+    def test_tensor_only_checkpoint_loads(self, tensor_checkpoint: Path, path_type: type) -> None:
+        """Pure-tensor checkpoint succeeds on the first safe-load attempt for ``Path`` and ``str`` paths."""
+        result = _safe_torch_load(path_type(tensor_checkpoint))
+
+        assert "model" in result
+        assert torch.allclose(result["model"]["weight"], torch.tensor([1.0, 2.0]))
+
+
+class TestSafeTorchLoadSafeGlobals:
+    """Checkpoints with argparse.Namespace / SimpleNamespace load without trust=True.
+
+    Legacy RF-DETR engine.py checkpoints embed a Namespace; strict ``weights_only=True`` (without safe globals) would
+    reject these.
+    """
+
+    @pytest.mark.parametrize(
+        "args",
+        [
+            pytest.param(argparse.Namespace(pretrain_weights="rf-detr-small.pth", num_classes=80), id="argparse"),
+            pytest.param(SimpleNamespace(pretrain_weights="rf-detr-small.pth", num_classes=80), id="simple"),
+        ],
+    )
+    def test_namespace_args_load_without_trust(self, tmp_path: Path, args: object) -> None:
+        """A checkpoint whose ``args`` is a namespace loads via the safe-globals retry with its fields intact."""
+        ckpt_path = tmp_path / "ckpt.pth"
+        torch.save({"model": {"weight": torch.tensor([1.0])}, "args": args}, ckpt_path)
+
+        result = _safe_torch_load(ckpt_path)
+
+        assert type(result["args"]) is type(args)
+        assert vars(result["args"]) == vars(args)
+
+
+class TestSafeTorchLoadTrustGate:
+    """Arbitrary-pickle checkpoints require explicit trust=True."""
+
+    @pytest.mark.parametrize(
+        "trust_kwargs",
+        [pytest.param({"trust": False}, id="explicit_false"), pytest.param({}, id="default")],
+    )
+    def test_arbitrary_pickle_raises_without_trust(self, pickle_checkpoint: Path, trust_kwargs: dict) -> None:
+        """A checkpoint with an unknown Python object raises RuntimeError when trust is False or omitted."""
+        with pytest.raises(RuntimeError) as exc_info:
+            _safe_torch_load(pickle_checkpoint, **trust_kwargs)
+        assert "trust_checkpoint=True" in str(exc_info.value)
+
+    def test_arbitrary_pickle_succeeds_with_trust(self, pickle_checkpoint: Path) -> None:
+        """A checkpoint with an unknown Python object loads when trust=True."""
+        result = _safe_torch_load(pickle_checkpoint, trust=True)
+
+        assert "model" in result
+
+    def test_trust_true_emits_warning(self, pickle_checkpoint: Path) -> None:
+        """Trust=True triggers a UserWarning about unsafe loading."""
+        with pytest.warns(UserWarning) as record:
+            _safe_torch_load(pickle_checkpoint, trust=True)
+
+        assert any("weights_only=False" in str(warning.message) for warning in record)
