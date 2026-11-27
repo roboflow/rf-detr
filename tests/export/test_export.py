@@ -2544,7 +2544,8 @@ class TestKeypointOnnxGraphAvoidsOnnx2tfBlockers:
     """
 
     @pytest.fixture(scope="class")
-    def keypoint_onnx(self, tmp_path_factory: pytest.TempPathFactory) -> "onnx.ModelProto":
+    @staticmethod
+    def keypoint_onnx(tmp_path_factory: pytest.TempPathFactory) -> "onnx.ModelProto":
         """Export a small, randomly initialized keypoint model to ONNX once and load the graph.
 
         Args:

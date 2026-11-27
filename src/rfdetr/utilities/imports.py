@@ -44,6 +44,8 @@ _IS_KORNIA_INSTALLED = is_installed("kornia")
 _IS_ALBUMENTATIONS_INSTALLED = is_installed("albumentations")
 #: Whether the optional WebDataset package is installed.
 _IS_WEBDATASET_INSTALLED = is_installed("webdataset")
+#: Whether the optional simplejpeg package (JPEG decoding straight into NumPy) is installed; Pillow decodes without it.
+_IS_SIMPLEJPEG_INSTALLED = is_installed("simplejpeg")
 
 #: Whether the optional pycocotools package is installed.
 _IS_PYCOCOTOOLS_INSTALLED = is_installed("pycocotools")

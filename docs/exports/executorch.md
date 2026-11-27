@@ -167,7 +167,7 @@ This loads the `.pte` with ExecuTorch and returns the shared Supervision result 
 
 !!! warning "torch/executorch ABI compatibility"
 
-    Loading a `.pte` via `executorch.runtime` (below) requires a `torch` version whose ABI matches the `executorch` wheel you installed — `.pte` **export** itself does not need `executorch.runtime` and is unaffected. For `executorch==1.3.1`, pin `torch<2.13` (`pip install "torch<2.13"`); a newer `torch` release can silently break `executorch.runtime` with an `undefined symbol` / `dlopen` error at import time, since ExecuTorch's prebuilt wheels are compiled against whichever `torch` ABI existed at their release time.
+    Loading a `.pte` via `executorch.runtime` (below) requires a `torch` version whose ABI matches the `executorch` wheel you installed — `.pte` **export** itself does not need `executorch.runtime` and is unaffected. Each `executorch` release is compiled against one `torch` minor release: 1.3 against `torch` 2.12, 1.4 against 2.13, 1.5 against 2.14 and 1.6 against 2.15. `pip install "rfdetr[executorch]"` installs `executorch` 1.5 with a matching `torch`. A `torch` release newer than the wheel was built for can break `executorch.runtime` with an `undefined symbol` / `dlopen` error at import time, and `executorch` 1.5 next to `torch` 2.12 imports cleanly and then fails every `execute` call with `tensor does not have a device`. In both cases install the matching `torch`, for example `pip install "torch>=2.14,<2.15"` for `executorch` 1.5.
 
 !!! warning "The input tensor must be contiguous"
 

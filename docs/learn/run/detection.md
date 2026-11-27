@@ -26,7 +26,7 @@ RF-DETR offers model sizes from Atto to 2XLarge, allowing trade-offs between acc
 
 > △ Requires the `rfdetr_plus` extension: `pip install rfdetr[plus]`.
 >
-> ‡ Atto, Femto and Pico were scored in a second run of `coco-accuracy.ipynb` limited to these three models, on the same GPU as the rest of the column (NVIDIA RTX PRO 6000 Blackwell Server Edition) on 2026-11-21, with `rfdetr` at commit `e4cadc4f`, `rfdetr_plus` 1.3.0, torch 2.14.1+cu130 and TensorRT 11.4.0.106, because their TensorRT INT8 placement changed: the MLPs of the first six PE-Core-T backbone blocks now stay FP16. The first INT8 placement for these sizes quantized those MLPs and lost 7.0, 8.7 and 8.5 AP against PyTorch FP32 (a development build, never released). With the placement that ships, INT8 is 0.3, 0.2 and 0.7 AP below PyTorch FP32 and 0.3, 0.2 and 0.6 AP below TensorRT FP16. It is at most 9% faster than FP16 end to end ([latency below](#fastest-configuration-on-nvidia-gpus)), so prefer FP16 unless you need INT8 for another reason.
+> ‡ Atto, Femto and Pico were scored in a second run of `coco-accuracy.ipynb` limited to these three models, on the same GPU as the rest of the column (NVIDIA RTX PRO 6000 Blackwell Server Edition) on 2026-11-21, with `rfdetr` at commit `e4cadc4f`, `rfdetr_plus` 1.3.0, torch 2.14.1+cu130 and TensorRT 11.4.0.106, because their TensorRT INT8 placement changed: the MLPs of the first six PE-Core-T backbone blocks now stay FP16. The first INT8 placement for these sizes quantized those MLPs and lost 7.0, 8.7 and 8.5 AP against PyTorch FP32 (a development build, never released). With the November 21 placement that kept the first six MLPs in FP16, INT8 was 0.3, 0.2 and 0.7 AP below PyTorch FP32 and 0.3, 0.2 and 0.6 AP below TensorRT FP16. Since then the fused `qkv` projection of every block whose attention runs in FP16 (all 12 blocks of Atto, 4 of Femto and Pico) also stays FP16; these rows were not scored again. At the placement scored here, INT8 is at most 9% faster than FP16 end to end ([latency below](#fastest-configuration-on-nvidia-gpus)), so prefer FP16 unless you need INT8 for another reason.
 
 --8<-- "docs/snippets/reproduced-coco-ap.md"
 
@@ -95,7 +95,7 @@ The configuration with the lowest end-to-end latency for each size on four NVIDI
 Cells are median ms (95th percentile), lower is better. Bold marks the fastest median of each row and every median within 5% of it, and those are tied. [How the numbers were measured](latency.md).
 
 - For Atto, Femto and Pico the best INT8 engine takes 0.91 to 1.01 times the time of the best FP16 engine, so INT8 and FP16 are tied on most GPUs. INT8 is clearly ahead only for Atto on the T4 (0.91) and Pico on the RTX PRO 6000 (0.95). On the L4, PyTorch CUDA graph FP16 is the fastest configuration for Atto and Femto.
-- The Atto, Femto and Pico rows are from a second run on 2026-11-21, after the INT8 placement of these sizes changed; all five configurations were timed again in it. The A100 of that run is the 80 GB part, the other sizes were timed on the 40 GB part. See [How the numbers were measured](latency.md#nvidia-gpus).
+- The Atto, Femto and Pico rows are from a second run on 2026-11-21, after the INT8 placement of these sizes changed; all five configurations were timed again in it. The later change that keeps the fused `qkv` projection of FP16 attention blocks in FP16 was not timed here. The A100 of that run is the 80 GB part, the other sizes were timed on the 40 GB part. See [How the numbers were measured](latency.md#nvidia-gpus).
 - From Small up an INT8 engine is among the fastest on every GPU, except at Large on the A100, where FP16 graph alone is.
 - The 95th percentile stays within 1.22 times the median, except for Femto on the L4 (1.28 times) and on the A100 (1.26 times).
 
@@ -223,24 +223,27 @@ detections = model.predict("https://media.roboflow.com/dog.jpg", threshold=thres
 
 The [per-class confidence thresholds cookbook](../../../cookbooks/per-class-confidence-thresholds/) shows how to choose the values from held-out images, and measures when a list of thresholds beats a single one and when it does not.
 
-## Steadier scores with shift test-time augmentation
+## Steadier scores with test-time augmentation
 
-The backbone reads the image in square patches (16 pixels for most models, 12 for the segmentation models). When an object moves by a fraction of a patch, its box barely changes, but its confidence score can swing enough to cross the threshold ([#1599](https://github.com/roboflow/rf-detr/issues/1599)). `shift_tta=N` predicts the image `N` times, each time moved by another `1/N` of a patch, and averages the matching detections:
+The backbone reads the image in square patches (16 pixels for most models, 12 for the segmentation models). When an object moves by a fraction of a patch, its box barely changes, but its confidence score can swing enough to cross the threshold ([#1599](https://github.com/roboflow/rf-detr/issues/1599)). `TTAConfig(shift=N, zoom=())` predicts the image `N` times, each time moved by another `1/N` of a patch, and averages the matching detections:
 
 ```python
-detections = model.predict("image.jpg", threshold=0.5, shift_tta=4)
+from rfdetr import RFDETRInference, TTAConfig
+
+predictor = RFDETRInference(model)
+detections = predictor.predict("image.jpg", threshold=0.5, tta=TTAConfig(shift=4))
 ```
 
 The animation shows sequential execution on CPU and MPS.
 
-![Two pages showing sequential shift views. Page 1: a plain predict() runs the network once on the whole input image, which holds a person and a small dog, and returns a bounding box with a score for each: person 0.91 and dog 0.70, both kept. Page 2: with shift_tta=4 the same input is moved down and right by 0, a quarter, a half and three quarters of a patch on a canvas one patch larger, so nothing is cropped. Each snapshot goes through the same network once and returns its own boxes and scores. The network finds the person in every pass but misses the dog in one. The combine panel then plays the steps in order: the boxes of each pass slide back by subtracting their offset, boxes that share a class and have an IoU above 0.6 are grouped, each group is averaged into one box, and its score is built from one quarter of every pass score, so a missed pass adds nothing and counts as 0. The person gets 0.91 and the dog 0.54, and both are kept. Scores are illustrative.](../../assets/shift-tta.svg){ loading=lazy }
+![Two pages showing sequential shift views. Page 1: a plain predict() runs the network once on the whole input image, which holds a person and a small dog, and returns a bounding box with a score for each: person 0.91 and dog 0.70, both kept. Page 2: with tta=TTAConfig(shift=4) the same input is moved down and right by 0, a quarter, a half and three quarters of a patch on a canvas one patch larger, so nothing is cropped. Each snapshot goes through the same network once and returns its own boxes and scores. The network finds the person in every pass but misses the dog in one. The combine panel then plays the steps in order: the boxes of each pass slide back by subtracting their offset, boxes that share a class and have an IoU above 0.6 are grouped, each group is averaged into one box, and its score is built from one quarter of every pass score, so a missed pass adds nothing and counts as 0. The person gets 0.91 and the dog 0.54, and both are kept. Scores are illustrative.](../../assets/shift-tta.svg){ loading=lazy }
 
 - On CPU and MPS, each shift runs its own forward pass. CUDA can batch shifts on the same canvas and split them when the forward pixel budget limits how many views fit together. Two shifts require less work than four.
-- Detections match across passes when they have the same class and a box IoU above 0.6. The fused box is the mean box, and the fused score is the mean score over all passes, with a pass that missed the object counting as 0. No pass is held to `threshold` on its own: a pass that scores the object low still counts at its own score, and `threshold` applies only to the averaged score. Averaged scores can sit a little lower than single-pass ones; pick the threshold with `shift_tta` on.
-- Segmentation masks keep the pixels that at least half of the matched masks cover. Keypoint models do not support `shift_tta`, and the value is checked before any image is read.
-- `RFDETRInference.predict(..., tta=TTAConfig())` opts into zoomed views. Set `flip=True` to request mirroring and supply `zoom` explicitly to combine it with zoomed views. [Test-Time Augmentation](../tta.md) measures what each recipe adds and costs on COCO val2017.
+- Detections match across passes when they have the same class and a box IoU above 0.6. The fused box is the mean box, and the fused score is the mean score over all passes, with a pass that missed the object counting as 0. No pass is held to `threshold` on its own: a pass that scores the object low still counts at its own score, and `threshold` applies only to the averaged score. Averaged scores can sit a little lower than single-pass ones; pick the threshold with `tta` on.
+- Segmentation masks keep the pixels that at least half of the matched masks cover. Keypoint models do not support `tta`, and the request is refused before any image is read.
+- `RFDETRInference.predict(..., tta=TTAConfig())` opts into zoomed views. Set `shift` to request shifted views and supply `zoom` explicitly to combine them with zoomed views. [Test-Time Augmentation](../tta.md) measures what each recipe adds and costs on COCO val2017.
 
-On RF-DETR-N fine-tuned on the `deeppcb` dataset of RF100-VL, moving each test image by 0 to 16 pixels changed the keep-or-drop decision for 21.0% of the defects with one pass, 7.4% with `shift_tta=2` and 3.7% with `shift_tta=4`, each at its own best-F1 threshold. Test mAP50-95 was 0.702, 0.699 and 0.708.
+On RF-DETR-N fine-tuned on the `deeppcb` dataset of RF100-VL, moving each test image by 0 to 16 pixels changed the keep-or-drop decision for 21.0% of the defects with one pass, 7.4% with `TTAConfig(shift=2)` and 3.7% with `TTAConfig(shift=4)`, each at its own best-F1 threshold. Test mAP50-95 was 0.702, 0.699 and 0.708.
 
 ## Run on video, webcam, or RTSP stream
 

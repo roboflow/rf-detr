@@ -47,21 +47,22 @@ For newly added or updated notebooks, write markdown cells in plain, notebook-po
 
 ## Current notebooks
 
-| File                                    | Card title                                             | Version |
-| --------------------------------------- | ------------------------------------------------------ | ------- |
-| `tta-latency-accuracy.ipynb`            | TTA Views: Latency, Memory and Accuracy                | v1.13.0 |
-| `coco-accuracy.ipynb`                   | Reproduce the COCO Accuracy of Pretrained Models       | v1.13.0 |
-| `custom-augmentations.ipynb`            | Custom Augmentations and Live Training Progress        | v1.5.0  |
-| `custom-optimizer-scheduler.ipynb`      | Custom Optimizer and LR Scheduler                      | v1.9.0  |
-| `export-cuda.ipynb`                     | RF-DETR on NVIDIA GPUs — Export, Inference & Latency   | v1.11.0 |
-| `export-cpu.ipynb`                      | RF-DETR on CPU — Export, Inference & Latency           | v1.11.0 |
-| `export-mobile.ipynb`                   | RF-DETR on Mobile & Edge — Export, Inference & Latency | v1.11.0 |
-| `export-apple.ipynb`                    | RF-DETR on Apple Silicon — Export, Inference & Latency | v1.11.0 |
-| `measure-latency.ipynb`                 | Find the Fastest RF-DETR Configuration on Your GPU     | v1.13.0 |
-| `multi-source-rf100vl.ipynb`            | Train on RF100-VL sources with size-balanced weights   | v1.13.0 |
-| `fine-tune_detection.ipynb`             | Fine-Tune RF-DETR Object Detection                     | v1.8.0  |
-| `fine-tune_keypoints.ipynb`             | Fine-Tune RF-DETR Keypoint Detection                   | v1.8.0  |
-| `fine-tune_segmentation.ipynb`          | Fine-Tune RF-DETR Instance Segmentation                | v1.8.2  |
-| `per-class-confidence-thresholds.ipynb` | Per-Class Confidence Thresholds                        | v1.12.0 |
-| `pytorch-lightning.ipynb`               | Training with PyTorch Lightning                        | v1.6.0  |
-| `train-coco2017.ipynb`                  | Train RF-DETR Nano on COCO2017                         | v1.10.0 |
+| File                                    | Card title                                                            | Version |
+| --------------------------------------- | --------------------------------------------------------------------- | ------- |
+| `tta-ablation-study.ipynb`              | TTA Ablation for One RF-DETR Size: Zoom Range, Antialiasing and Masks | v1.13.0 |
+| `tta-latency-accuracy.ipynb`            | TTA Views: Latency, Memory and Accuracy                               | v1.13.0 |
+| `coco-accuracy.ipynb`                   | Reproduce the COCO Accuracy of Pretrained Models                      | v1.13.0 |
+| `custom-augmentations.ipynb`            | Custom Augmentations and Live Training Progress                       | v1.5.0  |
+| `custom-optimizer-scheduler.ipynb`      | Custom Optimizer and LR Scheduler                                     | v1.9.0  |
+| `export-cuda.ipynb`                     | RF-DETR on NVIDIA GPUs — Export, Inference & Latency                  | v1.11.0 |
+| `export-cpu.ipynb`                      | RF-DETR on CPU — Export, Inference & Latency                          | v1.11.0 |
+| `export-mobile.ipynb`                   | RF-DETR on Mobile & Edge — Export, Inference & Latency                | v1.11.0 |
+| `export-apple.ipynb`                    | RF-DETR on Apple Silicon — Export, Inference & Latency                | v1.11.0 |
+| `measure-latency.ipynb`                 | Find the Fastest RF-DETR Configuration on Your GPU                    | v1.13.0 |
+| `multi-source-rf100vl.ipynb`            | Train on RF100-VL sources with size-balanced weights                  | v1.13.0 |
+| `fine-tune_detection.ipynb`             | Fine-Tune RF-DETR Object Detection                                    | v1.8.0  |
+| `fine-tune_keypoints.ipynb`             | Fine-Tune RF-DETR Keypoint Detection                                  | v1.8.0  |
+| `fine-tune_segmentation.ipynb`          | Fine-Tune RF-DETR Instance Segmentation                               | v1.8.2  |
+| `per-class-confidence-thresholds.ipynb` | Per-Class Confidence Thresholds                                       | v1.12.0 |
+| `pytorch-lightning.ipynb`               | Training with PyTorch Lightning                                       | v1.6.0  |
+| `train-coco2017.ipynb`                  | Train RF-DETR Nano on COCO2017                                        | v1.10.0 |

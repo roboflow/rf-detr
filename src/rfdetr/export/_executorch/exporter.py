@@ -121,14 +121,21 @@ _TENSORRT_PARTIAL_CONVERSION_HINT = (
     "fully when checked; other models may not. For such a model, export with backend='xnnpack' (portable CPU) "
     "instead, or with format='tensorrt' for a native TensorRT engine."
 )
+_MATCHING_TORCH_HINT = (
+    "Install the torch release your executorch version was built against: torch 2.12 for executorch 1.3, "
+    "2.13 for 1.4, 2.14 for 1.5 and 2.15 for 1.6, e.g. `pip install 'torch>=2.14,<2.15'` for executorch 1.5."
+)
 _RUNTIME_ABI_HINT = (
     "executorch's compiled runtime extension (executorch.runtime) failed to load against the installed "
-    "torch {torch_version} ({exc}). This is a known torch/executorch ABI-compatibility gap: executorch's "
-    "prebuilt wheels are compiled against whatever torch ABI existed at their release time, and a torch "
-    "release published afterward can silently break that ABI. This does not affect .pte export itself "
-    "(export() does not use executorch.runtime), only loading/running a .pte locally via ExecuTorch's "
-    "Python runtime. Try pinning torch to a version released before your installed executorch version, "
-    'e.g. `pip install "torch<2.13"` for executorch 1.3.1.'
+    "torch {torch_version} ({exc}). This is a known torch/executorch ABI-compatibility gap: each executorch "
+    "release is compiled against one torch minor release, and another torch release can break that ABI. "
+    "This does not affect .pte export itself (export() does not use executorch.runtime), only loading/running "
+    "a .pte locally via ExecuTorch's Python runtime. " + _MATCHING_TORCH_HINT
+)
+_RUNTIME_OLD_TORCH_HINT = (
+    "executorch {executorch_version} is installed with torch {torch_version}. executorch 1.5 is compiled against "
+    "torch 2.14 and declares no torch requirement, so an older torch installs next to it, and with torch older "
+    "than 2.13 every Method.execute call fails with 'tensor does not have a device'. " + _MATCHING_TORCH_HINT
 )
 _QNN_HINT = (
     "Qualcomm QNN export requires the ExecuTorch QNN backend, which is NOT in the `executorch` pip wheel. "
@@ -167,7 +174,7 @@ def _check_executorch_available(*, require_runtime: bool = False) -> None:
     Raises:
         ImportError: If ``executorch`` is not installed, is older than 1.3, or (when
             ``require_runtime=True``) its compiled runtime extension is ABI-incompatible with the
-            installed ``torch`` version.
+            installed ``torch`` version, or is executorch 1.5 next to a torch older than 2.13.
     """
     try:
         import executorch  # noqa: F401
@@ -197,6 +204,16 @@ def _check_executorch_available(*, require_runtime: bool = False) -> None:
             except importlib.metadata.PackageNotFoundError:
                 _torch_version = "unknown"
             raise ImportError(_RUNTIME_ABI_HINT.format(torch_version=_torch_version, exc=exc)) from exc
+        # This pair imports cleanly and fails only at execute, so it is refused here with the fix.
+        try:
+            _et_version, _torch_version = importlib.metadata.version("executorch"), importlib.metadata.version("torch")
+        except importlib.metadata.PackageNotFoundError:
+            return  # Source-build install — skip version check.
+        _torch_release = tuple(int(part) for part in _torch_version.split("+")[0].split(".")[:2])
+        if _et_version.startswith("1.5.") and _torch_release < (2, 13):
+            raise ImportError(
+                _RUNTIME_OLD_TORCH_HINT.format(executorch_version=_et_version, torch_version=_torch_version)
+            )
 
 
 def _check_tensorrt_executorch_integration() -> None:

@@ -10,6 +10,7 @@ import logging
 import random
 import warnings
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -20,7 +21,9 @@ from PIL import Image
 from torch.utils.data import DataLoader
 
 from rfdetr.config import AugmentationBackend, KeypointTrainConfig, RFDETRBaseConfig, TrainConfig
+from rfdetr.datasets import io_utils
 from rfdetr.datasets.aug_configs import AUG_CONFIG
+from rfdetr.datasets.coco import CocoDetection
 from rfdetr.datasets.kornia_transforms import IMAGENET_MEAN, IMAGENET_STD, build_kornia_pipeline, collate_boxes
 from rfdetr.datasets.multi_source import WeightedMultiSourceBatchSampler
 from rfdetr.datasets.yolo import YoloDetection, YoloSplitUnavailableError
@@ -32,6 +35,7 @@ from rfdetr.utilities.tensors import (
     pack_targets,
 )
 from tests._markers import _cuda_marks, _requires_kornia
+from tests.datasets.helpers import _write_coco_dataset, _write_yolo_dataset
 
 _CUDA_DEVICE = pytest.param("cuda", marks=_cuda_marks)
 _EVAL_LOADERS = ["val_dataloader", "test_dataloader", "predict_dataloader"]
@@ -173,6 +177,28 @@ class _MaskedVisualDataset(torch.utils.data.Dataset):
                 "size": torch.tensor([16, 16], dtype=torch.int64),
             },
         )
+
+
+class _SubstitutedVisualDataset(_VisualDataset):
+    """Visual dataset whose sample 0 carries ``image_id`` 7, as a sample replaced by image 7 when unreadable does.
+
+    It has the ``root``, ``ids`` and COCO API of ``CocoDetection``, the API naming image ``i`` ``image<i>.jpg``.
+
+    Examples:
+        >>> dataset = _SubstitutedVisualDataset()
+        >>> int(dataset[0][1]["image_id"]), dataset.coco.loadImgs(7)[0]["file_name"]
+        (7, 'image7.jpg')
+    """
+
+    def __init__(self) -> None:
+        self.root = "/data/train"
+        self.ids = [0]
+        self.coco = SimpleNamespace(loadImgs=lambda image_id: [{"file_name": f"image{image_id}.jpg"}])
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Return the sample of :class:`_VisualDataset` with the ``image_id`` of image 7."""
+        image, target = super().__getitem__(idx)
+        return image, {**target, "image_id": torch.tensor([7])}
 
 
 def _make_batch(batch_size: int = 2, channels: int = 3, h: int = 16, w: int = 16):
@@ -357,7 +383,7 @@ class TestPrivateShowSamples:
         from matplotlib import pyplot as plt
 
         monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
-        monkeypatch.setattr(dm, "_source_image_path", lambda dataset, idx: Path(f"{'very_long_name_' * 8}.jpg"))
+        monkeypatch.setattr(dm, "_source_image_path", lambda dataset, target: Path(f"{'very_long_name_' * 8}.jpg"))
 
         figure = dm._show_samples(1, split="train", columns=1, figure_size=(4.0, 3.0))
 
@@ -428,6 +454,56 @@ class TestPrivateShowSamples:
         assert mock_mask_ann.return_value.annotate.call_count == expected_annotator_calls
         plt.close(figure)
 
+    def test_title_names_the_image_the_sample_was_read_from(self, fixture_training_setup, monkeypatch):
+        """A substituted sample is titled with the file it was read from, not with the unreadable file requested."""
+        _, _, dm = fixture_training_setup
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
+        from matplotlib import pyplot as plt
+
+        monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _SubstitutedVisualDataset())
+
+        figure = dm._show_samples(1, split="train", columns=1)
+
+        assert figure.axes[0].get_title() == "image7.jpg"
+        plt.close(figure)
+
+    def test_title_falls_back_to_split_and_index_without_a_coco_api(self, fixture_training_setup, monkeypatch):
+        """A dataset without ``root`` and a COCO API, such as a multi-source one, is titled by split and index."""
+        _, _, dm = fixture_training_setup
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
+        from matplotlib import pyplot as plt
+
+        monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
+
+        figure = dm._show_samples(1, split="train", columns=1)
+
+        assert figure.axes[0].get_title() == "train[0]"
+        plt.close(figure)
+
+    def test_source_image_path_names_the_substitute_of_an_unreadable_coco_image(self, tmp_path, mocker):
+        """The path comes from the id ``CocoDetection`` returns, which names the substitute of an unreadable file."""
+        mocker.patch.object(io_utils.time, "sleep")
+        annotation_file = _write_coco_dataset(tmp_path, "png")
+        (tmp_path / "image1.png").write_bytes(b"not an image")
+        dataset = CocoDetection(tmp_path, annotation_file, transforms=None, skip_unreadable=True)
+        _, target = dataset[1]
+
+        assert RFDETRDataModule._source_image_path(dataset, target) == tmp_path / "image2.png"
+
+    def test_source_image_path_names_the_substitute_of_an_unreadable_yolo_image(self, tmp_path, mocker):
+        """``YoloDetection`` is no ``CocoDetection``, yet its ``root`` and COCO API resolve the substitute's path."""
+        mocker.patch.object(io_utils.time, "sleep")
+        image_dir, label_dir, data_file = _write_yolo_dataset(tmp_path)
+        (image_dir / "image1.png").write_bytes(b"not an image")
+        dataset = YoloDetection(str(image_dir), str(label_dir), str(data_file), transforms=None, skip_unreadable=True)
+        _, target = dataset[1]
+
+        assert RFDETRDataModule._source_image_path(dataset, target).name == "image2.png"
+
 
 class TestSetup:
     """Setup(stage) builds the correct dataset(s) for each PTL stage."""
@@ -462,6 +538,26 @@ class TestSetup:
         assert dm._dataset_train is None
         assert dm._dataset_val is fake_val
         assert dm._dataset_test is None
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    @pytest.mark.parametrize(
+        ("stage", "splits"),
+        [("fit", ["train", "val"]), ("validate", ["val"]), ("test", ["test"]), ("predict", ["val"])],
+    )
+    def test_skip_unreadable_images_reaches_the_builder_of_every_split(self, mocker, tmp_path, stage, splits, enabled):
+        """``setup(stage)`` hands every split builder a namespace that carries ``skip_unreadable_images``."""
+        train_config = _base_train_config(tmp_path, dataset_file="yolo", skip_unreadable_images=enabled)
+        dm = _build_datamodule(train_config=train_config)
+        build = mocker.patch(
+            "rfdetr.training.module_data.build_dataset",
+            side_effect=lambda image_set, args, resolution: _fake_dataset(10),
+        )
+
+        dm.setup(stage)
+
+        assert [(call.args[0], call.args[1].skip_unreadable_images) for call in build.call_args_list] == [
+            (split, enabled) for split in splits
+        ]
 
     @pytest.mark.parametrize("dataset_file", ["roboflow", "yolo"])
     def test_test_stage_uses_test_split(self, tmp_path, dataset_file):

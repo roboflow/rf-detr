@@ -229,6 +229,34 @@ class TestGatherAndScaleBoxes:
 class TestPostProcessForward:
     """Integration tests for :meth:`PostProcess.forward`."""
 
+    @pytest.mark.parametrize(
+        ("dtype", "width"),
+        [
+            pytest.param(torch.float16, 1.5, id="float16"),
+            pytest.param(torch.bfloat16, 12.0, id="bfloat16"),
+            pytest.param(torch.float32, 12.0, id="float32"),
+            pytest.param(torch.float64, 12.0, id="float64"),
+        ],
+    )
+    @pytest.mark.parametrize("score_threshold", [None, 0.5])
+    def test_small_boxes_keep_their_width_in_pixel_space(
+        self, dtype: torch.dtype, width: float, score_threshold: float | None
+    ) -> None:
+        """Decode exactly representable narrow boxes on a 4K frame without collapsing their width."""
+        outputs = {
+            "pred_logits": torch.tensor([[[2.0]]], dtype=dtype),
+            "pred_boxes": torch.tensor([[[0.875, 0.5, width / 4096, 0.125]]], dtype=dtype),
+        }
+        target_sizes = torch.tensor([[2160, 4096]])
+
+        actual = PostProcess(num_select=1)(outputs, target_sizes, score_threshold=score_threshold)[0]["boxes"]
+
+        # The pixel center is (3584, 1080) and the height is 270 px. Every normalized input is exact in its dtype.
+        expected_dtype = torch.float64 if dtype == torch.float64 else torch.float32
+        expected = torch.tensor([[3584 - width / 2, 945, 3584 + width / 2, 1215]], dtype=expected_dtype)
+        torch.testing.assert_close(actual.to(expected_dtype), expected, rtol=0, atol=0)
+        assert actual.dtype == expected_dtype
+
     def test_clamps_edge_boxes_to_bounds(self):
         """PostProcess.forward returns non-negative in-bounds boxes for edge-hugging predictions."""
         post_process = PostProcess(num_select=2)
