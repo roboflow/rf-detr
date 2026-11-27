@@ -461,7 +461,7 @@ Every backend is one entry in a name → class registry, checked directly agains
     - Wrap the import in a small function built on `_import_optional_backend()` (see `_hotcoco()`/`_ufcoco()`/`_vernier()`) so a missing package raises an actionable `ImportError` naming the install extra, not a raw `ModuleNotFoundError`.
 3. **Register it** in `_BACKENDS`, keyed by the literal added in step 1.
 4. **Declare the dependency** in `pyproject.toml`'s `train` extra — all existing backends ship there.
-5. **Extend the tests** in `tests/training/test_coco_map.py`: add the name to `_BACKEND_PACKAGES` (and to `_ALTERNATIVE_BACKENDS` unless it's a second `"faster_coco_eval"`-equivalent baseline rather than an alternative to compare against one). `test_backend_registry_matches_the_typed_eval_backend_names` then enforces that the registry and the literal stay in sync, and the existing `test_alternative_backend_matches_faster_coco_eval[_for_segmentation]` parity tests pick up the new backend automatically, requiring exact equality against `"faster_coco_eval"` for both box-only and box+mask evaluation.
+5. **Extend the tests** in `tests/training/_coco_map_support.py`: add the name to `_BACKEND_ONLY`, keyed to the skip mark for its package (and to `_ALTERNATIVE_BACKENDS` unless it's a second `"faster_coco_eval"`-equivalent baseline rather than an alternative to compare against one). `test_backend_registry_matches_the_typed_eval_backend_names` in `tests/training/test_coco_map.py` then enforces that the registry and the literal stay in sync, and the existing `test_alternative_backend_matches_faster_coco_eval[_for_segmentation]` parity tests in `tests/training/test_coco_map_backends.py` pick up the new backend automatically, requiring exact equality against `"faster_coco_eval"` for both box-only and box+mask evaluation.
 6. **Document it**: this table, the `eval_backend` rows in [Training Parameters](training-parameters.md), and `docs/reference/train_config.md`.
 
 !!! warning "Parity is the contract, not an aspiration"
@@ -528,7 +528,7 @@ Match the published methodology so the result is comparable:
 - Time `compute()` alone, not `update()` — `update()`'s cost is TorchMetrics' own CPU tensor copying and is backend-independent.
 - Fix the core count (`torch.set_num_threads(N)`) and report it; the published numbers scale with cores.
 - Run box-only and box+mask separately — the ranking between backends is not the same in both.
-- **Verify parity before trusting a speed number.** Run `pytest tests/training/test_coco_map.py -k <backend_name>` first; a fast backend that doesn't match `"faster_coco_eval"` is a bug, not a result worth publishing.
+- **Verify parity before trusting a speed number.** Run `pytest tests/training -k "coco_map and <backend_name>"` first; a fast backend that doesn't match `"faster_coco_eval"` is a bug, not a result worth publishing.
 
 ---
 
