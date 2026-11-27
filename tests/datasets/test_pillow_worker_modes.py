@@ -40,12 +40,6 @@ class TestTo8BitGrayscale:
         assert scaled.mode == "L"
         np.testing.assert_array_equal(np.asarray(scaled), [[0, 1, 255]])
 
-    def test_scales_older_pillow_32_bit_int_mode(self) -> None:
-        """Mode ``I`` pixels above the 8-bit range scale too (older Pillow opens 16-bit PNGs as ``I``)."""
-        image = Image.fromarray(_16_bit_ramp().astype(np.int32))
-        assert image.mode == "I"
-        np.testing.assert_array_equal(np.asarray(to_8bit_grayscale(image)), [[0, 1, 127, 255]])
-
     def test_leaves_in_range_32_bit_int_pixels(self) -> None:
         """Mode ``I`` pixels already in [0, 255] are genuine 32-bit data and keep their levels."""
         image = Image.fromarray(np.array([[0, 128, 255]], dtype=np.int32))
@@ -64,21 +58,27 @@ class TestTo8BitGrayscale:
         assert to_8bit_grayscale(Image.new("F", (2, 2))).mode == "F"
 
 
+@pytest.fixture
+def signed_tiff(tmp_path: Path) -> Path:
+    """Write a signed 32-bit TIFF whose values also fit in 16 unsigned bits."""
+    path = tmp_path / "signed.tiff"
+    Image.fromarray(np.array([[0, 128, 256, 1028]], dtype=np.int32)).save(path)
+    return path
+
+
 class TestDeepGrayscale:
-    """A target of 1 channel refuses pixels deeper than 16 bits instead of saturating them at 255."""
+    """Preserve the channel contract for signed and floating-point images."""
 
-    def test_refuses_32_bit_int_pixels_naming_the_file(self) -> None:
-        """``I`` pixels outside the 16-bit range raise a ``ValueError`` that names the image."""
-        image = Image.fromarray(np.array([[0, 70000]], dtype=np.int32))
-        with pytest.raises(ValueError, match=r"thermal\.png.*deeper than 8 bits"):
-            convert_image(image, "L", "thermal.png")
+    def test_refuses_signed_tiff_on_grayscale_target(self, signed_tiff: Path) -> None:
+        """A true signed TIFF is refused for 1-channel decode even if its levels fit in 16 bits."""
+        with pytest.raises(ValueError, match=r"signed\.tiff.*deeper than 8 bits"):
+            decode_image(signed_tiff, num_channels=1)
 
-    def test_keeps_in_range_32_bit_int_pixels_on_rgb_target(self) -> None:
-        """In-range mode ``I`` pixels convert to RGB with their levels intact, not black."""
-        image = Image.fromarray(np.array([[0, 128, 255]], dtype=np.int32))
-        converted = convert_image(image, "RGB", "int32.png")
-        assert converted.mode == "RGB"
-        np.testing.assert_array_equal(np.asarray(converted), [[[0, 0, 0], [128, 128, 128], [255, 255, 255]]])
+    def test_keeps_signed_tiff_rgb_conversion(self, signed_tiff: Path) -> None:
+        """RGB decode preserves the low levels of a signed TIFF and clips only values above 255."""
+        pixels, _ = decode_image(signed_tiff)
+        assert pixels.shape == (1, 4, 3)
+        np.testing.assert_array_equal(pixels[..., 0], [[0, 128, 255, 255]])
 
     def test_refuses_float_pixels_naming_the_file(self) -> None:
         """``F`` images raise a ``ValueError`` that names the image."""

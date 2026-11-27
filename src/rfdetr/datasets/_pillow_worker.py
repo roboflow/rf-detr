@@ -79,18 +79,10 @@ def open_image(source: Path | IO[bytes]) -> Image.Image:
 def to_8bit_grayscale(image: Image.Image) -> Image.Image:
     """Return *image* as an 8-bit grayscale image, scaling 16-bit pixels instead of clipping them.
 
-    Pillow's ``convert("RGB")`` clips 16-bit grayscale values above 255 to white, so a 16-bit PNG
-    (X-ray, CT and thermal data) decoded straight to ``RGB`` comes out almost blank with no error.
-    Scaling those pixels by 1/257 first maps the full 16-bit range onto 0..255 and preserves the
-    dynamic range. Images that are already 8-bit, mode ``I`` pixels already in the 8-bit range, or
-    pixels outside the 16-bit range are returned unchanged.
-
-    Pillow reports a 16-bit grayscale PNG as mode ``I;16`` (``I;16B``/``I;16L`` for explicit
-    endianness) on recent releases, but as mode ``I`` on older ones, where the pixels still fit in
-    16 bits. Mode ``I`` is also genuine 32-bit integer data, so it is scaled only when the pixels
-    prove depth beyond 8 bits (every pixel in ``[0, 65535]`` with at least one above 255): values
-    already in ``[0, 255]`` pass through ``convert`` unchanged, so scaling them would only destroy
-    their levels. Genuinely deeper data keeps its mode and stays the caller's problem.
+    Pillow's conversion clips unsigned 16-bit grayscale samples above 255. Divide by 257 before converting
+    so all callers use the same mapping from 0–65535 to 0–255. Mode ``I`` stores 32-bit integers and keeps its
+    existing conversion behavior regardless of its pixel values. Supported Pillow releases decode 16-bit
+    grayscale PNGs as ``I;16``.
 
     Args:
         image: Opened image.
@@ -104,29 +96,17 @@ def to_8bit_grayscale(image: Image.Image) -> Image.Image:
         >>> to_8bit_grayscale(Image.new("RGB", (2, 2))).mode
         'RGB'
     """
-    if image.mode in _SIXTEEN_BIT_GRAY_MODES or image.mode == "I":
-        pixels = np.asarray(image)
-        if pixels.size == 0:
-            return image
-        if image.mode == "I":
-            # Mode ``I`` is also genuine 32-bit integer data: scale it only when the pixels prove
-            # depth beyond 8 bits. Values already in [0, 255] pass through ``convert`` unchanged,
-            # so scaling them would only destroy their levels ([0, 128, 255] would turn black).
-            if pixels.min() < 0 or pixels.max() <= 255 or pixels.max() > 65535:
-                return image
-        return Image.fromarray((pixels // 257).astype(np.uint8))
-    return image
+    if image.mode not in _SIXTEEN_BIT_GRAY_MODES or 0 in image.size:
+        return image
+    return Image.fromarray((np.asarray(image) // 257).astype(np.uint8))
 
 
 def convert_image(image: Image.Image, mode: str, name: str) -> Image.Image:
     """Convert an opened image to *mode* without inventing a fourth channel or clipping deep grayscale.
 
-    Reject a missing fourth channel before decoding. Scale 16-bit grayscale before converting to the target mode.
-    Pillow reports some corrupt files with a ``SyntaxError`` or a
-    ``ValueError`` while it loads the pixels, for example a PNG whose chunk header between two image data chunks is cut
-    short, or whose ``pHYs`` chunk after them is too short.  That error is raised as an ``OSError`` chained to it, the
-    type Pillow uses for every other corrupt or truncated file, so callers catch one type and a corrupt file never
-    passes for a channel mismatch.
+    Check the channel contract before decoding, then scale unsigned 16-bit grayscale before conversion.
+    Pillow can raise ``SyntaxError`` or ``ValueError`` while loading a corrupt image. Report those as ``OSError``,
+    the same exception it uses for other corrupt or truncated files.
 
     Args:
         image: Opened image.
@@ -147,17 +127,14 @@ def convert_image(image: Image.Image, mode: str, name: str) -> Image.Image:
     """
     if mode == "RGBA" and not _has_fourth_channel(image):
         raise ValueError(_no_fourth_channel_message(image, name))
-    try:
-        image = to_8bit_grayscale(image)
-    except (SyntaxError, ValueError) as exc:
-        raise OSError(str(exc)) from exc
-    if mode == "L" and _is_deep_gray(image.mode):
+    if mode == "L" and _is_deep_gray(image.mode) and (image.mode not in _SIXTEEN_BIT_GRAY_MODES or 0 in image.size):
         raise ValueError(
             f"{name} stores {image.mode!r} pixels deeper than 8 bits, which a model with num_channels=1 cannot read "
             "without saturating them at 255. Convert the file to 8-bit grayscale first."
         )
     try:
         image.load()
+        image = to_8bit_grayscale(image)
     except (SyntaxError, ValueError) as exc:
         raise OSError(str(exc)) from exc
     return image.convert(mode)

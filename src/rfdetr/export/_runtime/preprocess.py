@@ -19,6 +19,7 @@ import numpy as np
 from numpy.typing import NDArray
 from PIL import Image as PILImage
 
+from rfdetr.datasets._pillow_worker import to_8bit_grayscale
 from rfdetr.export._resize import _bilinear_resize_half_pixel
 
 IMAGENET_MEAN: list[float] = [0.485, 0.456, 0.406]
@@ -55,7 +56,7 @@ def preprocess_to_nchw(
         (1, 3, 4, 4)
     """
     pil_mode = "L" if channels == 1 else "RGB"
-    pil_img = image.convert(pil_mode)
+    pil_img = to_8bit_grayscale(image).convert(pil_mode)
     mean_list = [IMAGENET_MEAN[i % 3] for i in range(channels)]
     std_list = [IMAGENET_STD[i % 3] for i in range(channels)]
 

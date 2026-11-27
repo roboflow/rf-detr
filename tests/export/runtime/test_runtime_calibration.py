@@ -26,6 +26,7 @@ from PIL import Image
 from rfdetr.export._runtime import calibration
 from rfdetr.export._runtime.calibration import IMAGE_SUFFIXES, _arrays_from_samples, _image_paths, calibration_batches
 from rfdetr.export._runtime.preprocess import IMAGENET_MEAN, IMAGENET_STD, preprocess_to_nchw
+from tests.inference.helpers import _DummyRFDETR, _record_model_inputs
 
 
 def _save_image(path: Path, *, mode: str = "RGB", size: tuple[int, int] = (12, 9), seed: int = 0) -> Path:
@@ -262,6 +263,24 @@ class TestCalibrationBatches:
         (batch,) = calibration_batches(tmp_path, height=8, width=10)
         with Image.open(path) as image:
             np.testing.assert_array_equal(batch, preprocess_to_nchw(image, height=8, width=10))
+
+    @pytest.mark.parametrize("channels", [1, 3])
+    def test_directory_16_bit_png_matches_prediction_tensor(self, tmp_path: Path, channels: int) -> None:
+        """Static INT8 directory calibration and prediction feed the same normalized 16-bit ramp to the model."""
+        path = tmp_path / "depth.png"
+        levels = np.repeat(np.array([0, 257, 32768, 65535], dtype=np.uint16), 7)
+        Image.fromarray(np.tile(levels, (28, 1))).save(path)
+
+        model = _DummyRFDETR()
+        model.model_config.num_channels = channels
+        model.means = model.means[:channels]
+        model.stds = model.stds[:channels]
+        inputs = []
+        with model.model.model.register_forward_pre_hook(_record_model_inputs(inputs)):
+            model.predict(path, antialias=False, include_source_image=False)
+
+        (batch,) = calibration_batches(tmp_path, height=28, width=28, channels=channels, verbose=False)
+        np.testing.assert_array_equal(batch, inputs[0].numpy())
 
     def test_grayscale_graph_gets_one_channel(self, tmp_path: Path) -> None:
         """A single-channel graph gets one-channel batches."""

@@ -512,13 +512,15 @@ model.train(dataset_dir="<DATASET_PATH>", epochs=50)
 model = RFDETRSmall(num_channels=4, pretrain_weights="output/checkpoint_best_total.pth")
 ```
 
-| `num_channels` | Images are loaded as | What the files must contain                                              |
-| -------------- | -------------------- | ------------------------------------------------------------------------ |
-| `1`            | Grayscale            | Any 8-bit image. Color images are converted to luminance.                |
-| `3` (default)  | RGB                  | Any image.                                                               |
-| `4`            | RGBA                 | A fourth channel in every file, for example a PNG with an alpha channel. |
+| `num_channels` | Images are loaded as | What the files must contain                                                                    |
+| -------------- | -------------------- | ---------------------------------------------------------------------------------------------- |
+| `1`            | Grayscale            | An 8-bit image or a supported 16-bit grayscale image. Color images are converted to luminance. |
+| `3` (default)  | RGB                  | Any image.                                                                                     |
+| `4`            | RGBA                 | A fourth channel in every file, for example a PNG with an alpha channel.                       |
 
-With `num_channels=4` the alpha channel is treated as data, such as depth, infrared or optical flow stored next to RGB. A file without a fourth channel stops training with an error that names the file. No channel is invented: a transparency colour key counts as a fourth channel only for palette images. An associated-alpha TIFF (`ExtraSamples=1`) is un-premultiplied on read, so tag data planes `ExtraSamples=2`. 16-bit grayscale (`I;16`, `I`, `F`) is refused for the 1-channel target. Other channel counts are not supported by the dataset loaders and are refused when the dataset is built. A `num_channels` other than 3 works only with DINOv2 encoders, so the PE-based Plus models Atto, Femto and Pico raise a `ValueError`.
+With `num_channels=4` the alpha channel is treated as data, such as depth, infrared or optical flow stored next to RGB. A file without a fourth channel stops training with an error that names the file. No channel is invented: a transparency colour key counts as a fourth channel only for palette images. An associated-alpha TIFF (`ExtraSamples=1`) is un-premultiplied on read, so tag data planes `ExtraSamples=2`. Other channel counts are not supported by the dataset loaders and are refused when the dataset is built. A `num_channels` other than 3 works only with DINOv2 encoders, so the PE-based Plus models Atto, Femto and Pico raise a `ValueError`.
+
+Unsigned 16-bit grayscale images in Pillow modes `I;16`, `I;16L`, and `I;16B`, including 16-bit grayscale PNGs, are reduced to 8 bits by integer division by 257 before grayscale or RGB conversion. Single-channel datasets still reject 32-bit integer (`I`) and floating-point (`F`) images.
 
 The pretrained RGB filters are reused for the extra channel, and the fourth channel is normalized with the red mean and standard deviation, the same values `predict()` uses. A checkpoint saved from a four-channel model loads only into a model built with `num_channels=4`. With `freeze_encoder=True` or `backbone_lora=True` the patch embedding is frozen, so the filters of the extra channel keep that initialization and are not trained; a warning says so. Without either option the patch embedding still trains slowly: layer-wise decay puts it at the lowest rate, about 2% of `lr_encoder` with the default `lr_vit_layer_decay=0.8` and `lr_component_decay=0.7`.
 
