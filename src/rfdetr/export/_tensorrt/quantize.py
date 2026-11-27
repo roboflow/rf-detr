@@ -935,7 +935,7 @@ def _refuse_mixed_precision_attention(
             raise ValueError(
                 f"Cannot place INT8 safely: the layer {missing[0]!r} feeding the INT8 attention at "
                 f"{block.scores.name!r} is left in FP16 by a later placement rule. "
-                'Export this model without quantization="int8".'
+                "For an FP16 export, omit both quantization and calibration_data."
             )
     for block in float_blocks:
         reaching = sorted(block.reaching & weighted)
@@ -943,7 +943,7 @@ def _refuse_mixed_precision_attention(
             raise ValueError(
                 f"Cannot place INT8 safely: the layer {reaching[0]!r} reaches the FP16 attention at "
                 f"{block.scores.name!r} without being identified as its q, k or v projection, so it cannot be kept "
-                'out of INT8 with that attention. Export this model without quantization="int8".'
+                "out of INT8 with that attention. For an FP16 export, omit both quantization and calibration_data."
             )
 
 
@@ -976,39 +976,42 @@ def plan_int8(model: Any) -> Int8Plan:
         and _weight_name(node, initializers)
         and not _pads_input_channels(node, initializers)
     }
-    attention_inputs: list[tuple[str, int]] = []
-    fused_blocks: list[_Attention] = []
+    blocks = _attention_blocks(model)
+    backbone_blocks = [block for block in blocks if block.scores.name.startswith(_INT8_ATTENTION_REGION)]
+    unfused_by_shape = [block.scores.name for block in backbone_blocks if not block.int8]
     float_blocks: list[_Attention] = []
-    backbone_blocks = fused = 0
-    unfused: list[str] = []  # backbone blocks whose attention stays FP16 because of its shape
-    for block in _attention_blocks(model):
-        in_region = block.scores.name.startswith(_INT8_ATTENTION_REGION)
-        backbone_blocks += in_region
-        unnamed = {block.scores.name, block.context.name} & duplicated
-        # Every layer reaching q, k or v must be planned too: one the trace cannot see still feeds the fused kernel.
-        if block.int8 and in_region and not unnamed and block.projections | block.reaching <= weighted:
-            fused += 1
-            fused_blocks.append(block)
-            attention_inputs += [(block.scores.name, 0), (block.scores.name, 1)]
-            attention_inputs += [(block.context.name, 0), (block.context.name, 1)]
-            continue
-        if block.output_projection is None:
-            # A quantized projection behind FP16 attention is what TensorRT 11 computes wrongly, and an output that
-            # cannot be followed to its projection cannot be kept out of INT8 with certainty.
-            raise ValueError(
-                f"Cannot place INT8 safely: the output projection of the FP16 attention at {block.scores.name!r} "
-                "could not be identified. INT8 TensorRT export applies to RF-DETR model exports only (detection, "
-                "segmentation or keypoint)."
-            )
-        weighted -= block.projections
-        float_blocks.append(block)
-        if in_region and not block.int8:
-            unfused.append(block.scores.name)
-    if unfused:
+    pending = blocks
+    # Keeping a block in FP16 can remove a projection another block needs. Recheck the remaining blocks until their
+    # projections stabilize, then add the attention input Q/DQ. ONNX node order cannot decide whether a block fuses.
+    while True:
+        fused_blocks = []
+        for block in pending:
+            in_region = block.scores.name.startswith(_INT8_ATTENTION_REGION)
+            unnamed = {block.scores.name, block.context.name} & duplicated
+            if block.int8 and in_region and not unnamed and (block.projections | block.reaching) <= weighted:
+                fused_blocks.append(block)
+                continue
+            if block.output_projection is None:
+                # TensorRT 11 can compute an FP16 attention with an INT8 output projection incorrectly.
+                raise ValueError(
+                    f"Cannot place INT8 safely: the output projection of the FP16 attention at {block.scores.name!r} "
+                    "could not be identified. INT8 TensorRT export applies to RF-DETR model exports only (detection, "
+                    "segmentation or keypoint)."
+                )
+            weighted -= block.projections
+            float_blocks.append(block)
+        if len(fused_blocks) == len(pending):
+            break
+        pending = fused_blocks
+
+    attention_inputs = {
+        (node.name, index) for block in fused_blocks for node in (block.scores, block.context) for index in (0, 1)
+    }
+    if unfused_by_shape:
         logger.info(
-            f"INT8 attention in {fused} of {backbone_blocks} backbone attention blocks; "
-            f"{len(unfused)} stay FP16 by shape (e.g. {unfused[0]!r}): INT8 attention needs a head size in "
-            f"{sorted(_FUSED_INT8_HEAD_SIZES)} and at most {_INT8_ATTENTION_MAX_TOKENS} tokens"
+            f"INT8 attention in {len(fused_blocks)} of {len(backbone_blocks)} backbone attention blocks; "
+            f"{len(unfused_by_shape)} stay FP16 by shape (e.g. {unfused_by_shape[0]!r}): INT8 attention needs a head "
+            f"size in {sorted(_FUSED_INT8_HEAD_SIZES)} and at most {_INT8_ATTENTION_MAX_TOKENS} tokens"
         )
 
     # The first MLPs of a PE-Core-T backbone carry the outlier activation that INT8 cannot represent (see the constant).
@@ -1033,9 +1036,7 @@ def plan_int8(model: Any) -> Int8Plan:
             f"prefixes {list(_QUANTIZED_REGIONS)} that the TorchScript ONNX exporter (dynamo=False) gives them."
         )
     order = {name: index for index, name in enumerate(names)}
-    activations = sorted(
-        {(name, 0) for name in weighted} | set(attention_inputs), key=lambda key: (order[key[0]], key[1])
-    )
+    activations = sorted({(name, 0) for name in weighted} | attention_inputs, key=lambda key: (order[key[0]], key[1]))
     return Int8Plan(weighted=tuple(sorted(weighted, key=order.__getitem__)), activations=tuple(activations))
 
 

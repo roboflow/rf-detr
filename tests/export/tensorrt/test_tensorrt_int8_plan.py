@@ -48,7 +48,8 @@ from tests.export.tensorrt.helpers import (
 # Module-level on purpose: parametrized constants and graph builders touch ONNX while the module is collected, so a
 # guarded import would raise ``NameError`` instead of skipping.
 onnx = pytest.importorskip("onnx")
-from onnx import TensorProto, helper, numpy_helper  # noqa: E402
+from onnx import TensorProto, compose, helper, numpy_helper  # noqa: E402
+from onnx.reference import ReferenceEvaluator  # noqa: E402
 
 
 def _export_graph(*extra_outputs: str) -> ExportGraph:
@@ -882,25 +883,86 @@ class TestPlanInt8:
         plan = quantize.plan_int8(model)
         assert (_names(plan), [n for n, _ in plan.activations if "/scores/" in n]) == (["fc1/MatMul", "fc2/MatMul"], [])
 
-    @pytest.mark.parametrize("op", ["Gather", "Slice", "Split", "Squeeze", "Unsqueeze", "Reshape"])
-    def test_index_input_of_a_splitter_is_not_traced_as_the_projection(self, op: str) -> None:
-        """An index, bound, size, axis or shape computed from a projection is not mistaken for the data's projection."""
-        model = _attention_and_mlp(BACKBONE, sequence=400, head_size=16)
+    @pytest.mark.parametrize(
+        ("op", "control", "prepare", "axes"),
+        [
+            pytest.param("Gather", [0], None, [], id="gather-batch-index"),
+            pytest.param("Slice", [8], None, [2], id="slice-token-end"),
+            pytest.param("Split", [1, 0], None, [], id="split-batch-sizes"),
+            pytest.param("Squeeze", [0], "Unsqueeze", [], id="squeeze-inserted-axis"),
+            pytest.param("Unsqueeze", [0], "Squeeze", [], id="unsqueeze-removed-axis"),
+            pytest.param("Reshape", [1, 2, 8, 8], None, [], id="reshape-value-shape"),
+        ],
+    )
+    def test_index_input_of_a_splitter_is_not_traced_as_the_projection(
+        self, op: str, control: list[int], prepare: str | None, axes: list[int]
+    ) -> None:
+        """Legal auxiliary inputs may depend on a MatMul without making it the attention projection."""
+        model = _attention_and_mlp(BACKBONE, sequence=8, head_size=8)
+        samples = np.random.default_rng(7).normal(size=(1, 8, 16)).astype(np.float32)
+        (expected,) = ReferenceEvaluator(model).run(None, {"x": samples})
         graph = model.graph
-        graph.initializer.extend([_weight("wsel", 32, 1, seed=8), _ints("flat", [-1]), _ints("zero", [0])])
-        context = next(i for i, node in enumerate(graph.node) if node.name.endswith("context/MatMul"))
-        graph.node[context].input[1] = "v3"
-        inputs = {"Slice": ["v2", "zero", "sel2"], "Split": ["v2", "sel2"]}.get(op, ["v2", "sel2"])
-        outputs = ["v3", "v_rest"] if op == "Split" else ["v3"]
-        index = [
-            helper.make_node("MatMul", ["x", "wsel"], ["sel0"], f"{BACKBONE}sel/MatMul"),
-            helper.make_node("Cast", ["sel0"], ["sel1"], f"{BACKBONE}sel/Cast", to=TensorProto.INT64),
-            helper.make_node("Reshape", ["sel1", "flat"], ["sel2"], f"{BACKBONE}sel/Reshape"),
-            helper.make_node(op, inputs, outputs, f"{BACKBONE}v/{op}"),
+        graph.input.append(helper.make_tensor_value_info("selector", TensorProto.FLOAT, [1]))
+        graph.initializer.extend(
+            [
+                numpy_helper.from_array(np.ones((1, 1), np.float32), "wsel"),
+                _ints("offset", [value - 1 for value in control]),
+                _ints("zero", [0]),
+            ]
+        )
+        nodes = list(graph.node)
+        context = next(i for i, node in enumerate(nodes) if node.name.endswith("context/MatMul"))
+        nodes[context].input[1] = "v3"
+        data = "v2"
+        setup = [
+            helper.make_node("MatMul", ["selector", "wsel"], ["sel"], f"{BACKBONE}sel/MatMul"),
+            helper.make_node("Cast", ["sel"], ["sel_int"], to=TensorProto.INT64),
+            helper.make_node("Add", ["sel_int", "offset"], ["control"]),
         ]
-        for offset, node in enumerate(index):
-            graph.node.insert(context + offset, node)
+        if prepare:
+            setup.append(helper.make_node(prepare, [data, "zero"], ["v_prepared"]))
+            data = "v_prepared"
+        inputs = [data, "control"]
+        if op == "Slice":
+            graph.initializer.append(_ints("slice_axes", axes))
+            inputs = [data, "zero", "control", "slice_axes"]
+        outputs = ["v3", "v_rest"] if op == "Split" else ["v3"]
+        setup.append(helper.make_node(op, inputs, outputs))
+        del graph.node[:]
+        graph.node.extend([*nodes[:context], *setup, *nodes[context:]])
+
+        onnx.checker.check_model(model, full_check=True)
+        (actual,) = ReferenceEvaluator(model).run(None, {"x": samples, "selector": np.ones(1, np.float32)})
+        np.testing.assert_array_equal(actual, expected)
         assert _names(quantize.plan_int8(model)) == ["sel/MatMul", "fc1/MatMul", "fc2/MatMul"]
+
+    @pytest.mark.parametrize(
+        "float_first", [pytest.param(False, id="int8-eligible-first"), pytest.param(True, id="fp16-first")]
+    )
+    def test_shared_projection_keeps_both_attention_blocks_float(self, float_first: bool) -> None:
+        """A Q projection shared with FP16 attention cannot be quantized in either node order."""
+        model = _attention_and_mlp(BACKBONE, sequence=8, head_size=16)
+        graph = model.graph
+        float_prefix = f"{BACKBONE}float/"
+        floating = _attention_and_mlp(float_prefix, sequence=8, head_size=16, mlp_prefix=float_prefix)
+        float_graph = compose.add_prefix_graph(floating.graph, "float_", rename_nodes=False, rename_inputs=False)
+        heads = next(init for init in float_graph.initializer if init.name == "float_heads")
+        heads.CopyFrom(_ints("float_heads", [1, 8, 4, 8]))
+        float_graph.node[1].input[0] = "q0"
+
+        shared, *eligible_branch = graph.node
+        float_branch = float_graph.node[1:]
+        first, second = (float_branch, eligible_branch) if float_first else (eligible_branch, float_branch)
+        graph.initializer.extend(float_graph.initializer)
+        graph.output.extend(float_graph.output)
+        del graph.node[:]
+        graph.node.extend([shared, *first, *second])
+        onnx.checker.check_model(model, full_check=True)
+
+        plan = quantize.plan_int8(model)
+        expected = {f"{prefix}{name}/MatMul" for prefix in (BACKBONE, float_prefix) for name in ("fc1", "fc2")}
+        assert set(plan.weighted) == expected
+        assert set(plan.activations) == {(name, 0) for name in expected}
 
     @pytest.mark.parametrize("projection", ["q", "k", "v"])
     def test_projection_the_trace_cannot_follow_into_float_attention_is_refused(self, projection: str) -> None:
