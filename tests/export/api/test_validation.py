@@ -46,8 +46,8 @@ from tests.export.helpers import (
 def _skip_metadata_publication_for_export_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep facade tests focused on conversion when their fake artifacts have no file bytes.
 
-    The metadata round-trip tests use the real writer in ``test_metadata.py``. This fixture does not replace
-    ``metadata_from_model``: fake RFDETR models still need a valid prediction contract.
+    The metadata round-trip tests use the real writer in ``tests/export/core/test_metadata.py``.
+    This fixture does not replace ``metadata_from_model``: fake RFDETR models still need a valid prediction contract.
 
     Examples:
         Requires pytest's monkeypatch lifecycle, so this example cannot run standalone:
@@ -699,7 +699,8 @@ class TestExportFormatSpelling:
     """``RFDETR.export`` matches the format name in any case, as it already did ``backend``."""
 
     def test_upper_case_name_reaches_the_exporter(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-        """``format="ONNX"`` runs the ONNX exporter; the case variants themselves are pinned in ``test_registry``."""
+        """``format="ONNX"`` runs the ONNX exporter; the case variants themselves are pinned in
+        ``tests/export/core/test_registry.py``."""
         stubs = _stub_export_dependencies(monkeypatch, tmp_path, export_format="onnx")
 
         _detr_module.RFDETR.export(

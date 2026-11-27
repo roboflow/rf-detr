@@ -42,8 +42,8 @@ if TYPE_CHECKING:
 def _skip_metadata_publication_for_export_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep facade tests focused on conversion when their fake artifacts have no file bytes.
 
-    The metadata round-trip tests use the real writer in ``test_metadata.py``. This fixture does not replace
-    ``metadata_from_model``: fake RFDETR models still need a valid prediction contract.
+    The metadata round-trip tests use the real writer in ``tests/export/core/test_metadata.py``.
+    This fixture does not replace ``metadata_from_model``: fake RFDETR models still need a valid prediction contract.
 
     Examples:
         Requires pytest's monkeypatch lifecycle, so this example cannot run standalone:

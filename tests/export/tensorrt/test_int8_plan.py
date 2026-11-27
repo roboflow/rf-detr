@@ -7,8 +7,8 @@
 
 The request checks and the build wiring run without TensorRT. The plan is pure ONNX work and runs on CPU with ``onnx``,
 on small synthetic graphs that mirror RF-DETR's naming, plus exact-count checks on real exported Nano, segmentation and
-keypoint graphs. The graph rewrite is in ``test_tensorrt_int8_graph.py``, calibration and the accuracy passes in
-``test_tensorrt_int8_calibration.py``, and the GPU end-to-end classes in ``test_tensorrt_end_to_end.py``.
+keypoint graphs. The graph rewrite is in ``test_int8_graph.py``, calibration and the accuracy passes in
+``test_int8_calibration.py``, and the GPU end-to-end classes in ``test_end_to_end.py``.
 """
 
 from __future__ import annotations

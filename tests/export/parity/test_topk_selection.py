@@ -12,8 +12,8 @@ History: before this fix, ``_run_inference`` in both ``_onnx/inference.py`` and 
 single class per query via ``scores_all.argmax(axis=-1)``. ``PostProcess._select_topk`` instead flattens ``(Q, C)`` to
 ``Q * C`` query/class pairs and ranks all of them together, so a query can contribute more than one detection — exactly
 what happens when RF-DETR's independent per-class sigmoids put more than one class above threshold on the same query. No
-test exercised this divergence: ``test_onnx_preprocess_parity.py`` / ``test_tflite_inference_parity.py`` only cover
-*preprocessing* (resize/normalise) parity, and the one existing decode test
+test exercised this divergence: ``tests/export/onnx/test_preprocess_parity.py`` / ``test_tflite_inference_parity.py``
+only cover *preprocessing* (resize/normalise) parity, and the one existing decode test
 (``test_multiclass_class_id_is_argmax_of_logits`` in ``test_tflite_inference.py``) asserted the old, wrong, single-
 detection-per-query behaviour as correct. This file locks the numeric selection itself, independent of either runtime
 backend.

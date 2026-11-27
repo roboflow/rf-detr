@@ -26,7 +26,7 @@ def _disable_metadata_publication(monkeypatch: pytest.MonkeyPatch) -> None:
     """Replace the exporter's metadata writer with a no-op until ``monkeypatch`` is undone.
 
     Facade tests stub the conversion, so their artifact paths hold no file bytes to hash or annotate. Each facade test
-    module calls this from its own autouse fixture; ``test_metadata.py`` keeps the real writer.
+    module calls this from its own autouse fixture; ``tests/export/core/test_metadata.py`` keeps the real writer.
 
     Args:
         monkeypatch: Patcher whose undo restores the real writer.

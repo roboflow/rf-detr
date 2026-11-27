@@ -38,8 +38,8 @@ from tests.export.helpers import (
 def _skip_metadata_publication_for_export_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep facade tests focused on conversion when their fake artifacts have no file bytes.
 
-    The metadata round-trip tests use the real writer in ``test_metadata.py``. This fixture does not replace
-    ``metadata_from_model``: fake RFDETR models still need a valid prediction contract.
+    The metadata round-trip tests use the real writer in ``tests/export/core/test_metadata.py``.
+    This fixture does not replace ``metadata_from_model``: fake RFDETR models still need a valid prediction contract.
 
     Examples:
         Requires pytest's monkeypatch lifecycle, so this example cannot run standalone:
@@ -443,9 +443,10 @@ def test_rfdetr_export_tensorrt_dynamic_batch_rejects_invalid_bounds(
     """`RFDETR.export(format="tensorrt", dynamic_batch=True)` needs `max_batch_size`, and `batch_size` may not exceed
     it.
 
-    Covers the public facade users call (as opposed to `TestDynamicBatchConfig` in `test_tensorrt_build_engine.py`,
-    which only exercises `TensorRTConfig`). The exporter is constructed and validated before any ONNX conversion starts,
-    and `batch_size > max_batch_size` cannot form a valid optimization profile, so no conversion stubbing is needed.
+    Covers the public facade users call (as opposed to `TestDynamicBatchConfig` in
+    `tests/export/tensorrt/test_build_engine.py`, which only exercises `TensorRTConfig`). The exporter is constructed
+    and validated before any ONNX conversion starts, and `batch_size > max_batch_size` cannot form a valid optimization
+    profile, so no conversion stubbing is needed.
     """
     model = _make_tensorrt_export_model()
 

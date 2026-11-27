@@ -8,7 +8,7 @@
 The unit tests monkeypatch the polygraphy entry points so they run without TensorRT, a GPU, or ``polygraphy`` installed.
 ``TestBenchmarkBuildEngine`` covers the sibling builder in ``rfdetr.export._tensorrt.inference``, which drives the raw
 TensorRT builder API rather than polygraphy but shares the same precision-strategy decision. The timing cache and
-portable engines are in ``test_tensorrt_engine_cache.py``.
+portable engines are in ``test_engine_cache.py``.
 """
 
 from __future__ import annotations
@@ -478,7 +478,7 @@ class TestTRTInferenceDeprecation:
         ) as recorded:
             facade = tensorrt_inference.TRTInference("model.trt", "cuda:1", sync_mode=True, verbose=True)
 
-        assert recorded[0].filename.endswith("test_tensorrt_build_engine.py")
+        assert recorded[0].filename.endswith("test_build_engine.py")
         assert calls == [("model.trt", "cuda:1", True, True)]
         assert facade._runtime_state is state
         assert facade.engine_path == "model.trt"
@@ -685,9 +685,9 @@ class TestConvertDependencyGuard:
     """`TensorRTExporter._convert()` (not just `build_engine()`) must fail actionably without TensorRT.
 
     Regression coverage for the gap the challenger flagged (L7): the existing `RFDETR.export()` E2E tests in
-    `test_export.py` monkeypatch `OnnxExporter._convert` and `_build` together, so a missing-TensorRT failure they
-    exercise is coupled to `RFDETR.export()`'s device-move/deepcopy plumbing. Calling `_convert()` directly here
-    decouples the two.
+    `tests/export/api/test_validation.py` monkeypatch `OnnxExporter._convert` and `_build` together, so a missing-
+    TensorRT failure they exercise is coupled to `RFDETR.export()`'s device-move/deepcopy plumbing. Calling `_convert()`
+    directly here decouples the two.
     """
 
     def test_missing_polygraphy_raises(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

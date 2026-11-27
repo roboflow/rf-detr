@@ -873,7 +873,7 @@ class TestLatencyCookbook:
     @staticmethod
     def _cell(cell_id: str) -> str:
         """Read the code of a named notebook cell."""
-        notebook = Path(__file__).resolve().parents[2] / "docs/cookbooks/measure-latency.ipynb"
+        notebook = Path(__file__).resolve().parents[3] / "docs/cookbooks/measure-latency.ipynb"
         cells = json.loads(notebook.read_text())["cells"]
         return "".join(next(cell for cell in cells if cell.get("id") == cell_id)["source"])
 

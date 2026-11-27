@@ -426,7 +426,7 @@ jobs:
       - name: 🧪 Run TensorRT end-to-end parity tests
         # Real ONNX->engine build + GPU inference is heavy; single-worker, opt-in marker (see pyproject.toml
         # `e2e_tensorrt`) — excluded from the ci-tests-gpu.yml default filter (`and not e2e_tensorrt`) so it
-        # only runs here. Selected by marker over tests/, so TestInt8EndToEnd (test_tensorrt_end_to_end.py) runs too.
+        # only runs here. Selected by marker over tests/, so TestInt8EndToEnd (tests/export/tensorrt/test_end_to_end.py) runs too.
         run: |
           uv run --no-sync pytest tests/ \
             -m e2e_tensorrt -n 1 \
@@ -572,7 +572,7 @@ jobs:
     name: Roboflow deploy e2e
     runs-on: ubuntu-latest
     # deploy_to_roboflow() delegates the actual upload to a swallow-and-print try/except deep in
-    # the roboflow SDK (see tests/export/test_roboflow_deploy_e2e.py module docstring), so a failed
+    # the roboflow SDK (see tests/export/api/test_roboflow_deploy_e2e.py module docstring), so a failed
     # server-side upload is otherwise indistinguishable from success. This job generates a fresh
     # dataset version, deploys against a real Roboflow workspace/project (version auto-resolved to
     # that fresh latest), and independently polls that version's trained-model status.

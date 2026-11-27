@@ -6,7 +6,7 @@
 """End-to-end TensorRT tests: real FP16 and INT8 engines built on a GPU and compared with the eager model.
 
 The classes are marked ``gpu``, ``integration`` and ``e2e_tensorrt``, need ``rfdetr[tensorrt]`` and are opt-in, so the
-TensorRT end-to-end CI job selects them by marker. The builder's unit tests are in ``test_tensorrt_build_engine.py``.
+TensorRT end-to-end CI job selects them by marker. The builder's unit tests are in ``test_build_engine.py``.
 """
 
 from __future__ import annotations

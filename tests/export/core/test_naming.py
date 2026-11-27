@@ -7,9 +7,9 @@
 
 ``resolve_export_stem`` is the single shared precedence/sanitization helper the ONNX, CoreML, ExecuTorch, and TensorRT
 backends all call before naming their output artifact. It was previously exercised only indirectly, through each
-backend's own filename-assertion tests (e.g. ``tests/export/test_export.py::TestExportOnnxVariantNaming``) — this
-module covers the helper directly, once, so its precedence/sanitization contract does not need re-verifying per
-backend.
+backend's own filename-assertion tests (e.g. ``tests/export/api/test_validation.py::TestExportOnnxVariantNaming``) —
+this module covers the helper directly, once, so its precedence/sanitization contract does not need re-verifying
+per backend.
 """
 
 from __future__ import annotations

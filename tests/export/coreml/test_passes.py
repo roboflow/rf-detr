@@ -6,8 +6,8 @@
 
 """The branches of ``rewrite_upsample_bilinear``, run on MIL programs without the Core ML runtime.
 
-``tests/export/coreml/test_coreml_upsample.py`` converts and runs real models, so only the Core ML integration job on
-macOS reaches it. Here the pass rewrites a MIL program built in memory, which needs coremltools and nothing else.
+``tests/export/coreml/test_upsample.py`` converts and runs real models, so only the Core ML integration job on macOS
+reaches it. Here the pass rewrites a MIL program built in memory, which needs coremltools and nothing else.
 """
 
 from __future__ import annotations

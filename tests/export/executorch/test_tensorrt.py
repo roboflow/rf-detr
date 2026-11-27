@@ -5,9 +5,9 @@
 # ------------------------------------------------------------------------
 """ExecuTorch ``backend="tensorrt"`` lowering and runtime on an NVIDIA GPU (``@pytest.mark.e2e_executorch_tensorrt``).
 
-The unit tests in ``test_executorch_export.py`` mock Torch-TensorRT away. These export real models through it and run
-the ``.pte`` with ExecuTorch's runtime and the Torch-TensorRT delegate, so they need the ``executorch-tensorrt`` extra
-and a CUDA device.
+The unit tests in ``test_export.py`` mock Torch-TensorRT away. These export real models through it and run the ``.pte``
+with ExecuTorch's runtime and the Torch-TensorRT delegate, so they need the ``executorch-tensorrt`` extra and a CUDA
+device.
 """
 
 from __future__ import annotations
@@ -23,9 +23,9 @@ from rfdetr.export.imports import _IS_TORCH_TENSORRT_EXECUTORCH_RUNTIME_INSTALLE
 from rfdetr.utilities.reproducibility import seed_all
 from tests._markers import _requires_cuda
 from tests.export.conftest import _prediction_model_for_task, assert_prediction_roundtrip
-from tests.export.executorch.test_executorch_export import _portable_kernel_call_names
+from tests.export.executorch.test_export import _portable_kernel_call_names
 
-# Same reason as test_executorch_coreml.py's `_EXPORT_SEED`: the module-scoped fixture runs before the function-scoped
+# Same reason as test_coreml.py's `_EXPORT_SEED`: the module-scoped fixture runs before the function-scoped
 # autouse seed reset.
 _EXPORT_SEED = 0
 

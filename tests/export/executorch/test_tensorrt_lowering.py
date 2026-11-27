@@ -5,9 +5,9 @@
 # ------------------------------------------------------------------------
 """CPU tests of the ExecuTorch ``backend="tensorrt"`` lowering and its environment checks, with Torch-TensorRT mocked.
 
-``test_executorch_tensorrt.py`` exports real models through Torch-TensorRT and needs the ``executorch-tensorrt`` extra
-and a CUDA device. These tests pin what the exporter asks of Torch-TensorRT and what it tells the caller when that
-fails, so a regression shows on a host with neither.
+``test_tensorrt.py`` exports real models through Torch-TensorRT and needs the ``executorch-tensorrt`` extra and a CUDA
+device. These tests pin what the exporter asks of Torch-TensorRT and what it tells the caller when that fails, so a
+regression shows on a host with neither.
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ from pytest_mock import MockerFixture
 
 from rfdetr.export._executorch.exporter import ExecutorchConfig, ExecuTorchExporter, _lower_tensorrt
 from tests.export.conftest import _make_rfdetr
-from tests.export.executorch.test_executorch_export import _export_graph
+from tests.export.executorch.test_export import _export_graph
 
 _EXPORTER_MODULE = "rfdetr.export._executorch.exporter"
 _EXPORTER = f"{_EXPORTER_MODULE}.ExecuTorchExporter"

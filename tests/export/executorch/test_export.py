@@ -53,7 +53,7 @@ from tests.export.conftest import (
     eager_reference_tensors,
     max_abs_output_diffs,
 )
-from tests.export.coreml.test_coreml_export import _MULTICLASS_KEYPOINT_SCHEMA, _assert_well_conditioned
+from tests.export.coreml.test_export import _MULTICLASS_KEYPOINT_SCHEMA, _assert_well_conditioned
 
 _requires_executorch = pytest.mark.skipif(not _IS_EXECUTORCH_AVAILABLE, reason="executorch not installed")
 
@@ -561,7 +561,8 @@ class TestExportFormatParameter:
         obj.export(format="onnx", output_dir=str(self._tmp_path / "out"))
         self._mock_executorch_convert.assert_not_called()
 
-    # Invalid-format rejection is format-agnostic and covered once in test_coreml_export.py and test_registry.py.
+    # Invalid-format rejection is format-agnostic and covered once in tests/export/coreml/test_export.py
+    # and tests/export/core/test_registry.py.
 
     def test_converter_import_error_propagates(self, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture) -> None:
         """If the executorch converter cannot be imported, ``export()`` surfaces an actionable ImportError."""

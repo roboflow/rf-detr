@@ -50,7 +50,7 @@ from tests.export.conftest import (
     eager_reference_tensors,
     max_abs_output_diffs,
 )
-from tests.export.coreml.test_coreml_ane import _IOS15_SPEC_VERSION
+from tests.export.coreml.test_ane import _IOS15_SPEC_VERSION
 
 _requires_coremltools = pytest.mark.skipif(not _IS_COREMLTOOLS_AVAILABLE, reason="coremltools not installed")
 
@@ -492,7 +492,7 @@ class TestConvertDeploymentTarget:
 
         The target selects the program generation; spec 7 (iOS16) loses ~3 box AP on the Neural Engine. Measured on an
         M3 Pro: pretrained RFDETRNano at fp16 under ``CPU_AND_NE`` scores 45.06 AP on all 5000 COCO val2017 images at
-        iOS16 and 48.04 at iOS15, against 48.03 for eager. ``tests/export/coreml/test_coreml_ane.py`` pins the resulting
+        iOS16 and 48.04 at iOS15, against 48.03 for eager. ``tests/export/coreml/test_ane.py`` pins the resulting
         spec version on a real bundle; this test needs no coremltools.
         """
         target = mock.Mock()
@@ -754,7 +754,7 @@ class TestVariantNamePathSafety:
     def test_sanitizes_directory_components(self, variant_name: str, expected: str) -> None:
         """``variant_name`` is reduced to a bare filename stem, with no directory components or extension.
 
-        Forward-slash paths only; backslash handling is covered by ``test_naming.py``.
+        Forward-slash paths only; backslash handling is covered by ``tests/export/core/test_naming.py``.
         """
         assert resolve_export_stem(variant_name, None) == (expected, False)
 
@@ -800,7 +800,7 @@ class TestExportFormatParameter:
         Dispatch keys off ``format``, not off the head, so the default (detection) head stands for every task the format
         supports — a per-head parametrization would assert the identical thing three times. The head-specific part — the
         ``dets``/``labels``/``keypoints`` output contract — is asserted format-agnostically in
-        ``tests/export/test_prepare.py``, not here: ``CoreMLExporter._convert`` is mocked out in this class.
+        ``tests/export/core/test_prepare.py``, not here: ``CoreMLExporter._convert`` is mocked out in this class.
         """
         obj = _make_rfdetr()
         with pytest.warns(UserWarning, match="experimental"):
@@ -835,7 +835,8 @@ class TestExportFormatParameter:
 
         Facade-level: proves ``RFDETR.export()`` validates before any format dispatch, so one instance covers
         every format (this used to be copy-pasted per exporter test file; ``TestResolveExporter`` in
-        ``test_registry.py`` separately covers the underlying guard, parametrized per registered format).
+        ``tests/export/core/test_registry.py`` separately covers the underlying guard, parametrized per registered
+        format).
         """
         obj = _make_rfdetr()
         with pytest.raises(ValueError) as exc_info:

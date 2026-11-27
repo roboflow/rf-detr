@@ -6,9 +6,9 @@
 """Tests for ONNX Runtime inference decoding (``_run_inference`` in ``rfdetr/export/_onnx/inference.py``).
 
 Before this file, ``_run_inference``'s detection decode had no dedicated unit test at all — only its preprocessing half
-was covered (``test_onnx_preprocess_parity.py``). This file covers the multi-label query/class selection, using the same
+was covered (``test_preprocess_parity.py``). This file covers the multi-label query/class selection, using the same
 ``types.SimpleNamespace`` fake-session pattern the rest of the export test suite uses for mocking backend objects (see
-``test_export.py``).
+``tests/export/api/test_validation.py``).
 """
 
 from __future__ import annotations

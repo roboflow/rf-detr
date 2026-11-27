@@ -35,7 +35,7 @@ from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.utilities.reproducibility import seed_all
 from tests.export.conftest import _structured_parity_input, eager_reference_tensors
 
-# As `_COREML_EXPORT_SEED` in test_coreml_export.py: coremltools 9.0 can constant-fold a weights-only `linear` into a
+# As `_COREML_EXPORT_SEED` in test_export.py: coremltools 9.0 can constant-fold a weights-only `linear` into a
 # non-finite constant on some untrained draws (including the repo default seed 7), and module-scoped fixtures run
 # before the autouse `reset_random_seeds`, so the draw would otherwise depend on test order.
 _EXPORT_SEED = 0
@@ -84,7 +84,7 @@ class TestCoreMLNeuralEngineLoad:
         """Under ``ComputeUnit.ALL`` the bundle must build an execution plan and return the eager outputs' shapes.
 
         Values are not compared: fp16 drift is large on raw outputs, and the parity of the exported graph itself is
-        covered at FLOAT32 by ``tests/export/coreml/test_coreml_export.py::TestCoreMLEndToEnd``.
+        covered at FLOAT32 by ``tests/export/coreml/test_export.py::TestCoreMLEndToEnd``.
         """
         import coremltools as ct
 
@@ -94,7 +94,7 @@ class TestCoreMLNeuralEngineLoad:
 
         outputs = mlmodel.predict({input_name: example.numpy().astype(np.float32)})
 
-        # Pair by the spec's output order, as tests/export/coreml/test_coreml_export.py does: coremltools does not
+        # Pair by the spec's output order, as tests/export/coreml/test_export.py does: coremltools does not
         # document the predict() dict's ordering, and the outputs differ in shape.
         runtime_arrays = [np.asarray(outputs[output.name]) for output in mlmodel.get_spec().description.output]
         assert [array.shape for array in runtime_arrays] == [tuple(tensor.shape) for tensor in eager_outputs]
@@ -115,7 +115,7 @@ class TestCoreMLSpecificationVersion:
     def test_is_ios15_program(self, nano_fp16_export: _Nano16Export) -> None:
         """A newer deployment target silently moves the ANE onto the program that costs accuracy.
 
-        ``tests/export/coreml/test_coreml_export.py::TestConvertDeploymentTarget`` pins the keyword; this pins what
+        ``tests/export/coreml/test_export.py::TestConvertDeploymentTarget`` pins the keyword; this pins what
         coremltools makes of it, which is also what a bare ``None`` target would resolve to for this graph.
         """
         import coremltools as ct

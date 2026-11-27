@@ -5,14 +5,14 @@
 # ------------------------------------------------------------------------
 """ExecuTorch ``backend="coreml"`` lowering and runtime on Apple hardware (``@pytest.mark.e2e_executorch``, opt-in).
 
-Everything else covering this backend mocks ``executorch`` away, and the portable e2e suite in
-``test_executorch_export.py`` lowers with XNNPACK. Nothing exercised the CoreML delegate itself: whether the partitioner
-still takes the whole graph, and whether the resulting ``.pte`` loads and runs through the CoreML delegate at all. Both
-are what "ANE partitioning" risk means in practice — an op the partitioner drops runs on ExecuTorch's portable CPU
-kernels and never reaches the Neural Engine.
+Everything else covering this backend mocks ``executorch`` away, and the portable e2e suite in ``test_export.py`` lowers
+with XNNPACK. Nothing exercised the CoreML delegate itself: whether the partitioner still takes the whole graph, and
+whether the resulting ``.pte`` loads and runs through the CoreML delegate at all. Both are what "ANE partitioning" risk
+means in practice — an op the partitioner drops runs on ExecuTorch's portable CPU kernels and never reaches the Neural
+Engine.
 
 Inside the delegated blob, scheduling is Core ML's decision at load time, exactly as for a native ``.mlpackage``; the
-fallback boundary there is pinned by ``tests/export/coreml/test_coreml_ane.py``.
+fallback boundary there is pinned by ``tests/export/coreml/test_ane.py``.
 
 Needs ``executorch`` **and** ``coremltools`` in the same environment, plus macOS to run the delegate. The ``coreml``
 extra pins an older torch than ``executorch`` accepts, so install ``coremltools`` on its own next to the ``executorch``
@@ -33,9 +33,9 @@ from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
 from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
 from rfdetr.utilities.reproducibility import seed_all
 from tests.export.conftest import _structured_parity_input, eager_reference_tensors
-from tests.export.executorch.test_executorch_export import _portable_kernel_call_names
+from tests.export.executorch.test_export import _portable_kernel_call_names
 
-# Same reason as tests/export/coreml/test_coreml_ane.py's `_EXPORT_SEED`: this fixture is module-scoped, so it runs
+# Same reason as tests/export/coreml/test_ane.py's `_EXPORT_SEED`: this fixture is module-scoped, so it runs
 # before the function-scoped autouse `reset_random_seeds` — without an explicit seed the untrained weight draw
 # depends on process/test order.
 _EXPORT_SEED = 0
@@ -134,9 +134,9 @@ class TestExecuTorchCoreMLDelegate:
         """The delegated ``.pte`` must load and return the eager model's output shapes, finite throughout.
 
         Values are not compared: the delegate runs in fp16, where raw RF-DETR outputs drift by ~1e0. Numeric parity
-        for this graph is covered at fp32 by the XNNPACK suite in ``test_executorch_export.py``.
+        for this graph is covered at fp32 by the XNNPACK suite in ``test_export.py``.
 
-        Unlike the native ``.mlpackage`` ANE load test in ``test_coreml_ane.py``, this delegate-path test's
+        Unlike the native ``.mlpackage`` ANE load test in ``tests/export/coreml/test_ane.py``, this delegate-path test's
         pre-fix ``develop`` baseline was not independently re-verified for this PR.
         """
         from executorch.runtime import Runtime
