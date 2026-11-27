@@ -18,7 +18,7 @@ PTL training-stack path (``RFDETR.evaluate()``)
     ``val/mAP_50`` / ``val/F1`` from the returned metrics. ``evaluate()`` is the documented convenience wrapper
     over :class:`~rfdetr.training.RFDETRModelModule` + :class:`~rfdetr.training.RFDETRDataModule` +
     :func:`~rfdetr.training.build_trainer` + ``Trainer.validate`` (parity asserted in
-    ``tests/models/test_evaluate.py::test_evaluate_matches_manual_building_blocks_on_test_split``), so this still
+    ``tests/models/lwdetr/test_model.py::test_evaluate_matches_manual_building_blocks_on_test_split``), so this still
     exercises ``validation_step``, ``on_after_batch_transfer``, and :class:`~rfdetr.training.COCOEvalCallback` — the
     same code path used during training.  Test: :func:`test_inference_ptl_predict` (detection and segmentation cases).
 
@@ -532,7 +532,7 @@ def test_inference_ptl_predict(
 
     Calls the public ``evaluate()`` API on a truncated on-disk COCO val subset. ``evaluate()`` is the documented
     convenience wrapper over ``RFDETRModelModule``/``RFDETRDataModule``/``build_trainer``/``Trainer.validate``
-    (parity asserted in ``tests/models/test_evaluate.py``), so this exercises the PTL validation loop
+    (parity asserted in ``tests/models/lwdetr/test_model.py``), so this exercises the PTL validation loop
     (``validation_step`` + callbacks) rather than the public ``RFDETR.predict()`` API.
 
     Args:

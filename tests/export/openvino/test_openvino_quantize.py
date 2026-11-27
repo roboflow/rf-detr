@@ -7,6 +7,7 @@
 
 import sys
 import types
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -19,6 +20,7 @@ from rfdetr.export._openvino.quantize import VALID_QUANTIZATIONS, quantize_int8
 from rfdetr.export.imports import _IS_NNCF_INSTALLED, _IS_OPENVINO_INSTALLED
 from tests.export.conftest import _export_graph, _stub_openvino_module
 
+_requires_openvino = pytest.mark.skipif(not _IS_OPENVINO_INSTALLED, reason="openvino not installed")
 _requires_openvino_nncf = pytest.mark.skipif(
     not (_IS_OPENVINO_INSTALLED and _IS_NNCF_INSTALLED),
     reason="openvino/nncf not installed; `pip install nncf` to run the INT8 export",
@@ -206,21 +208,67 @@ class TestExportOpenvinoInt8:
 
 @pytest.mark.integration
 @pytest.mark.e2e_openvino
+@_requires_openvino
+def test_static_ir_accepts_calibration_batch_before_freezing(tmp_path: Path, fake_nncf: types.ModuleType) -> None:
+    """Quantization receives singleton images and the saved graph has the requested batch of two."""
+    import openvino
+
+    data = np.zeros((2, 3, 8, 8), dtype=np.float32)
+    graph = replace(
+        _export_graph(_TinyAttention().eval(), output_names=("dets",)), input_tensors=torch.zeros(2, 3, 8, 8)
+    )
+    config = OpenVINOConfig(
+        output_dir=tmp_path, quantization="int8", calibration_data=data, static_input_shape=True, verbose=False
+    )
+
+    def check_input_shape(model, dataset, **kwargs):
+        sample = dataset[0]
+        assert model.input(0).partial_shape.compatible(openvino.PartialShape(list(sample.shape)))
+        return model
+
+    fake_nncf.Dataset.side_effect = list
+    fake_nncf.quantize.side_effect = check_input_shape
+    xml_path = OpenVINOExporter(config)(graph)
+
+    assert openvino.Core().read_model(xml_path).input(0).partial_shape.to_shape() == [2, 3, 8, 8]
+
+
+@pytest.mark.integration
+@pytest.mark.e2e_openvino
 @_requires_openvino_nncf
 class TestOpenvinoInt8EndToEnd:
     """Real NNCF quantization of a tiny model (``-m e2e_openvino``; needs ``openvino`` and ``nncf`` installed)."""
 
-    def test_exports_runnable_quantized_ir(self, tmp_path: Path) -> None:
-        """INT8 export of a tiny attention model writes an IR that compiles and runs on CPU."""
+    @pytest.mark.parametrize(
+        ("static_input_shape", "batch_size"),
+        [pytest.param(False, 1, id="dynamic-batch-one"), pytest.param(True, 2, id="static-batch-two")],
+    )
+    def test_exports_runnable_quantized_ir(self, tmp_path: Path, static_input_shape: bool, batch_size: int) -> None:
+        """INT8 export writes a dynamic or fixed graph that runs at the requested batch on CPU."""
         import openvino
 
         data = np.stack([np.sin(np.arange(192).reshape(3, 8, 8) * (index + 1)) for index in range(3)]).astype(
             np.float32
         )
-        config = OpenVINOConfig(output_dir=tmp_path, quantization="int8", calibration_data=data, verbose=False)
+        config = OpenVINOConfig(
+            output_dir=tmp_path,
+            quantization="int8",
+            calibration_data=data,
+            static_input_shape=static_input_shape,
+            verbose=False,
+        )
+        graph = replace(
+            _export_graph(_TinyAttention().eval(), output_names=("dets",)),
+            input_tensors=torch.zeros(batch_size, 3, 8, 8),
+        )
 
-        xml_path = OpenVINOExporter(config)(_export_graph(_TinyAttention().eval(), output_names=("dets",)))
+        xml_path = OpenVINOExporter(config)(graph)
 
-        compiled = openvino.Core().compile_model(str(xml_path), "CPU")
-        (output,) = compiled(data[:1]).values()
-        assert output.shape == (1, 3, 8, 4) and np.isfinite(output).all()
+        ir = openvino.Core().read_model(xml_path)
+        expected_shape = (
+            openvino.PartialShape([batch_size, 3, 8, 8]) if static_input_shape else openvino.PartialShape.dynamic(4)
+        )
+        assert ir.input(0).partial_shape == expected_shape
+        compiled = openvino.Core().compile_model(ir, "CPU")
+        (output,) = compiled(data[:batch_size]).values()
+        assert output.shape == (batch_size, 3, 8, 4) and np.isfinite(output).all()

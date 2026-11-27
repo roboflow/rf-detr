@@ -3,16 +3,34 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Tests for rfdetr.utilities.compiler — version-compatible compile, trace and CUDA autocast predicates."""
 
+"""Tests for rfdetr.utilities.compiler — version-compatible compile, trace and CUDA autocast predicates.
+
+Tests for rfdetr.utilities.decorators — the deprecation re-export surface and module-move warning helper.
+
+Guards for the ``_IS_<PACKAGE>_INSTALLED`` probe flags that gate optional-dependency tests.
+"""
+
+from __future__ import annotations
+
+import ast
+import inspect
+import re
 import sys
+from pathlib import Path
+from types import ModuleType
 from unittest.mock import MagicMock
 
+import deprecate as _deprecate_module
 import pytest
 import torch
 
+from rfdetr.export import imports as export_imports
+from rfdetr.utilities import decorators
+from rfdetr.utilities import imports as utilities_imports
 from rfdetr.utilities.box_ops import batch_dice_loss
 from rfdetr.utilities.compiler import cuda_autocast_dtype, is_compiling, is_tracing, script_or_eager
+from rfdetr.utilities.decorators import _warn_deprecated_module
 
 
 def _is_autocast_enabled_without_device(*args: object) -> bool:
@@ -29,11 +47,6 @@ def _is_autocast_enabled_without_device(*args: object) -> bool:
     if args:
         raise TypeError(f"is_autocast_enabled() takes 0 positional arguments but {len(args)} was given")
     return True
-
-
-# ---------------------------------------------------------------------------
-# is_compiling
-# ---------------------------------------------------------------------------
 
 
 class TestIsCompiling:
@@ -107,11 +120,6 @@ class TestCudaAutocastDtype:
         monkeypatch.setattr(torch, "get_autocast_gpu_dtype", lambda: torch.float16, raising=False)
 
         assert cuda_autocast_dtype() == torch.float16
-
-
-# ---------------------------------------------------------------------------
-# script_or_eager
-# ---------------------------------------------------------------------------
 
 
 def _sum_variadic(*tensors: torch.Tensor) -> torch.Tensor:
@@ -189,3 +197,137 @@ class TestScriptOrEager:
 
         assert script_or_eager(batch_dice_loss) is batch_dice_loss
         script.assert_not_called()
+
+
+class TestPublicSurface:
+    """The module re-exports pyDeprecate's deprecation primitives unchanged."""
+
+    def test_all_lists_the_reexported_names(self) -> None:
+        """__all__ names exactly the three symbols re-exported from `deprecate`."""
+        assert decorators.__all__ == ["TargetMode", "deprecated", "void"]
+
+    @pytest.mark.parametrize("name", ["TargetMode", "deprecated", "void"])
+    def test_reexport_is_the_deprecate_original(self, name: str) -> None:
+        """Each re-exported name is the identical object from the `deprecate` package, not a wrapper."""
+        assert getattr(decorators, name) is getattr(_deprecate_module, name)
+
+
+class TestWarnDeprecatedModule:
+    """_warn_deprecated_module emits the DeprecationWarning shown to callers of a moved module."""
+
+    def test_emits_deprecation_warning_with_old_new_and_versions(self) -> None:
+        """The warning message names the old and new module paths and both version numbers.
+
+        A caller importing a module that has been relocated (e.g. `rfdetr.util.logger` moved to
+        `rfdetr.utilities.logger`) needs the message to point at the replacement and state when the old path stops
+        working, so it must be a DeprecationWarning carrying all four inputs verbatim.
+        """
+        with pytest.warns(DeprecationWarning) as record:
+            _warn_deprecated_module("rfdetr.util.logger", "rfdetr.utilities.logger", "1.2.0", "2.0.0")
+
+        assert len(record) == 1
+        message = str(record[0].message)
+        assert "rfdetr.util.logger is deprecated since v1.2.0" in message
+        assert "removed in v2.0.0" in message
+        assert "use rfdetr.utilities.logger instead" in message
+
+
+_PYPROJECT_TEXT = Path(__file__).resolve().parents[2].joinpath("pyproject.toml").read_text(encoding="utf-8")
+
+
+#: Probed packages that no pyproject extra declares: users or CI install them by hand, or (``huggingface_hub`` and
+#: ``safetensors``) they arrive through ``peft`` in the ``train`` and ``lora`` extras and gate the DINOv2 hub weight
+#: tests.
+_UNDECLARED_PACKAGES = frozenset({"pytorch_optimizer", "huggingface_hub", "safetensors"})
+
+
+#: Probed import names whose distribution is spelled differently, so pyproject.toml declares the distribution.
+_DISTRIBUTION_NAMES = {"cv2": "opencv-python"}
+
+
+def _probed_packages(module: ModuleType) -> dict[str, str]:
+    """Map each flag a module assigns from ``is_installed("<package>")`` to its literal package name.
+
+    The names come from the module source rather than from the imported flag values, so a typo in a package string
+    shows up here even on a host where the real package is absent.
+
+    Args:
+        module: Import module whose top-level assignments are read.
+
+    Returns:
+        Flag name to the import name passed to ``is_installed``.
+
+    Examples:
+        >>> from rfdetr.utilities import imports
+        >>> _probed_packages(imports)["_IS_PEFT_INSTALLED"]
+        'peft'
+    """
+    probes: dict[str, str] = {}
+    for node in ast.parse(inspect.getsource(module)).body:
+        is_probe = (
+            isinstance(node, ast.Assign)
+            and isinstance(node.value, ast.Call)
+            and getattr(node.value.func, "id", None) == "is_installed"
+        )
+        if is_probe:
+            probes[node.targets[0].id] = ast.literal_eval(node.value.args[0])
+    return probes
+
+
+def _is_declared_in_pyproject(package: str) -> bool:
+    """Report whether ``pyproject.toml`` names a package as a quoted requirement, ignoring ``-``/``_``/``.`` spelling.
+
+    Args:
+        package: Import name of the package, e.g. ``"torch_xla"``.
+
+    Returns:
+        ``True`` when a quoted requirement starts with the package name.
+
+    Examples:
+        >>> _is_declared_in_pyproject("pytorch_lightning")
+        True
+        >>> _is_declared_in_pyproject("no_such_package_anywhere")
+        False
+    """
+    spelling = re.escape(package).replace("_", "[-_.]")
+    return re.search(rf"""(?i)["']{spelling}\b""", _PYPROJECT_TEXT) is not None
+
+
+_PROBES = [
+    (flag, package)
+    for module in (export_imports, utilities_imports)
+    for flag, package in _probed_packages(module).items()
+]
+
+
+class TestInstallFlags:
+    """Install-probe flags are plain probes with a package name that matches the project's declared dependencies."""
+
+    @pytest.mark.parametrize(
+        "module", [pytest.param(export_imports, id="export"), pytest.param(utilities_imports, id="utilities")]
+    )
+    def test_every_install_flag_is_a_literal_is_installed_probe(self, module: ModuleType) -> None:
+        """Each ``_IS_*_INSTALLED`` name in a module comes from ``is_installed("<literal>")``.
+
+        A flag built another way (a different helper, a computed name) would escape the package-name check below, so the
+        set of flags and the set of literal probes must be the same.
+        """
+        flags = {name for name in vars(module) if name.startswith("_IS_") and name.endswith("_INSTALLED")}
+
+        assert flags == set(_probed_packages(module))
+
+    @pytest.mark.parametrize(
+        ("flag", "package"),
+        [pytest.param(flag, package, id=flag) for flag, package in _PROBES if package not in _UNDECLARED_PACKAGES],
+    )
+    def test_probed_package_is_declared_in_pyproject(self, flag: str, package: str) -> None:
+        """The package a flag probes is a dependency that ``pyproject.toml`` declares in some extra or group.
+
+        A mistyped import name makes the flag permanently false, so every test it gates is skipped on every host and the
+        typo never fails anything. Reading the name from pyproject.toml checks it independently of the flag.
+        """
+        distribution = _DISTRIBUTION_NAMES.get(package, package)
+
+        assert _is_declared_in_pyproject(distribution), (
+            f"{flag} probes {package!r}, which pyproject.toml does not declare"
+        )

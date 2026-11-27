@@ -229,7 +229,9 @@ model.train(
 2. If the metric improves by at least `min_delta`, the patience counter resets
 3. If the metric doesn't improve, the patience counter increments
 4. When patience counter reaches `patience`, training stops
-5. The best checkpoint is already saved as `checkpoint_best_total.pth`
+5. The best checkpoint is saved whenever the metric reaches a new best, and `checkpoint_best_total.pth` is written from it when training ends
+
+![Animated loss chart with patience 5. Training loss keeps falling every epoch while validation loss reaches its lowest point at epoch 6 and then rises, so the gap grows, which is overfitting. Each time the validation loss reaches a new lowest value, a best-checkpoint-saved tag appears and the best-so-far line steps down. A counter under each epoch resets to 0 at a new best and rises by one per epoch without one, filling five patience slots, until it reaches 5, the patience, and a banner says training stops and the best weights are kept as checkpoint_best_total.pth. RF-DETR itself watches the validation metric (map); the loss is shown for intuition. Values are illustrative.](../../assets/early-stopping.svg){ loading=lazy }
 
 ```
 Epoch 10: <selected-metric> = 0.450 (best: 0.450) - counter: 0
@@ -459,7 +461,7 @@ Every backend is one entry in a name → class registry, checked directly agains
     - Wrap the import in a small function built on `_import_optional_backend()` (see `_hotcoco()`/`_ufcoco()`/`_vernier()`) so a missing package raises an actionable `ImportError` naming the install extra, not a raw `ModuleNotFoundError`.
 3. **Register it** in `_BACKENDS`, keyed by the literal added in step 1.
 4. **Declare the dependency** in `pyproject.toml`'s `train` extra — all existing backends ship there.
-5. **Extend the tests** in `tests/training/test_coco_map.py`: add the name to `_BACKEND_PACKAGES` (and to `_ALTERNATIVE_BACKENDS` unless it's a second `"faster_coco_eval"`-equivalent baseline rather than an alternative to compare against one). `test_backend_registry_matches_the_typed_eval_backend_names` then enforces that the registry and the literal stay in sync, and the existing `test_alternative_backend_matches_faster_coco_eval[_for_segmentation]` parity tests pick up the new backend automatically, requiring exact equality against `"faster_coco_eval"` for both box-only and box+mask evaluation.
+5. **Extend the tests** in `tests/training/coco_map/helpers.py`: add the name to `_BACKEND_ONLY`, keyed to the skip mark for its package (and to `_ALTERNATIVE_BACKENDS` unless it's a second `"faster_coco_eval"`-equivalent baseline rather than an alternative to compare against one). `test_backend_registry_matches_the_typed_eval_backend_names` in `tests/training/coco_map/test_metric.py` then enforces that the registry and the literal stay in sync, and the existing `test_alternative_backend_matches_faster_coco_eval[_for_segmentation]` parity tests in `tests/training/coco_map/test_backends.py` pick up the new backend automatically, requiring exact equality against `"faster_coco_eval"` for both box-only and box+mask evaluation.
 6. **Document it**: this table, the `eval_backend` rows in [Training Parameters](training-parameters.md), and `docs/reference/train_config.md`.
 
 !!! warning "Parity is the contract, not an aspiration"
@@ -526,7 +528,7 @@ Match the published methodology so the result is comparable:
 - Time `compute()` alone, not `update()` — `update()`'s cost is TorchMetrics' own CPU tensor copying and is backend-independent.
 - Fix the core count (`torch.set_num_threads(N)`) and report it; the published numbers scale with cores.
 - Run box-only and box+mask separately — the ranking between backends is not the same in both.
-- **Verify parity before trusting a speed number.** Run `pytest tests/training/test_coco_map.py -k <backend_name>` first; a fast backend that doesn't match `"faster_coco_eval"` is a bug, not a result worth publishing.
+- **Verify parity before trusting a speed number.** Run `pytest tests/training -k "coco_map and <backend_name>"` first; a fast backend that doesn't match `"faster_coco_eval"` is a bug, not a result worth publishing.
 
 ---
 
@@ -574,7 +576,7 @@ For the Transformer Engine route, a synthetic RF-DETR Nano run at 384 px and bat
 
 !!! note "FP8 CUDA-graph capture/replay tests are CI-blind today"
 
-    `tests/training/test_cuda_graph_te.py` covers this route, but the repository's GPU CI runner is a NVIDIA T4 (compute capability 7.5). The test's FP8-hardware gate checks `torch.cuda.get_device_capability(0) >= (8, 9)` before anything imports Transformer Engine, so on a T4 the whole module skips rather than exercising the capture path. These tests are validated only by local or manual runs on Ada/Hopper-class or newer hardware until an 8.9+ GPU is available in CI.
+    `tests/training/optim/test_cuda_graph_te.py` covers this route, but the repository's GPU CI runner is a NVIDIA T4 (compute capability 7.5). The test's FP8-hardware gate checks `torch.cuda.get_device_capability(0) >= (8, 9)` before anything imports Transformer Engine, so on a T4 the whole module skips rather than exercising the capture path. These tests are validated only by local or manual runs on Ada/Hopper-class or newer hardware until an 8.9+ GPU is available in CI.
 
 A second reference point, on real data, shows the other end of the range. RF-DETR Nano on an NVIDIA RTX PRO 6000 (Blackwell, 96 GB) with BF16, batch 64, resolution 384, `multi_scale=False`, COCO train2017 through the Albumentations CPU pipeline on Colab: eager and `cuda_graphs=True` both ran at 3.54 it/s (about 8 min 40 s per epoch, one captured graph, no fallback), while `compile=True` finished the same epoch in 7 min 10 s, about 17% faster. Nothing was wrong with the capture; the two options remove different costs.
 

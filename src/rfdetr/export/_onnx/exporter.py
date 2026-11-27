@@ -10,7 +10,7 @@
 
 Loading this module imports no ONNX package: ``onnx`` is imported when it is used. The TFLite and TensorRT exporters
 import this module at module scope, and TFLite must load TensorFlow before anything loads ``onnx`` (#1322); the
-subprocess guard in ``tests/export/test_export.py`` pins the rule.
+subprocess guard in ``tests/export/api/test_validation.py`` pins the rule.
 """
 
 from __future__ import annotations

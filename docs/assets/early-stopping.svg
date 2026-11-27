@@ -1,0 +1,267 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="440" viewBox="0 0 1000 440" role="img" aria-labelledby="title desc">
+  <title id="title">Early stopping on a rising validation loss with patience 5</title>
+  <desc id="desc">Animated line chart of an illustrative run over 11 epochs. Training loss falls every epoch from 2.40 to 0.86. Validation loss falls to its lowest value of 1.66 at epoch 6, with a small bump at epoch 4, and then rises to 1.88, so the gap between the two curves grows, which is overfitting. A dotted best-so-far line steps down with every new lowest validation loss and a 'best checkpoint saved' tag appears above each new best point. A counter under each epoch resets to 0 at a new best and rises by one per epoch without a new best; it reaches 5, the patience, at epoch 11, and a banner says training stops and the best weights are kept in checkpoint_best_total.pth. A rule panel lists early_stopping_patience = 5, resets the counter on a new best and stops at the patience, and notes that RF-DETR itself watches the validation metric (map) and the loss is shown for intuition. A live panel shows the current epoch, validation loss, best and counter with five patience slots.</desc>
+  <defs><marker id="ah" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 Z" fill="#4A176F"/></marker></defs>
+  <style>
+    text { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #1D1D1F; }
+    .title { font-size: 20px; font-weight: 700; fill: #4A176F; }
+    .s { font-size: 13.5px; fill: #6F6C79; }
+    .t { font-size: 12.5px; }
+    .n { font-size: 14px; font-weight: 700; fill: #4A176F; }
+    .sm { font-size: 12px; fill: #6F6C79; }
+    .xs { font-size: 11.5px; fill: #6F6C79; }
+    .b { font-weight: 700; }
+    .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; }
+  </style>
+  <style id="anim">
+    .a { animation-duration: 18s; animation-iteration-count: infinite; animation-timing-function: linear; }
+    .d { stroke-dasharray: 1; }
+    .k0 { animation-name: k0; }
+    .k1 { animation-name: k1; }
+    .k2 { animation-name: k2; }
+    .k3 { animation-name: k3; }
+    .k4 { animation-name: k4; }
+    .k5 { animation-name: k5; }
+    .k6 { animation-name: k6; }
+    .k7 { animation-name: k7; }
+    .k8 { animation-name: k8; }
+    .k9 { animation-name: k9; }
+    .k10 { animation-name: k10; }
+    .k11 { animation-name: k11; }
+    .k12 { animation-name: k12; }
+    .k13 { animation-name: k13; }
+    .k14 { animation-name: k14; }
+    .k15 { animation-name: k15; }
+    .k16 { animation-name: k16; }
+    .k17 { animation-name: k17; }
+    .k18 { animation-name: k18; }
+    .k19 { animation-name: k19; }
+    .k20 { animation-name: k20; }
+    .k21 { animation-name: k21; }
+    .k22 { animation-name: k22; }
+    .k23 { animation-name: k23; }
+    .k24 { animation-name: k24; }
+    .k25 { animation-name: k25; }
+    .k26 { animation-name: k26; }
+    .k27 { animation-name: k27; }
+    .k28 { animation-name: k28; }
+    .k29 { animation-name: k29; }
+    .k30 { animation-name: k30; }
+    .k31 { animation-name: k31; }
+    .k32 { animation-name: k32; }
+    .k33 { animation-name: k33; }
+    .k34 { animation-name: k34; }
+    .k35 { animation-name: k35; }
+    .k36 { animation-name: k36; }
+    .k37 { animation-name: k37; }
+    .k38 { animation-name: k38; }
+    .k39 { animation-name: k39; }
+    .k40 { animation-name: k40; }
+    .k41 { animation-name: k41; }
+    .k42 { animation-name: k42; }
+    .k43 { animation-name: k43; }
+    .k44 { animation-name: k44; }
+    .k45 { animation-name: k45; }
+    .k46 { animation-name: k46; }
+    .k47 { animation-name: k47; }
+    .k48 { animation-name: k48; }
+    .k49 { animation-name: k49; }
+    .k50 { animation-name: k50; }
+    .k51 { animation-name: k51; }
+    .k52 { animation-name: k52; }
+    .k53 { animation-name: k53; }
+    .k54 { animation-name: k54; }
+    .k55 { animation-name: k55; }
+    .k56 { animation-name: k56; }
+    .k57 { animation-name: k57; }
+    .k58 { animation-name: k58; }
+    .k59 { animation-name: k59; }
+    @keyframes k0 { 0%,8.89%{opacity:0;transform:translate(0px,0px)} 9.17%{opacity:1} 11.39%{transform:translate(0px,0px)} 14.44%{opacity:1} 14.72%,100%{opacity:0} }
+    @keyframes k1 { 0%,14.44%{opacity:0;transform:translate(0px,-27.4px)} 14.72%{opacity:1} 16.94%{transform:translate(0px,0px)} 20%{opacity:1} 20.28%,100%{opacity:0} }
+    @keyframes k2 { 0%,20%{opacity:0;transform:translate(0px,-19.7px)} 20.28%{opacity:1} 22.5%{transform:translate(0px,0px)} 31.11%{opacity:1} 31.39%,100%{opacity:0} }
+    @keyframes k3 { 0%,31.11%{opacity:0;transform:translate(0px,-14.6px)} 31.39%{opacity:1} 33.61%{transform:translate(0px,0px)} 36.67%{opacity:1} 36.94%,100%{opacity:0} }
+    @keyframes k4 { 0%,36.67%{opacity:0;transform:translate(0px,-10.3px)} 36.94%{opacity:1} 39.17%{transform:translate(0px,0px)} 95%{opacity:1} 99%,100%{opacity:0} }
+    @keyframes k5 { 0%,12.22%{stroke-dashoffset:1;opacity:1} 14.17%,95%{stroke-dashoffset:0;opacity:1} 99%,100%{stroke-dashoffset:0;opacity:0} }
+    @keyframes k6 { 0%,17.78%{stroke-dashoffset:1;opacity:1} 19.72%,95%{stroke-dashoffset:0;opacity:1} 99%,100%{stroke-dashoffset:0;opacity:0} }
+    @keyframes k7 { 0%,23.33%{stroke-dashoffset:1;opacity:1} 25.28%,95%{stroke-dashoffset:0;opacity:1} 99%,100%{stroke-dashoffset:0;opacity:0} }
+    @keyframes k8 { 0%,28.89%{stroke-dashoffset:1;opacity:1} 30.83%,95%{stroke-dashoffset:0;opacity:1} 99%,100%{stroke-dashoffset:0;opacity:0} }
+    @keyframes k9 { 0%,34.44%{stroke-dashoffset:1;opacity:1} 36.39%,95%{stroke-dashoffset:0;opacity:1} 99%,100%{stroke-dashoffset:0;opacity:0} }
+    @keyframes k10 { 0%,40%{stroke-dashoffset:1;opacity:1} 41.94%,95%{stroke-dashoffset:0;opacity:1} 99%,100%{stroke-dashoffset:0;opacity:0} }
+    @keyframes k11 { 0%,45.56%{stroke-dashoffset:1;opacity:1} 47.5%,95%{stroke-dashoffset:0;opacity:1} 99%,100%{stroke-dashoffset:0;opacity:0} }
+    @keyframes k12 { 0%,51.11%{stroke-dashoffset:1;opacity:1} 53.06%,95%{stroke-dashoffset:0;opacity:1} 99%,100%{stroke-dashoffset:0;opacity:0} }
+    @keyframes k13 { 0%,56.67%{stroke-dashoffset:1;opacity:1} 58.61%,95%{stroke-dashoffset:0;opacity:1} 99%,100%{stroke-dashoffset:0;opacity:0} }
+    @keyframes k14 { 0%,62.22%{stroke-dashoffset:1;opacity:1} 64.17%,95%{stroke-dashoffset:0;opacity:1} 99%,100%{stroke-dashoffset:0;opacity:0} }
+    @keyframes k15 { 0%{opacity:0} 8.33%{opacity:0} 9.17%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k16 { 0%{opacity:0} 13.89%{opacity:0} 14.72%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k17 { 0%{opacity:0} 19.44%{opacity:0} 20.28%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k18 { 0%{opacity:0} 25%{opacity:0} 25.83%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k19 { 0%{opacity:0} 30.56%{opacity:0} 31.39%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k20 { 0%{opacity:0} 36.11%{opacity:0} 36.94%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k21 { 0%{opacity:0} 41.67%{opacity:0} 42.5%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k22 { 0%{opacity:0} 47.22%{opacity:0} 48.06%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k23 { 0%{opacity:0} 52.78%{opacity:0} 53.61%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k24 { 0%{opacity:0} 58.33%{opacity:0} 59.17%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k25 { 0%{opacity:0} 63.89%{opacity:0} 64.72%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k26 { 0%{opacity:0} 63.89%{opacity:0} 65.56%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k27 { 0%{opacity:0} 63.89%{opacity:0} 66.11%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k28 { 0%{opacity:0} 9.44%{opacity:0} 10.83%{opacity:1} 12.22%{opacity:1} 13.61%{opacity:0} 100%{opacity:0} }
+    @keyframes k29 { 0%{opacity:0} 15%{opacity:0} 16.39%{opacity:1} 17.78%{opacity:1} 19.17%{opacity:0} 100%{opacity:0} }
+    @keyframes k30 { 0%{opacity:0} 20.56%{opacity:0} 21.94%{opacity:1} 28.89%{opacity:1} 30.28%{opacity:0} 100%{opacity:0} }
+    @keyframes k31 { 0%{opacity:0} 31.67%{opacity:0} 33.06%{opacity:1} 34.44%{opacity:1} 35.83%{opacity:0} 100%{opacity:0} }
+    @keyframes k32 { 0%{opacity:0} 37.22%{opacity:0} 38.61%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k33 { 0%{opacity:0} 8.89%{opacity:0} 10.28%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k34 { 0%{opacity:0} 14.44%{opacity:0} 15.83%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k35 { 0%{opacity:0} 20%{opacity:0} 21.39%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k36 { 0%{opacity:0} 25.56%{opacity:0} 26.94%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k37 { 0%{opacity:0} 31.11%{opacity:0} 32.5%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k38 { 0%{opacity:0} 36.67%{opacity:0} 38.06%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k39 { 0%{opacity:0} 42.22%{opacity:0} 43.61%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k40 { 0%{opacity:0} 47.78%{opacity:0} 49.17%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k41 { 0%{opacity:0} 53.33%{opacity:0} 54.72%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k42 { 0%{opacity:0} 58.89%{opacity:0} 60.28%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k43 { 0%{opacity:0} 64.44%{opacity:0} 65.83%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k44 { 0%{opacity:0} 67.78%{opacity:0} 70%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k45 { 0%{opacity:0} 8.89%{opacity:0} 9.44%{opacity:1} 13.89%{opacity:1} 14.44%{opacity:0} 100%{opacity:0} }
+    @keyframes k46 { 0%{opacity:0} 14.44%{opacity:0} 15%{opacity:1} 19.44%{opacity:1} 20%{opacity:0} 100%{opacity:0} }
+    @keyframes k47 { 0%{opacity:0} 20%{opacity:0} 20.56%{opacity:1} 25%{opacity:1} 25.56%{opacity:0} 100%{opacity:0} }
+    @keyframes k48 { 0%{opacity:0} 25.56%{opacity:0} 26.11%{opacity:1} 30.56%{opacity:1} 31.11%{opacity:0} 100%{opacity:0} }
+    @keyframes k49 { 0%{opacity:0} 31.11%{opacity:0} 31.67%{opacity:1} 36.11%{opacity:1} 36.67%{opacity:0} 100%{opacity:0} }
+    @keyframes k50 { 0%{opacity:0} 36.67%{opacity:0} 37.22%{opacity:1} 41.67%{opacity:1} 42.22%{opacity:0} 100%{opacity:0} }
+    @keyframes k51 { 0%{opacity:0} 42.22%{opacity:0} 42.78%{opacity:1} 47.22%{opacity:1} 47.78%{opacity:0} 100%{opacity:0} }
+    @keyframes k52 { 0%{opacity:0} 47.78%{opacity:0} 48.33%{opacity:1} 52.78%{opacity:1} 53.33%{opacity:0} 100%{opacity:0} }
+    @keyframes k53 { 0%{opacity:0} 53.33%{opacity:0} 53.89%{opacity:1} 58.33%{opacity:1} 58.89%{opacity:0} 100%{opacity:0} }
+    @keyframes k54 { 0%{opacity:0} 58.89%{opacity:0} 59.44%{opacity:1} 63.89%{opacity:1} 64.44%{opacity:0} 100%{opacity:0} }
+    @keyframes k55 { 0%{opacity:0} 64.44%{opacity:0} 65%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k56 { 0%{opacity:0} 25.56%{opacity:0} 26.11%{opacity:1} 31.11%{opacity:1} 31.67%{opacity:0} 42.22%{opacity:0} 42.78%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k57 { 0%{opacity:0} 47.78%{opacity:0} 48.33%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k58 { 0%{opacity:0} 53.33%{opacity:0} 53.89%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @keyframes k59 { 0%{opacity:0} 58.89%{opacity:0} 59.44%{opacity:1} 95%{opacity:1} 99%{opacity:0} 100%{opacity:0} }
+    @media (prefers-reduced-motion: reduce) { .a { animation: none !important; } }
+  </style>
+  <rect x="1" y="1" width="998" height="438" rx="16" fill="#FFFFFF" stroke="#E8D2FF" stroke-width="2"/>
+  <text class="title" x="40" y="40">Early stopping: stop when validation loss stops improving</text>
+  <text class="s" x="40" y="62">Train loss keeps falling, validation loss turns up: the model is overfitting. Patience 5 = stop after 5 epochs without a new best. Illustrative values.</text>
+  <path d="M88 261.1 H626" stroke="#F3EEFF" stroke-width="1.5"/>
+  <text class="xs" x="82" y="265.1" text-anchor="end">1.0</text>
+  <path d="M88 218.3 H626" stroke="#F3EEFF" stroke-width="1.5"/>
+  <text class="xs" x="82" y="222.3" text-anchor="end">1.5</text>
+  <path d="M88 175.4 H626" stroke="#F3EEFF" stroke-width="1.5"/>
+  <text class="xs" x="82" y="179.4" text-anchor="end">2.0</text>
+  <path d="M88 132.6 H626" stroke="#F3EEFF" stroke-width="1.5"/>
+  <text class="xs" x="82" y="136.6" text-anchor="end">2.5</text>
+  <path d="M88 118 V304 H626" fill="none" stroke="#1D1D1F" stroke-width="1.5"/>
+  <text class="sm" transform="translate(28 214.0) rotate(-90)" text-anchor="middle">loss</text>
+  <text class="sm" x="40" y="326">epoch</text>
+  <text class="xs" x="104" y="326" text-anchor="middle">1</text>
+  <text class="xs" x="154" y="326" text-anchor="middle">2</text>
+  <text class="xs" x="204" y="326" text-anchor="middle">3</text>
+  <text class="xs" x="254" y="326" text-anchor="middle">4</text>
+  <text class="xs" x="304" y="326" text-anchor="middle">5</text>
+  <text class="xs" x="354" y="326" text-anchor="middle">6</text>
+  <text class="xs" x="404" y="326" text-anchor="middle">7</text>
+  <text class="xs" x="454" y="326" text-anchor="middle">8</text>
+  <text class="xs" x="504" y="326" text-anchor="middle">9</text>
+  <text class="xs" x="554" y="326" text-anchor="middle">10</text>
+  <text class="xs" x="604" y="326" text-anchor="middle">11</text>
+  <text class="sm" x="40" y="354">counter</text>
+  <g class="a k0" opacity="0"><path d="M104 132.6 H626" stroke="#0B7A6B" stroke-width="1.5" stroke-dasharray="2 4"/><text class="sm" x="114" y="148.6" style="fill:#0B7A6B">best so far</text></g>
+  <g class="a k1" opacity="0"><path d="M154 160.0 H626" stroke="#0B7A6B" stroke-width="1.5" stroke-dasharray="2 4"/><text class="sm" x="164" y="176.0" style="fill:#0B7A6B">best so far</text></g>
+  <g class="a k2" opacity="0"><path d="M204 179.7 H626" stroke="#0B7A6B" stroke-width="1.5" stroke-dasharray="2 4"/><text class="sm" x="214" y="195.7" style="fill:#0B7A6B">best so far</text></g>
+  <g class="a k3" opacity="0"><path d="M304 194.3 H626" stroke="#0B7A6B" stroke-width="1.5" stroke-dasharray="2 4"/><text class="sm" x="314" y="210.3" style="fill:#0B7A6B">best so far</text></g>
+  <g class="a k4"><path d="M354 204.6 H626" stroke="#0B7A6B" stroke-width="1.5" stroke-dasharray="2 4"/><text class="sm" x="364" y="220.6" style="fill:#0B7A6B">best so far</text></g>
+  <path class="a k5 d" pathLength="1" d="M104 141.1 L154 171.1" fill="none" stroke="#0B7A6B" stroke-width="3" stroke-linecap="round"/>
+  <path class="a k6 d" pathLength="1" d="M154 171.1 L204 194.3" fill="none" stroke="#0B7A6B" stroke-width="3" stroke-linecap="round"/>
+  <path class="a k7 d" pathLength="1" d="M204 194.3 L254 211.4" fill="none" stroke="#0B7A6B" stroke-width="3" stroke-linecap="round"/>
+  <path class="a k8 d" pathLength="1" d="M254 211.4 L304 225.1" fill="none" stroke="#0B7A6B" stroke-width="3" stroke-linecap="round"/>
+  <path class="a k9 d" pathLength="1" d="M304 225.1 L354 237.1" fill="none" stroke="#0B7A6B" stroke-width="3" stroke-linecap="round"/>
+  <path class="a k10 d" pathLength="1" d="M354 237.1 L404 246.6" fill="none" stroke="#0B7A6B" stroke-width="3" stroke-linecap="round"/>
+  <path class="a k11 d" pathLength="1" d="M404 246.6 L454 255.1" fill="none" stroke="#0B7A6B" stroke-width="3" stroke-linecap="round"/>
+  <path class="a k12 d" pathLength="1" d="M454 255.1 L504 262.0" fill="none" stroke="#0B7A6B" stroke-width="3" stroke-linecap="round"/>
+  <path class="a k13 d" pathLength="1" d="M504 262.0 L554 268.0" fill="none" stroke="#0B7A6B" stroke-width="3" stroke-linecap="round"/>
+  <path class="a k14 d" pathLength="1" d="M554 268.0 L604 273.1" fill="none" stroke="#0B7A6B" stroke-width="3" stroke-linecap="round"/>
+  <circle class="a k15" cx="104" cy="141.1" r="4.5" fill="#0B7A6B"/>
+  <circle class="a k16" cx="154" cy="171.1" r="4.5" fill="#0B7A6B"/>
+  <circle class="a k17" cx="204" cy="194.3" r="4.5" fill="#0B7A6B"/>
+  <circle class="a k18" cx="254" cy="211.4" r="4.5" fill="#0B7A6B"/>
+  <circle class="a k19" cx="304" cy="225.1" r="4.5" fill="#0B7A6B"/>
+  <circle class="a k20" cx="354" cy="237.1" r="4.5" fill="#0B7A6B"/>
+  <circle class="a k21" cx="404" cy="246.6" r="4.5" fill="#0B7A6B"/>
+  <circle class="a k22" cx="454" cy="255.1" r="4.5" fill="#0B7A6B"/>
+  <circle class="a k23" cx="504" cy="262.0" r="4.5" fill="#0B7A6B"/>
+  <circle class="a k24" cx="554" cy="268.0" r="4.5" fill="#0B7A6B"/>
+  <circle class="a k25" cx="604" cy="273.1" r="4.5" fill="#0B7A6B"/>
+  <path class="a k5 d" pathLength="1" d="M104 132.6 L154 160.0" fill="none" stroke="#6706CE" stroke-width="3" stroke-linecap="round"/>
+  <path class="a k6 d" pathLength="1" d="M154 160.0 L204 179.7" fill="none" stroke="#6706CE" stroke-width="3" stroke-linecap="round"/>
+  <path class="a k7 d" pathLength="1" d="M204 179.7 L254 176.3" fill="none" stroke="#6706CE" stroke-width="3" stroke-linecap="round"/>
+  <path class="a k8 d" pathLength="1" d="M254 176.3 L304 194.3" fill="none" stroke="#6706CE" stroke-width="3" stroke-linecap="round"/>
+  <path class="a k9 d" pathLength="1" d="M304 194.3 L354 204.6" fill="none" stroke="#6706CE" stroke-width="3" stroke-linecap="round"/>
+  <path class="a k10 d" pathLength="1" d="M354 204.6 L404 202.9" fill="none" stroke="#6706CE" stroke-width="3" stroke-linecap="round"/>
+  <path class="a k11 d" pathLength="1" d="M404 202.9 L454 199.4" fill="none" stroke="#6706CE" stroke-width="3" stroke-linecap="round"/>
+  <path class="a k12 d" pathLength="1" d="M454 199.4 L504 195.1" fill="none" stroke="#6706CE" stroke-width="3" stroke-linecap="round"/>
+  <path class="a k13 d" pathLength="1" d="M504 195.1 L554 190.0" fill="none" stroke="#6706CE" stroke-width="3" stroke-linecap="round"/>
+  <path class="a k14 d" pathLength="1" d="M554 190.0 L604 185.7" fill="none" stroke="#6706CE" stroke-width="3" stroke-linecap="round"/>
+  <circle class="a k15" cx="104" cy="132.6" r="6" fill="#6706CE"/>
+  <circle class="a k16" cx="154" cy="160.0" r="6" fill="#6706CE"/>
+  <circle class="a k17" cx="204" cy="179.7" r="6" fill="#6706CE"/>
+  <circle class="a k18" cx="254" cy="176.3" r="4.5" fill="#6706CE"/>
+  <circle class="a k19" cx="304" cy="194.3" r="6" fill="#6706CE"/>
+  <circle class="a k20" cx="354" cy="204.6" r="6" fill="#6706CE"/>
+  <circle class="a k21" cx="404" cy="202.9" r="4.5" fill="#6706CE"/>
+  <circle class="a k22" cx="454" cy="199.4" r="4.5" fill="#6706CE"/>
+  <circle class="a k23" cx="504" cy="195.1" r="4.5" fill="#6706CE"/>
+  <circle class="a k24" cx="554" cy="190.0" r="4.5" fill="#6706CE"/>
+  <circle class="a k25" cx="604" cy="185.7" r="4.5" fill="#6706CE"/>
+  <g class="a k26"><text class="b" x="632" y="277.1" style="font-size:12.5px;fill:#0B7A6B">train loss</text><text class="b" x="632" y="189.7" style="font-size:12.5px;fill:#6706CE">validation loss</text></g>
+  <g class="a k27"><path d="M590 193.7 V265.1" stroke="#4A176F" stroke-width="1.5" marker-start="url(#ah)" marker-end="url(#ah)"/><text class="b" x="582" y="233.4" text-anchor="end" style="font-size:12.5px;fill:#4A176F">the gap grows: overfitting</text></g>
+  <g class="a k28" opacity="0"><path d="M104 102 V124.6" stroke="#0B7A6B" stroke-width="1.5"/><rect x="94" y="76" width="162" height="26" rx="6" fill="#E6FCF8" stroke="#0B7A6B" stroke-width="1.5"/><text class="b" x="104" y="93.5" style="font-size:12.5px;fill:#0B7A6B">best checkpoint saved</text></g>
+  <g class="a k29" opacity="0"><path d="M154 102 V152.0" stroke="#0B7A6B" stroke-width="1.5"/><rect x="132" y="76" width="162" height="26" rx="6" fill="#E6FCF8" stroke="#0B7A6B" stroke-width="1.5"/><text class="b" x="142" y="93.5" style="font-size:12.5px;fill:#0B7A6B">best checkpoint saved</text></g>
+  <g class="a k30" opacity="0"><path d="M204 102 V171.7" stroke="#0B7A6B" stroke-width="1.5"/><rect x="182" y="76" width="162" height="26" rx="6" fill="#E6FCF8" stroke="#0B7A6B" stroke-width="1.5"/><text class="b" x="192" y="93.5" style="font-size:12.5px;fill:#0B7A6B">best checkpoint saved</text></g>
+  <g class="a k31" opacity="0"><path d="M304 102 V186.3" stroke="#0B7A6B" stroke-width="1.5"/><rect x="282" y="76" width="162" height="26" rx="6" fill="#E6FCF8" stroke="#0B7A6B" stroke-width="1.5"/><text class="b" x="292" y="93.5" style="font-size:12.5px;fill:#0B7A6B">best checkpoint saved</text></g>
+  <g class="a k32"><path d="M354 102 V196.6" stroke="#0B7A6B" stroke-width="1.5"/><rect x="332" y="76" width="162" height="26" rx="6" fill="#E6FCF8" stroke="#0B7A6B" stroke-width="1.5"/><text class="b" x="342" y="93.5" style="font-size:12.5px;fill:#0B7A6B">best checkpoint saved</text></g>
+  <g class="a k33"><circle cx="104" cy="350" r="12" fill="#8315F9"/><text class="b" x="104" y="354.5" text-anchor="middle" style="font-size:12.5px;fill:#FFFFFF">0</text></g>
+  <g class="a k34"><circle cx="154" cy="350" r="12" fill="#8315F9"/><text class="b" x="154" y="354.5" text-anchor="middle" style="font-size:12.5px;fill:#FFFFFF">0</text></g>
+  <g class="a k35"><circle cx="204" cy="350" r="12" fill="#8315F9"/><text class="b" x="204" y="354.5" text-anchor="middle" style="font-size:12.5px;fill:#FFFFFF">0</text></g>
+  <g class="a k36"><circle cx="254" cy="350" r="12" fill="#F3EEFF" stroke="#A351FB" stroke-width="1.5"/><text class="b" x="254" y="354.5" text-anchor="middle" style="font-size:12.5px;fill:#4A176F">1</text></g>
+  <g class="a k37"><circle cx="304" cy="350" r="12" fill="#8315F9"/><text class="b" x="304" y="354.5" text-anchor="middle" style="font-size:12.5px;fill:#FFFFFF">0</text></g>
+  <g class="a k38"><circle cx="354" cy="350" r="12" fill="#8315F9"/><text class="b" x="354" y="354.5" text-anchor="middle" style="font-size:12.5px;fill:#FFFFFF">0</text></g>
+  <g class="a k39"><circle cx="404" cy="350" r="12" fill="#F3EEFF" stroke="#A351FB" stroke-width="1.5"/><text class="b" x="404" y="354.5" text-anchor="middle" style="font-size:12.5px;fill:#4A176F">1</text></g>
+  <g class="a k40"><circle cx="454" cy="350" r="12" fill="#F3EEFF" stroke="#A351FB" stroke-width="1.5"/><text class="b" x="454" y="354.5" text-anchor="middle" style="font-size:12.5px;fill:#4A176F">2</text></g>
+  <g class="a k41"><circle cx="504" cy="350" r="12" fill="#F3EEFF" stroke="#A351FB" stroke-width="1.5"/><text class="b" x="504" y="354.5" text-anchor="middle" style="font-size:12.5px;fill:#4A176F">3</text></g>
+  <g class="a k42"><circle cx="554" cy="350" r="12" fill="#F3EEFF" stroke="#A351FB" stroke-width="1.5"/><text class="b" x="554" y="354.5" text-anchor="middle" style="font-size:12.5px;fill:#4A176F">4</text></g>
+  <g class="a k43"><polygon points="617.4,355.5 609.5,363.4 598.5,363.4 590.6,355.5 590.6,344.5 598.5,336.6 609.5,336.6 617.4,344.5" fill="#4A176F" stroke="#4A176F" stroke-width="1.5"/><text class="b" x="604" y="354.5" text-anchor="middle" style="font-size:12.5px;fill:#FFFFFF">5</text></g>
+  <g class="a k44"><rect x="88" y="376" width="538" height="46" rx="10" fill="#6706CE"/><text class="b" x="357.0" y="395" text-anchor="middle" style="font-size:14px;fill:#FFFFFF">training stops: 5 epochs without a new best</text><text x="357.0" y="413" text-anchor="middle" style="font-size:12.5px;fill:#F3EEFF">the best weights (epoch 6) are kept in <tspan class="mono" style="fill:#FFFFFF">checkpoint_best_total.pth</tspan></text></g>
+  <rect x="744" y="80" width="236" height="198" rx="12" fill="#FBF9FF" stroke="#E8D2FF" stroke-width="1.5"/>
+  <text class="n" x="760" y="102">Early stopping rule</text>
+  <text class="mono" x="760" y="123">early_stopping_patience = 5</text>
+  <text class="b" style="font-size:12.5px;fill:#4A176F" x="760" y="149">After each validation epoch:</text>
+  <text class="t" x="760" y="166">loss below the best so far:</text>
+  <text class="t" x="760" y="183">&#160;&#160;&#160;counter = 0, checkpoint saved</text>
+  <text class="t" x="760" y="200">otherwise: counter + 1</text>
+  <text class="t" x="760" y="217">counter = 5: training stops</text>
+  <text class="xs" x="760" y="240">RF-DETR itself watches the</text>
+  <text class="xs" x="760" y="254">validation metric (map); loss is</text>
+  <text class="xs" x="760" y="268">shown here for intuition.</text>
+  <rect x="744" y="290" width="236" height="132" rx="12" fill="#FFFFFF" stroke="#A351FB" stroke-width="1.5"/>
+  <g class="a k45" opacity="0"><text class="b" x="760" y="312" style="font-size:15px;fill:#4A176F">epoch 1</text><text class="b" x="964" y="312" text-anchor="end" style="font-size:12.5px;fill:#8315F9">new best</text><text class="t" x="760" y="334" style="font-size:13px">val loss 2.50 (best 2.50)</text><text class="t" x="760" y="353" style="font-size:13px">counter 0 of 5</text></g>
+  <g class="a k46" opacity="0"><text class="b" x="760" y="312" style="font-size:15px;fill:#4A176F">epoch 2</text><text class="b" x="964" y="312" text-anchor="end" style="font-size:12.5px;fill:#8315F9">new best</text><text class="t" x="760" y="334" style="font-size:13px">val loss 2.18 (best 2.18)</text><text class="t" x="760" y="353" style="font-size:13px">counter 0 of 5</text></g>
+  <g class="a k47" opacity="0"><text class="b" x="760" y="312" style="font-size:15px;fill:#4A176F">epoch 3</text><text class="b" x="964" y="312" text-anchor="end" style="font-size:12.5px;fill:#8315F9">new best</text><text class="t" x="760" y="334" style="font-size:13px">val loss 1.95 (best 1.95)</text><text class="t" x="760" y="353" style="font-size:13px">counter 0 of 5</text></g>
+  <g class="a k48" opacity="0"><text class="b" x="760" y="312" style="font-size:15px;fill:#4A176F">epoch 4</text><text class="b" x="964" y="312" text-anchor="end" style="font-size:12.5px;fill:#6F6C79">no new best</text><text class="t" x="760" y="334" style="font-size:13px">val loss 1.99 (best 1.95)</text><text class="t" x="760" y="353" style="font-size:13px">counter 1 of 5</text></g>
+  <g class="a k49" opacity="0"><text class="b" x="760" y="312" style="font-size:15px;fill:#4A176F">epoch 5</text><text class="b" x="964" y="312" text-anchor="end" style="font-size:12.5px;fill:#8315F9">new best</text><text class="t" x="760" y="334" style="font-size:13px">val loss 1.78 (best 1.78)</text><text class="t" x="760" y="353" style="font-size:13px">counter 0 of 5</text></g>
+  <g class="a k50" opacity="0"><text class="b" x="760" y="312" style="font-size:15px;fill:#4A176F">epoch 6</text><text class="b" x="964" y="312" text-anchor="end" style="font-size:12.5px;fill:#8315F9">new best</text><text class="t" x="760" y="334" style="font-size:13px">val loss 1.66 (best 1.66)</text><text class="t" x="760" y="353" style="font-size:13px">counter 0 of 5</text></g>
+  <g class="a k51" opacity="0"><text class="b" x="760" y="312" style="font-size:15px;fill:#4A176F">epoch 7</text><text class="b" x="964" y="312" text-anchor="end" style="font-size:12.5px;fill:#6F6C79">no new best</text><text class="t" x="760" y="334" style="font-size:13px">val loss 1.68 (best 1.66)</text><text class="t" x="760" y="353" style="font-size:13px">counter 1 of 5</text></g>
+  <g class="a k52" opacity="0"><text class="b" x="760" y="312" style="font-size:15px;fill:#4A176F">epoch 8</text><text class="b" x="964" y="312" text-anchor="end" style="font-size:12.5px;fill:#6F6C79">no new best</text><text class="t" x="760" y="334" style="font-size:13px">val loss 1.72 (best 1.66)</text><text class="t" x="760" y="353" style="font-size:13px">counter 2 of 5</text></g>
+  <g class="a k53" opacity="0"><text class="b" x="760" y="312" style="font-size:15px;fill:#4A176F">epoch 9</text><text class="b" x="964" y="312" text-anchor="end" style="font-size:12.5px;fill:#6F6C79">no new best</text><text class="t" x="760" y="334" style="font-size:13px">val loss 1.77 (best 1.66)</text><text class="t" x="760" y="353" style="font-size:13px">counter 3 of 5</text></g>
+  <g class="a k54" opacity="0"><text class="b" x="760" y="312" style="font-size:15px;fill:#4A176F">epoch 10</text><text class="b" x="964" y="312" text-anchor="end" style="font-size:12.5px;fill:#6F6C79">no new best</text><text class="t" x="760" y="334" style="font-size:13px">val loss 1.83 (best 1.66)</text><text class="t" x="760" y="353" style="font-size:13px">counter 4 of 5</text></g>
+  <g class="a k55"><text class="b" x="760" y="312" style="font-size:15px;fill:#4A176F">epoch 11</text><text class="b" x="964" y="312" text-anchor="end" style="font-size:12.5px;fill:#4A176F">stop</text><text class="t" x="760" y="334" style="font-size:13px">val loss 1.88 (best 1.66)</text><text class="t" x="760" y="353" style="font-size:13px">counter 5 of 5</text></g>
+  <circle cx="774" cy="380" r="9.5" fill="#FFFFFF" stroke="#B9B4C6" stroke-width="1.5"/>
+  <circle class="a k56" cx="774" cy="380" r="9.5" fill="#A351FB" stroke="#A351FB" stroke-width="1.5"/>
+  <circle cx="808" cy="380" r="9.5" fill="#FFFFFF" stroke="#B9B4C6" stroke-width="1.5"/>
+  <circle class="a k57" cx="808" cy="380" r="9.5" fill="#A351FB" stroke="#A351FB" stroke-width="1.5"/>
+  <circle cx="842" cy="380" r="9.5" fill="#FFFFFF" stroke="#B9B4C6" stroke-width="1.5"/>
+  <circle class="a k58" cx="842" cy="380" r="9.5" fill="#A351FB" stroke="#A351FB" stroke-width="1.5"/>
+  <circle cx="876" cy="380" r="9.5" fill="#FFFFFF" stroke="#B9B4C6" stroke-width="1.5"/>
+  <circle class="a k59" cx="876" cy="380" r="9.5" fill="#A351FB" stroke="#A351FB" stroke-width="1.5"/>
+  <circle cx="910" cy="380" r="9.5" fill="#FFFFFF" stroke="#B9B4C6" stroke-width="1.5"/>
+  <circle class="a k55" cx="910" cy="380" r="9.5" fill="#4A176F" stroke="#4A176F" stroke-width="1.5"/>
+  <text class="xs" x="760" y="408">one slot fills per epoch without a new best</text>
+</svg>

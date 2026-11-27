@@ -51,6 +51,7 @@ from rfdetr.datasets.yolo import _extract_yolo_class_names, find_yolo_data_file,
 from rfdetr.inference import ModelContext, RFDETRInference, _build_model_context
 from rfdetr.models.backbone.dinov2_with_windowed_attn import _fold_layer_scales
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
+from rfdetr.models.postprocess import PostProcess
 
 # The lightweight package holds the symbol set; rfdetr.platform.models would import rfdetr_plus, which imports rfdetr.
 from rfdetr.platform import _PLUS_EXPORTS
@@ -1603,6 +1604,13 @@ class RFDETR:
         # construction-time snapshot built from a dummy TrainConfig, so overrides like lr/lr_encoder
         # never appeared in model.model.__dict__['args'] even though the optimizer used them correctly.
         self.model.args = _namespace_from_configs(self.model_config, config)
+        # Rebuild the postprocessor too: the run may have aligned the keypoint schema to the dataset, and the one
+        # built at construction would decode the retrained head with the pretrained layout.
+        self.model.postprocess = PostProcess(
+            num_select=self.model.args.num_select,
+            num_keypoints_per_class=self.model.args.num_keypoints_per_class,
+            trace_alpha=self.model.args.postprocess_trace_alpha,
+        )
         # Mark this instance as trained so a subsequent train() call warns that it will
         # restart from pretrain_weights rather than continue from the in-memory state.
         self._has_been_trained = True
@@ -2145,6 +2153,7 @@ class RFDETR:
         coreml_neural_engine: bool = False,
         coreai_precision: str | None = None,
         openvino_precision: str | None = None,
+        openvino_static_shape: bool = False,
         int8_keep_mlp_float: bool = False,
     ) -> Path:
         """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, CoreML, OpenVINO, or LiteRT format.
@@ -2161,6 +2170,7 @@ class RFDETR:
             verbose: Print export progress information.
             shape: ``(height, width)`` tuple; defaults to square at model resolution.
                 Both dimensions must be divisible by ``patch_size * num_windows``.
+                OpenVINO accepts variable batches at this spatial resolution unless *openvino_static_shape* is set.
             batch_size: Static batch size to bake into the ONNX graph; a positive integer. With ``dynamic_batch=True``
                 and ``format="tensorrt"`` it is also the batch the engine's optimization profile is tuned for.
             dynamic_batch: If True, export with a dynamic batch dimension
@@ -2174,8 +2184,8 @@ class RFDETR:
                 dynamic ``.pte`` runs only at the traced batch — export one
                 ``.pte`` per batch size instead. Also unsupported for native CoreML
                 (``format="coreml"``): fixed shapes are required for reliable ANE / GPU scheduling.
-                Also refused for ``format="openvino"``, where it is not needed: omit ``dynamic_batch``;
-                the converted OpenVINO IR already accepts any batch size.
+                Also refused for ``format="openvino"``: its batch is dynamic by default. Set
+                ``openvino_static_shape=True`` for a fixed input shape.
                 Also refused for ``format="tflite"``: ``onnx2tf`` fails on the dynamic-batch graph (an ``Add``
                 against the dynamic-shaped encoder input reports mismatched dimensions) — export one ``.tflite``
                 per batch size instead. Also unsupported for ``format="litert"``: the ``.tflite`` bakes a fixed
@@ -2223,8 +2233,8 @@ class RFDETR:
                 to the ExecuTorch delegate; ``backend`` is ignored (with
                 a warning) and the native ``.mlpackage`` path always runs.
                 Detection, segmentation and keypoint models all have registry-clean and numerical-parity
-                test coverage for this format (see ``tests/export/coreml/test_coreml_op_coverage.py`` /
-                ``test_coreml_export.py``).
+                test coverage for this format (see ``tests/export/coreml/test_op_coverage.py`` /
+                ``tests/export/coreml/test_export.py``).
                 When ``"coreai"`` is selected the model is exported via ``torch.export`` + ``coreai-torch`` to an
                 Apple Core AI ``.aimodel`` (requires ``pip install rfdetr[coreai]``; the asset runs on iOS,
                 iPadOS and macOS 27 or later).
@@ -2373,6 +2383,9 @@ class RFDETR:
                 — ``None`` keeps OpenVINO's own ``compress_to_fp16=True`` default; ``"float32"`` disables
                 FP16 weight compression, controlling IR *storage* precision only (execution precision still
                 depends on the compiled device — not guaranteed to match eager PyTorch on non-CPU devices).
+                Ignored for every other format.
+            openvino_static_shape: Fix the OpenVINO IR input to the export batch size and spatial resolution.
+                The default preserves variable batches at the traced resolution even with an explicit shape.
                 Ignored for every other format.
             int8_keep_mlp_float: For ONNX INT8, also keep GELU-fed weighted projections in float. This includes the
                 second layer of backbone MLPs and can include other projections, such as in segmentation heads.
@@ -2533,6 +2546,7 @@ class RFDETR:
             coreml_neural_engine=coreml_neural_engine,
             coreai_precision=coreai_precision,
             openvino_precision=openvino_precision,
+            openvino_static_shape=openvino_static_shape,
             quantization=quantization,
             calibration_data=calibration_data,
             max_images=max_images,

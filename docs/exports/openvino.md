@@ -49,6 +49,14 @@ model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
 model.export(format="openvino", shape=(608, 608))
 ```
 
+The IR accepts variable batch sizes at the traced spatial resolution, including when you set `shape`. To produce an IR that accepts only the requested batch and resolution, set `openvino_static_shape=True`.
+
+```python
+model.export(format="openvino", shape=(608, 608), batch_size=2, openvino_static_shape=True)
+```
+
+Use a separate static artifact for each batch size. For INT8, the exporter calibrates with single images before fixing the input dimensions.
+
 ## OpenVINO Export with Precision
 
 OpenVINO export defaults to FP16 weight compression. Pass `openvino_precision="float32"` to keep the stored IR weights at full precision (larger file, no compression) — this controls IR *storage* precision only. The precision the device *computes* in is a runtime setting, chosen when the model is compiled (see the warning under [Runtime Options](#runtime-options)):

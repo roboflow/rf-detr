@@ -1,0 +1,103 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="852" viewBox="0 0 800 852" role="img" aria-labelledby="title desc">
+  <title id="title">Export once, predict with the native model or the exported artifact</title>
+  <desc id="desc">A schematic of exporting an RF-DETR model and predicting with it. A trained model goes through export(), which makes one artifact in a chosen format (ONNX, TensorRT, OpenVINO, TFLite, CoreML and more) together with its metadata. Below, two columns compare standard predict with the native model, which needs no export, and predict with the exported artifact. The load step and the forward pass differ: PyTorch versus a format runtime and its adapter. Preprocess, postprocess and the Detections result are shared.</desc>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#4A176F"/>
+    </marker>
+  </defs>
+  <style>
+    text { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #1D1D1F; }
+    .title { font-size: 22px; font-weight: 700; fill: #4A176F; }
+    .h { font-size: 17px; font-weight: 700; fill: #4A176F; }
+    .n { font-size: 15px; font-weight: 700; }
+    .nm { font-size: 15px; font-weight: 700; font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    .c { font-size: 12px; font-weight: 700; }
+    .sm { font-size: 12px; fill: #6F6C79; }
+    .l { font-size: 13px; }
+  </style>
+  <rect x="1" y="1" width="798" height="850" rx="16" fill="#FFFFFF" stroke="#E8D2FF" stroke-width="2"/>
+  <text class="title" x="40" y="42">Export once, predict either way</text>
+  <rect x="590" y="26" width="16" height="16" rx="4" fill="#FFFFFF" stroke="#A351FB" stroke-width="2"/>
+  <text class="sm" x="612" y="39">differs</text>
+  <rect x="676" y="26" width="16" height="16" rx="4" fill="#E6FCF8" stroke="#0B7A6B" stroke-width="2"/>
+  <text class="sm" x="698" y="39">shared</text>
+  <rect x="300" y="84" width="200" height="56" rx="12" fill="#F3EEFF" stroke="#A351FB" stroke-width="2"/>
+  <rect x="318" y="99" width="26" height="7" rx="2.5" fill="#E8D2FF" stroke="#8315F9" stroke-width="1.5"/>
+  <rect x="318" y="108" width="26" height="7" rx="2.5" fill="#E8D2FF" stroke="#8315F9" stroke-width="1.5"/>
+  <rect x="318" y="117" width="26" height="7" rx="2.5" fill="#E8D2FF" stroke="#8315F9" stroke-width="1.5"/>
+  <text class="n" x="356" y="118" text-anchor="start">Trained model</text>
+  <path d="M400 140 V168" fill="none" stroke="#4A176F" stroke-width="2" marker-end="url(#arr)"/>
+  <rect x="300" y="170" width="200" height="56" rx="12" fill="#FFFFFF" stroke="#A351FB" stroke-width="2"/>
+  <circle cx="333" cy="198" r="9" fill="none" stroke="#6706CE" stroke-width="5" stroke-dasharray="3.5 3.5"/>
+  <circle cx="333" cy="198" r="6" fill="#FFFFFF" stroke="#6706CE" stroke-width="2"/>
+  <text class="nm" x="356" y="204" text-anchor="start">export()</text>
+  <path d="M400 226 V254" fill="none" stroke="#4A176F" stroke-width="2" marker-end="url(#arr)"/>
+  <rect x="150" y="256" width="500" height="96" rx="12" fill="#F3EEFF" stroke="#A351FB" stroke-width="2"/>
+  <path d="M172 268 h15 l8 8 v22 h-23 z" fill="#FFFFFF" stroke="#6706CE" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M187 268 v8 h8" fill="none" stroke="#6706CE" stroke-width="2" stroke-linejoin="round"/>
+  <text class="n" x="206" y="292" text-anchor="start">Artifact</text>
+  <rect x="516" y="268" width="114" height="24" rx="12" fill="#E6FCF8" stroke="#0B7A6B" stroke-width="1.5"/>
+  <text class="c" x="573.0" y="284.5" text-anchor="middle" style="fill:#0B7A6B">+ metadata</text>
+  <rect x="172" y="308" width="56" height="24" rx="12" fill="#FFFFFF" stroke="#A351FB" stroke-width="1.5"/>
+  <text class="c" x="200.0" y="324.5" text-anchor="middle" style="fill:#4A176F">ONNX</text>
+  <rect x="236" y="308" width="76" height="24" rx="12" fill="#FFFFFF" stroke="#A351FB" stroke-width="1.5"/>
+  <text class="c" x="274.0" y="324.5" text-anchor="middle" style="fill:#4A176F">TensorRT</text>
+  <rect x="320" y="308" width="84" height="24" rx="12" fill="#FFFFFF" stroke="#A351FB" stroke-width="1.5"/>
+  <text class="c" x="362.0" y="324.5" text-anchor="middle" style="fill:#4A176F">OpenVINO</text>
+  <rect x="412" y="308" width="66" height="24" rx="12" fill="#FFFFFF" stroke="#A351FB" stroke-width="1.5"/>
+  <text class="c" x="445.0" y="324.5" text-anchor="middle" style="fill:#4A176F">TFLite</text>
+  <rect x="486" y="308" width="70" height="24" rx="12" fill="#FFFFFF" stroke="#A351FB" stroke-width="1.5"/>
+  <text class="c" x="521.0" y="324.5" text-anchor="middle" style="fill:#4A176F">CoreML</text>
+  <rect x="564" y="308" width="36" height="24" rx="12" fill="#FFFFFF" stroke="#A351FB" stroke-width="1.5"/>
+  <text class="c" x="582.0" y="324.5" text-anchor="middle" style="fill:#4A176F">...</text>
+  <path d="M300 112 H98 V404" fill="none" stroke="#4A176F" stroke-width="2" marker-end="url(#arr)"/>
+  <rect x="60" y="226" width="76" height="20" fill="#FFFFFF"/>
+  <text class="sm" x="98" y="240" text-anchor="middle">no export</text>
+  <path d="M585 352 V404" fill="none" stroke="#4A176F" stroke-width="2" marker-end="url(#arr)"/>
+  <rect x="40" y="404" width="350" height="416" rx="14" fill="#FBF9FF" stroke="#E8D2FF" stroke-width="1.5"/>
+  <text class="h" x="215.0" y="430" text-anchor="middle">Standard predict</text>
+  <rect x="410" y="404" width="350" height="416" rx="14" fill="#FBF9FF" stroke="#E8D2FF" stroke-width="1.5"/>
+  <text class="h" x="585.0" y="430" text-anchor="middle">Exported predict</text>
+  <rect x="56" y="446" width="318" height="58" rx="12" fill="#FFFFFF" stroke="#A351FB" stroke-width="2"/>
+  <rect x="74" y="462" width="26" height="7" rx="2.5" fill="#E8D2FF" stroke="#8315F9" stroke-width="1.5"/>
+  <rect x="74" y="471" width="26" height="7" rx="2.5" fill="#E8D2FF" stroke="#8315F9" stroke-width="1.5"/>
+  <rect x="74" y="480" width="26" height="7" rx="2.5" fill="#E8D2FF" stroke="#8315F9" stroke-width="1.5"/>
+  <text class="n" x="124" y="481" text-anchor="start">PyTorch model</text>
+  <rect x="426" y="446" width="318" height="58" rx="12" fill="#FFFFFF" stroke="#A351FB" stroke-width="2"/>
+  <path d="M444 458 h15 l8 8 v22 h-23 z" fill="#FFFFFF" stroke="#6706CE" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M459 458 v8 h8" fill="none" stroke="#6706CE" stroke-width="2" stroke-linejoin="round"/>
+  <text class="n" x="494" y="481" text-anchor="start">Format runtime</text>
+  <path d="M215.0 504 V530" fill="none" stroke="#4A176F" stroke-width="2" marker-end="url(#arr)"/>
+  <path d="M585.0 504 V530" fill="none" stroke="#4A176F" stroke-width="2" marker-end="url(#arr)"/>
+  <rect x="56" y="532" width="688" height="44" rx="12" fill="#E6FCF8" stroke="#0B7A6B" stroke-width="2"/>
+  <rect x="326" y="541.0" width="34" height="26" rx="4" fill="#F3EEFF" stroke="#C9B0F5" stroke-width="1.5"/>
+  <circle cx="335" cy="549.0" r="3.2" fill="#B58AF5"/>
+  <path d="M328 565.0 l9 -9 l6 6 l5 -5 l9 8 z" fill="#B58AF5"/>
+  <text class="n" x="372" y="559.0" text-anchor="start">Preprocess</text>
+  <path d="M215.0 576 V602" fill="none" stroke="#4A176F" stroke-width="2" marker-end="url(#arr)"/>
+  <path d="M585.0 576 V602" fill="none" stroke="#4A176F" stroke-width="2" marker-end="url(#arr)"/>
+  <rect x="56" y="604" width="318" height="58" rx="12" fill="#FFFFFF" stroke="#A351FB" stroke-width="2"/>
+  <circle cx="87" cy="633" r="9" fill="none" stroke="#6706CE" stroke-width="5" stroke-dasharray="3.5 3.5"/>
+  <circle cx="87" cy="633" r="6" fill="#FFFFFF" stroke="#6706CE" stroke-width="2"/>
+  <text class="n" x="124" y="639" text-anchor="start">PyTorch forward</text>
+  <rect x="426" y="604" width="318" height="58" rx="12" fill="#FFFFFF" stroke="#A351FB" stroke-width="2"/>
+  <circle cx="457" cy="633" r="9" fill="none" stroke="#6706CE" stroke-width="5" stroke-dasharray="3.5 3.5"/>
+  <circle cx="457" cy="633" r="6" fill="#FFFFFF" stroke="#6706CE" stroke-width="2"/>
+  <text class="n" x="494" y="639" text-anchor="start">Runtime adapter</text>
+  <path d="M215.0 662 V688" fill="none" stroke="#4A176F" stroke-width="2" marker-end="url(#arr)"/>
+  <path d="M585.0 662 V688" fill="none" stroke="#4A176F" stroke-width="2" marker-end="url(#arr)"/>
+  <rect x="56" y="690" width="688" height="44" rx="12" fill="#E6FCF8" stroke="#0B7A6B" stroke-width="2"/>
+  <circle cx="341" cy="712.0" r="9" fill="none" stroke="#6706CE" stroke-width="5" stroke-dasharray="3.5 3.5"/>
+  <circle cx="341" cy="712.0" r="6" fill="#FFFFFF" stroke="#6706CE" stroke-width="2"/>
+  <text class="n" x="372" y="717.0" text-anchor="start">Postprocess</text>
+  <path d="M215.0 734 V766" fill="none" stroke="#4A176F" stroke-width="2" marker-end="url(#arr)"/>
+  <path d="M585.0 734 V766" fill="none" stroke="#4A176F" stroke-width="2" marker-end="url(#arr)"/>
+  <rect x="56" y="768" width="688" height="40" rx="12" fill="#E6FCF8" stroke="#0B7A6B" stroke-width="2"/>
+  <rect x="312" y="775" width="34" height="26" rx="4" fill="#F3EEFF" stroke="#C9B0F5" stroke-width="1.5"/>
+  <circle cx="321" cy="783" r="3.2" fill="#B58AF5"/>
+  <path d="M314 799 l9 -9 l6 6 l5 -5 l9 8 z" fill="#B58AF5"/>
+  <rect x="316" y="778" width="13" height="17" fill="none" stroke="#6706CE" stroke-width="2"/>
+  <rect x="331" y="787" width="11" height="10" fill="none" stroke="#0B7A6B" stroke-width="2"/>
+  <text class="n" x="356" y="793" text-anchor="start">Detections</text>
+</svg>

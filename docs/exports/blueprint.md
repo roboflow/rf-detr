@@ -65,7 +65,7 @@ REGISTRY: Mapping[str, ExporterEntry] = {
 }
 ```
 
-An entry also carries the few facts that must be known *before* the import: the user-facing `label`, the `pip_extra` named in the missing-dependency message, `supports_dynamic_batch`, and `dynamic_batch_reason`. Those last three mirror class attributes of the exporter itself. The duplication is deliberate — it is what lets `reject_unsupported_dynamic_batch()` refuse a doomed request, in the format's own words, without paying tens of seconds and hundreds of megabytes for `coremltools` or TensorFlow first. `tests/export/test_registry.py` checks those mirrors.
+An entry also carries the few facts that must be known *before* the import: the user-facing `label`, the `pip_extra` named in the missing-dependency message, `supports_dynamic_batch`, and `dynamic_batch_reason`. Those last three mirror class attributes of the exporter itself. The duplication is deliberate — it is what lets `reject_unsupported_dynamic_batch()` refuse a doomed request, in the format's own words, without paying tens of seconds and hundreds of megabytes for `coremltools` or TensorFlow first. `tests/export/core/test_registry.py` checks those mirrors.
 
 `RUNTIME_LOADERS` maps every format key to its lazy `load_export_runtime(path, metadata, device, options)` function. `resolve_runtime_loader()` imports that function only when an artifact is opened. Keep this map in sync with `REGISTRY`; the registry tests check that every format has a callable loader.
 
@@ -242,11 +242,11 @@ Add it to `RFDETR.export()`'s `format` docstring in `src/rfdetr/detr.py` and to 
 
 ### 7. Test it
 
-Some tests are parametrized over `REGISTRY`, so they pick your format up the moment you register it: in `tests/export/test_registry.py`, the capability mirror (registry entry versus class attributes) and the dynamic-batch guard, which also asserts a fixed-batch format explains what to do instead; in `tests/export/test_export.py`, the check that an exporter handed a graph directly runs `check_dependencies` before `_convert`. Everything else is a hand-written case — add your format to the configuration-type list and to the per-format lists in `tests/export/test_export.py` (`TestExportDependencyCheck` for its missing package, `TestExportWarningLocation` if constructing it warns, `TestExportRejectsBeforeForwardPass` for each setting it validates), and write `tests/export/test_myformat_export.py` for filename resolution, the backbone marker, the missing-dependency message, and numerical parity against eager PyTorch if the runtime can be installed in CI.
+Some tests are parametrized over `REGISTRY`, so they pick your format up the moment you register it: in `tests/export/core/test_registry.py`, the capability mirror (registry entry versus class attributes) and the dynamic-batch guard, which also asserts a fixed-batch format explains what to do instead; in `tests/export/api/test_validation.py`, the check that an exporter handed a graph directly runs `check_dependencies` before `_convert`. Everything else is a hand-written case — add your format to the configuration-type list and to the per-format lists in `tests/export/api/test_validation.py` (`TestExportDependencyCheck` for its missing package, `TestExportWarningLocation` if constructing it warns, `TestExportRejectsBeforeForwardPass` for each setting it validates), and write `tests/export/test_myformat_export.py` for filename resolution, the backbone marker, the missing-dependency message, and numerical parity against eager PyTorch if the runtime can be installed in CI.
 
-Add a per-format adapter test class in `tests/export/runtime/test_runtime_adapter_contract.py`, following `TestONNXRuntimeAdapter`, to exercise device selection, metadata-to-output mapping, and output ownership through `load_runtime()` and `runtime.run()`.
+Add a per-format adapter test class in `tests/export/runtime/test_adapter_contract.py`, following `TestONNXRuntimeAdapter`, to exercise device selection, metadata-to-output mapping, and output ownership through `load_runtime()` and `runtime.run()`.
 
-Most of those need no real model: build a throwaway `ExportGraph` around a `MagicMock` the way `tests/export/executorch/test_executorch_export.py` does, and only the parity test has to trace anything.
+Most of those need no real model: build a throwaway `ExportGraph` around a `MagicMock` the way `tests/export/executorch/test_export.py` does, and only the parity test has to trace anything.
 
 ## Patterns worth copying
 
@@ -267,7 +267,7 @@ def _convert(self, graph: ExportGraph) -> str:
     return self.build_engine(str(onnx_path))
 ```
 
-`OnnxConfig.derive` copies every shared setting, `notes` included, so the intermediate `.onnx` a two-stage export passes on is named and annotated exactly as a direct `format="onnx"` export would be. Composing the ONNX exporter is safe because the export-mode switch in `__call__` is idempotent, and importing it at module scope is safe because loading `rfdetr.export._onnx.exporter` imports no ONNX package — it imports `onnx` inside the methods that use it, so TFLite can still load TensorFlow first. `TestExportDependencyCheck` in `tests/export/test_export.py` pins that.
+`OnnxConfig.derive` copies every shared setting, `notes` included, so the intermediate `.onnx` a two-stage export passes on is named and annotated exactly as a direct `format="onnx"` export would be. Composing the ONNX exporter is safe because the export-mode switch in `__call__` is idempotent, and importing it at module scope is safe because loading `rfdetr.export._onnx.exporter` imports no ONNX package — it imports `onnx` inside the methods that use it, so TFLite can still load TensorFlow first. `TestExportDependencyCheck` in `tests/export/api/test_validation.py` pins that.
 
 ### Validating rather than copying a setting
 
@@ -289,7 +289,7 @@ def _format_settings(cls, settings: Mapping[str, Any]) -> dict[str, Any]:
 ## Known limitations
 
 - **There is no plugin API.** `REGISTRY` is a module-level literal with no `register()` hook, so an external package cannot add a format without editing RF-DETR. Formats live in-tree because each one carries CI matrix entries, a dependency extra, and parity tests that only make sense inside the repository.
-- **The capability mirror is test-enforced, not type-enforced.** Nothing but `tests/export/test_registry.py` stops a registry entry from disagreeing with the class it names.
+- **The capability mirror is test-enforced, not type-enforced.** Nothing but `tests/export/core/test_registry.py` stops a registry entry from disagreeing with the class it names.
 
 ## Next Steps
 
