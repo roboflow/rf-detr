@@ -18,6 +18,9 @@ from __future__ import annotations
 
 from rfdetr.utilities.package import is_installed
 
+#: Whether PyTorch is installed. It is a base dependency, so this is only false in a runtime-only environment that
+#: installs the package without it to run exported models (see ``rfdetr.export._onnx.reference``).
+_IS_TORCH_INSTALLED = is_installed("torch")
 #: Whether the optional torch-xla package is installed.
 _IS_TORCH_XLA_INSTALLED = is_installed("torch_xla")
 #: Whether the optional Transformer Engine package is installed. The probe is deliberately the top-level package: a
