@@ -47,10 +47,10 @@ import pytest
 import yaml
 from PIL import Image
 
-import tests.run_smoke_all_models as smoke
 from rfdetr.datasets.webdataset.index import read_shard_index
 
 CONFIGS_DIR = pathlib.Path(__file__).parent.parent.parent / "configs"
+_SMOKE_RUNNER_PATH = Path(__file__).resolve().parents[1] / "run_smoke_all_models.py"
 
 
 DETECTION_CONFIGS = [
@@ -457,7 +457,7 @@ class TestPlusImports:
 
         monkeypatch.setattr(builtins, "__import__", fail_plus_import)
         monkeypatch.setattr(importlib.metadata, "version", missing_version)
-        result = runpy.run_path(str(Path(smoke.__file__)), run_name="smoke_missing_plus_test")
+        result = runpy.run_path(str(_SMOKE_RUNNER_PATH), run_name="smoke_missing_plus_test")
         assert result["RFDETRXLarge"] is None
         assert result["RFDETRAtto"] is None
 
@@ -473,7 +473,7 @@ class TestPlusImports:
         monkeypatch.setattr(builtins, "__import__", fail_legacy_import)
         monkeypatch.setattr(importlib.metadata, "version", lambda name: "1.1.0")
         with pytest.raises(ImportError, match="broken Plus import"):
-            runpy.run_path(str(Path(smoke.__file__)), run_name="smoke_import_test")
+            runpy.run_path(str(_SMOKE_RUNNER_PATH), run_name="smoke_import_test")
 
 
 class TestPredictionSmoke:
@@ -482,6 +482,8 @@ class TestPredictionSmoke:
     @pytest.mark.parametrize("name", ["RFDETRAtto", "RFDETRFemto", "RFDETRPico"])
     def test_pe_model_predicts_at_default_resolution(self, name, mocker):
         """Run prediction once for each PE model at its default resolution."""
+        import tests.run_smoke_all_models as smoke
+
         instance = mocker.Mock()
         model_class = mocker.Mock(size=name.removeprefix("RFDETR").lower(), return_value=instance)
         mocker.patch.object(smoke, name, model_class)

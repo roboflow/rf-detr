@@ -393,7 +393,9 @@ class TestPublicAPIExports:
 
         sentinel = object()
         monkeypatch.setitem(rfdetr.platform.models.__dict__, "RFDETRXLarge", sentinel)
-        monkeypatch.delitem(rfdetr.__dict__, "RFDETRXLarge", raising=False)
+        # Track the prior state even when the lazy export has never been cached.
+        monkeypatch.setitem(rfdetr.__dict__, "RFDETRXLarge", sentinel)
+        monkeypatch.delitem(rfdetr.__dict__, "RFDETRXLarge")
 
         original_all = list(rfdetr.__all__)
         assert rfdetr.RFDETRXLarge is sentinel

@@ -49,8 +49,6 @@ from typing import Any
 import numpy as np
 import pytest
 import torch
-from roboflow import Roboflow
-from roboflow.adapters.rfapi import RoboflowError, get_version
 from supervision import KeyPoints
 
 from rfdetr import RFDETRNano
@@ -252,6 +250,8 @@ def _poll_until_trained(workspace: str, project: str, version: str, api_key: str
         >>> _poll_until_trained  # doctest: +SKIP
         <function _poll_until_trained at ...>
     """
+    from roboflow.adapters.rfapi import RoboflowError, get_version
+
     deadline = time.monotonic() + _POLL_TIMEOUT_SECONDS
     response: dict[str, Any] = {}
     while time.monotonic() < deadline:
@@ -285,6 +285,8 @@ class TestDeployToRoboflowEndToEnd:
         omitted (exercising auto-latest resolution), then asserts on the polled server-side status of that specific
         version — the return value alone cannot be trusted (issue #1116).
         """
+        from roboflow import Roboflow
+
         rf_project = Roboflow(api_key=_API_KEY).workspace(_WORKSPACE).project(_PROJECT)
         fresh_version = _generate_fresh_version(rf_project)
 
