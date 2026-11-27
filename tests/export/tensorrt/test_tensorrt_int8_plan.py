@@ -106,18 +106,26 @@ def _ints(name: str, values: int | list[int]) -> Any:
     return numpy_helper.from_array(np.array(values, np.int64), name)
 
 
-def _normed_projection_attention(projection: str) -> Any:
-    """Build FP16-sized backbone attention (400 tokens) with a ``LayerNormalization`` after one projection.
+def _normed_projection_attention(projection: str, *, prefix: str = BACKBONE, sequence: int = 400) -> Any:
+    """Build attention with a ``LayerNormalization`` after one projection (FP16-sized backbone attention by default).
 
     The projection trace does not walk through a norm, so the ``q``, ``k`` or ``v`` projection named by *projection*
     is hidden from it, as with timm's ``qk_norm``.
+
+    Args:
+        projection: ``"q"``, ``"k"`` or ``"v"``.
+        prefix: Node-name prefix of the attention block.
+        sequence: Tokens per sequence.
+
+    Returns:
+        A ``ModelProto`` whose MLP sits in the backbone.
 
     Examples:
         >>> model = _normed_projection_attention("k")
         >>> next(node.input[0] for node in model.graph.node if node.op_type == "LayerNormalization")
         'k0'
     """
-    model = _attention_and_mlp(BACKBONE, sequence=400, head_size=16)
+    model = _attention_and_mlp(prefix, sequence=sequence, head_size=16)
     graph = model.graph
     graph.initializer.extend(
         [
@@ -128,7 +136,7 @@ def _normed_projection_attention(projection: str) -> Any:
     reshape = next(i for i, node in enumerate(graph.node) if node.name.endswith(f"{projection}/Reshape"))
     graph.node[reshape].input[0] = "normed"
     norm_inputs = [f"{projection}0", "norm_scale", "norm_bias"]
-    graph.node.insert(reshape, helper.make_node("LayerNormalization", norm_inputs, ["normed"], f"{BACKBONE}norm"))
+    graph.node.insert(reshape, helper.make_node("LayerNormalization", norm_inputs, ["normed"], f"{prefix}norm"))
     return model
 
 
@@ -874,18 +882,21 @@ class TestPlanInt8:
         plan = quantize.plan_int8(model)
         assert (_names(plan), [n for n, _ in plan.activations if "/scores/" in n]) == (["fc1/MatMul", "fc2/MatMul"], [])
 
-    def test_index_input_of_a_splitter_is_not_traced_as_the_projection(self) -> None:
-        """A Gather index computed from a projection is not mistaken for the gathered tensor's projection."""
+    @pytest.mark.parametrize("op", ["Gather", "Slice", "Split", "Squeeze", "Unsqueeze", "Reshape"])
+    def test_index_input_of_a_splitter_is_not_traced_as_the_projection(self, op: str) -> None:
+        """An index, bound, size, axis or shape computed from a projection is not mistaken for the data's projection."""
         model = _attention_and_mlp(BACKBONE, sequence=400, head_size=16)
         graph = model.graph
-        graph.initializer.extend([_weight("wsel", 32, 1, seed=8), _ints("flat", [-1])])
+        graph.initializer.extend([_weight("wsel", 32, 1, seed=8), _ints("flat", [-1]), _ints("zero", [0])])
         context = next(i for i, node in enumerate(graph.node) if node.name.endswith("context/MatMul"))
         graph.node[context].input[1] = "v3"
+        inputs = {"Slice": ["v2", "zero", "sel2"], "Split": ["v2", "sel2"]}.get(op, ["v2", "sel2"])
+        outputs = ["v3", "v_rest"] if op == "Split" else ["v3"]
         index = [
             helper.make_node("MatMul", ["x", "wsel"], ["sel0"], f"{BACKBONE}sel/MatMul"),
             helper.make_node("Cast", ["sel0"], ["sel1"], f"{BACKBONE}sel/Cast", to=TensorProto.INT64),
             helper.make_node("Reshape", ["sel1", "flat"], ["sel2"], f"{BACKBONE}sel/Reshape"),
-            helper.make_node("Gather", ["v2", "sel2"], ["v3"], f"{BACKBONE}v/Gather", axis=2),
+            helper.make_node(op, inputs, outputs, f"{BACKBONE}v/{op}"),
         ]
         for offset, node in enumerate(index):
             graph.node.insert(context + offset, node)
@@ -899,9 +910,23 @@ class TestPlanInt8:
             quantize.plan_int8(model)
         assert f"{BACKBONE}{projection}/MatMul" in str(exc_info.value)
 
-    def test_unplanned_projection_the_trace_cannot_follow_is_accepted(self) -> None:
-        """A projection hidden from the trace but outside the quantized regions is accepted."""
-        model = _normed_projection_attention("q")
+    def test_hidden_projection_in_front_of_float_decoder_attention_is_refused(self) -> None:
+        """The refusal covers decoder attention, which always stays FP16, not only the backbone's."""
+        model = _normed_projection_attention("q", prefix=DECODER, sequence=8)
+        with pytest.raises(ValueError, match="reaches the FP16 attention"):
+            quantize.plan_int8(model)
+
+    def test_hidden_projection_of_a_fusable_block_left_float_is_refused(self) -> None:
+        """A 325-token block left FP16 by an unplanned output projection still refuses a hidden planned q."""
+        model = _normed_projection_attention("q", sequence=325)
+        next(node for node in model.graph.node if node.name.endswith("o/MatMul")).name = f"{HEAD}o/MatMul"
+        with pytest.raises(ValueError, match="reaches the FP16 attention"):
+            quantize.plan_int8(model)
+
+    @pytest.mark.parametrize("sequence", [325, 400])
+    def test_unplanned_projection_the_trace_cannot_follow_keeps_attention_float(self, sequence: int) -> None:
+        """A hidden projection outside the quantized regions keeps its attention FP16 and is not refused."""
+        model = _normed_projection_attention("q", sequence=sequence)
         graph = model.graph
         next(node for node in graph.node if node.name.endswith("q/MatMul")).name = f"{HEAD}q/MatMul"
         assert _names(quantize.plan_int8(model)) == ["fc1/MatMul", "fc2/MatMul"]
@@ -917,7 +942,8 @@ class TestPlanInt8:
         graph.node.insert(query, helper.make_node("MatMul", ["x", "wpre"], ["x_pre"], f"{BACKBONE}pre/MatMul"))
         assert _names(quantize.plan_int8(model)) == ["pre/MatMul", "fc1/MatMul", "fc2/MatMul"]
 
-    def test_shape_of_a_planned_layer_does_not_count_as_feeding_float_attention(self) -> None:
+    @pytest.mark.parametrize("op", ["Shape", "Size"])
+    def test_shape_of_a_planned_layer_does_not_count_as_feeding_float_attention(self, op: str) -> None:
         """FP16 attention scaled by a size read from a planned layer's output shape does not refuse that layer."""
         model = _attention_and_mlp(BACKBONE, sequence=400, head_size=16)
         graph = model.graph
@@ -926,7 +952,9 @@ class TestPlanInt8:
         graph.node[scores].input[0] = "q_scaled"
         scale = [
             helper.make_node("MatMul", ["x", "wside"], ["side"], f"{BACKBONE}side/MatMul"),
-            helper.make_node("Shape", ["side"], ["side_shape"], f"{BACKBONE}side/Shape", start=-1),
+            helper.make_node(
+                op, ["side"], ["side_shape"], f"{BACKBONE}side/{op}", **({"start": -1} if op == "Shape" else {})
+            ),
             helper.make_node("Cast", ["side_shape"], ["size"], f"{BACKBONE}side/Cast", to=TensorProto.FLOAT),
             helper.make_node("Div", ["q2", "size"], ["q_scaled"], f"{BACKBONE}q/Div"),
         ]

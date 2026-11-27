@@ -273,6 +273,9 @@ class _Attention:
     projections: frozenset[str]
     output_projection: str | None
     int8: bool
+    #: Every weight-bearing node reaching q, k or v through any op (see :func:`_weights_reaching`), a superset of the
+    #: q/k/v entries of ``projections``.
+    reaching: frozenset[str]
 
 
 def _constant_weights(graph: Any) -> dict[str, Any]:
@@ -664,8 +667,8 @@ def _weights_reaching(
     """Return the weight-bearing nodes whose output reaches *starts* without passing another weight-bearing node.
 
     Walks upstream through any op, unlike :func:`_trace_projection`, so a projection behind an op the trace does not
-    follow (a ``LayerNormalization`` on q, say) is still found. It ends at ``Shape``, which passes on no data, and
-    follows only the data input of the ops in :data:`_DATA_INPUT_ONLY`.
+    follow (a ``LayerNormalization`` on q, say) is still found. It ends at ``Shape`` and ``Size``, which pass on no
+    data, and follows only the data input of the ops in :data:`_DATA_INPUT_ONLY`.
 
     Examples:
         >>> from onnx import helper, numpy_helper
@@ -683,7 +686,7 @@ def _weights_reaching(
         seen.add(id(node))
         if _holds_weight(node, initializers):
             found.add(str(node.name))
-        elif node.op_type != "Shape":
+        elif node.op_type not in ("Shape", "Size"):
             data_inputs = node.input[:1] if node.op_type in _DATA_INPUT_ONLY else node.input
             frontier.extend(name for name in data_inputs if name and name not in initializers)
     return found
@@ -843,7 +846,10 @@ def _attention_blocks(model: Any) -> list[_Attention]:
             and query_dims[-1] in _FUSED_INT8_HEAD_SIZES
             and all(d is not None and d <= _INT8_ATTENTION_MAX_TOKENS for d in score_dims[-2:])
         )
-        blocks.append(_Attention(scores, context, frozenset(p for p in projections if p), output_projection, int8))
+        reaching = frozenset(_weights_reaching(sources, producers, initializers))
+        blocks.append(
+            _Attention(scores, context, frozenset(p for p in projections if p), output_projection, int8, reaching)
+        )
     return blocks
 
 
@@ -895,36 +901,36 @@ def _is_float_pe_mlp(name: str) -> bool:
     return match is not None and int(match.group(1)) < _PE_FLOAT_MLP_BLOCKS
 
 
-def _refuse_planned_inputs_of_float_attention(
-    graph: Any, float_blocks: list[_Attention], weighted: set[str], initializers: Mapping[str, Any]
-) -> None:
+def _refuse_planned_inputs_of_float_attention(float_blocks: list[_Attention], weighted: set[str]) -> None:
     """Raise if a planned layer reaches an FP16 attention block's q, k or v without passing another weighted layer.
 
     :func:`_trace_projection` follows a list of ops; a projection behind any other op (a norm on q, say) is hidden from
     it and would stay INT8 in front of FP16 attention.
 
     Args:
-        graph: The model's top-level ``GraphProto``.
         float_blocks: The attention blocks that stay FP16.
         weighted: Names of the nodes the plan quantizes.
-        initializers: Constant tensors by name.
 
     Raises:
         ValueError: If a planned layer reaches an FP16 attention block's batched multiplies that way.
 
     Examples:
         >>> from onnx import helper
-        >>> _refuse_planned_inputs_of_float_attention(helper.make_graph([], "g", [], []), [], set(), {})
+        >>> scores = helper.make_node("MatMul", ["q", "k"], ["s"], "scores")
+        >>> context = helper.make_node("MatMul", ["p", "v"], ["c"], "context")
+        >>> block = _Attention(scores, context, frozenset(), "out", False, frozenset({"q_proj"}))
+        >>> _refuse_planned_inputs_of_float_attention([block], {"q_proj"})
+        Traceback (most recent call last):
+        ...
+        ValueError: Cannot place INT8 safely: the layer 'q_proj' reaches the FP16 attention at 'scores' ...
     """
-    producers = {output: node for node in graph.node for output in node.output}
     for block in float_blocks:
-        starts = (block.scores.input[0], block.scores.input[1], block.context.input[1])
-        reaching = sorted(_weights_reaching(starts, producers, initializers) & weighted)
+        reaching = sorted(block.reaching & weighted)
         if reaching:
             raise ValueError(
-                f"Cannot place INT8 safely: the projection {reaching[0]!r} reaches the FP16 attention at "
-                f"{block.scores.name!r} through an op the plan does not follow. INT8 TensorRT export applies to "
-                "RF-DETR model exports only (detection, segmentation or keypoint)."
+                f"Cannot place INT8 safely: the layer {reaching[0]!r} reaches the FP16 attention at "
+                f"{block.scores.name!r} through an op the plan does not follow, so it cannot be kept out of INT8 with "
+                'that attention. Export this model without quantization="int8".'
             )
 
 
@@ -965,7 +971,8 @@ def plan_int8(model: Any) -> Int8Plan:
         in_region = block.scores.name.startswith(_INT8_ATTENTION_REGION)
         backbone_blocks += in_region
         unnamed = {block.scores.name, block.context.name} & duplicated
-        if block.int8 and in_region and not unnamed and block.projections <= weighted:
+        # Every layer reaching q, k or v must be planned too: one the trace cannot see still feeds the fused kernel.
+        if block.int8 and in_region and not unnamed and block.projections | block.reaching <= weighted:
             fused += 1
             attention_inputs += [(block.scores.name, 0), (block.scores.name, 1)]
             attention_inputs += [(block.context.name, 0), (block.context.name, 1)]
@@ -1003,7 +1010,7 @@ def plan_int8(model: Any) -> Int8Plan:
                 weighted.discard(name)
                 changed = True
 
-    _refuse_planned_inputs_of_float_attention(graph, float_blocks, weighted, initializers)
+    _refuse_planned_inputs_of_float_attention(float_blocks, weighted)
     if not weighted:
         raise ValueError(
             "Found no backbone encoder or decoder layer to quantize in this graph; INT8 TensorRT export applies to "
