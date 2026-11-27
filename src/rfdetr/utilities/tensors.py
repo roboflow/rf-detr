@@ -80,20 +80,26 @@ class NestedTensor:
         # every other construction site keeps the conservative behaviour.
         self.no_padding = no_padding
 
-    def to(self, device: torch.device, **kwargs: Any) -> "NestedTensor":
-        """Move tensors and mask to *device*.
+    def to(self, device: torch.device | str | torch.dtype, **kwargs: Any) -> "NestedTensor":
+        """Convert tensors and move the boolean mask to their resulting device.
 
         Args:
-            device: Target device. **kwargs: Additional arguments forwarded to ``Tensor.to``.
+            device: Target device, or the single positional argument ``Tensor.to`` accepts in its place
+                (for example a dtype).
+            **kwargs: Additional arguments forwarded to the tensors. The mask keeps its boolean dtype and only follows
+                the converted tensors' device, while honoring ``non_blocking`` and ``copy``.
 
         Returns:
-            New NestedTensor on *device*.
+            New NestedTensor with converted tensors and a boolean mask on the same device.
         """
         cast_tensor = self.tensors.to(device, **kwargs)
         mask = self.mask
         if mask is not None:
-            assert mask is not None
-            cast_mask = mask.to(device, **kwargs)
+            cast_mask = mask.to(
+                device=cast_tensor.device,
+                non_blocking=kwargs.get("non_blocking", False),
+                copy=kwargs.get("copy", False),
+            )
         else:
             cast_mask = None
         return NestedTensor(cast_tensor, cast_mask, self.no_padding)
