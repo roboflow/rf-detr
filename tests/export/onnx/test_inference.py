@@ -3,26 +3,44 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+
 """Tests for ONNX Runtime inference decoding (``_run_inference`` in ``rfdetr/export/_onnx/inference.py``).
 
 Before this file, ``_run_inference``'s detection decode had no dedicated unit test at all — only its preprocessing half
 was covered (``test_preprocess_parity.py``). This file covers the multi-label query/class selection, using the same
 ``types.SimpleNamespace`` fake-session pattern the rest of the export test suite uses for mocking backend objects (see
 ``tests/export/api/test_validation.py``).
+
+Tests for the ``notes`` setting on :class:`~rfdetr.export._onnx.exporter.OnnxConfig`, embedded by
+``OnnxExporter``.
+
+Preprocessing parity tests for the ONNX Runtime inference helper.
+
+``preprocess_to_nchw`` must produce the same input tensor as ``RFDETR.predict()`` for the same source image — the ONNX
+sibling of ``tests/export/tflite/test_tflite_inference_parity.py``. History: this path resized with PIL BILINEAR, which
+applies an adaptive antialias filter when downscaling; after predict() switched to ``antialias=False`` (#1206) the ONNX
+inputs diverged on 91%+ of float bits.
 """
 
 from __future__ import annotations
 
+import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
 import pytest
 import torch
+import torch.nn as nn
+import torchvision.transforms.functional as F  # noqa: N812
 from PIL import Image as PILImage
 
+from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
 from rfdetr.export._onnx.inference import _create_onnx_session, _run_inference, _run_onnx_bound
-from tests._markers import _requires_onnx_and_onnxruntime
+from rfdetr.export._runtime.preprocess import preprocess_to_nchw
+from rfdetr.export.prepare import ExportGraph
+from tests._markers import _requires_onnx, _requires_onnx_and_onnxruntime
 from tests._oriented_photo import upright_reference, write_oriented_photo
 
 _INPUT_SHAPE = [1, 3, 224, 224]
@@ -381,3 +399,313 @@ class TestCreateOnnxSession:
         (actual,) = session.run(None, {session.get_inputs()[0].name: feed})
 
         np.testing.assert_array_equal(actual, feed)
+
+
+# The helper doctest exports a real ONNX model, so it needs the package a class-level skipif cannot gate.
+__doctest_requires__ = {("_export_tiny_model", "_embedded_metadata"): ["onnx"]}
+
+
+#: A list that contains itself: JSON cannot encode it, and ``json.dumps`` reports it as a ``ValueError``.
+_CIRCULAR_NOTES: list[object] = []
+
+
+_CIRCULAR_NOTES.append(_CIRCULAR_NOTES)
+
+
+class _TinyModel(nn.Module):
+    """Minimal model that can be exported to ONNX."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Run a trivial identity-like forward pass.
+
+        Args:
+            x: Input tensor.
+
+        Returns:
+            Input tensor unchanged.
+        """
+        return x
+
+
+def _export_tiny_model(tmp_path: Path, notes: object = None) -> str:
+    """Export a tiny model to ONNX and return the output file path.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        notes: Optional notes to embed in the ONNX file.
+
+    Returns:
+        Path to the exported ONNX file.
+
+    Examples:
+        ``export_onnx`` logs its success at INFO, and rf-detr's stdout handler re-resolves
+        ``sys.stdout`` per record, so without the redirect the log line lands in doctest's captured
+        output and is compared against the expected value.
+
+        >>> import contextlib
+        >>> import io
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
+        ...     out = _export_tiny_model(Path(d))
+        >>> Path(out).suffix
+        '.onnx'
+    """
+    model = _TinyModel().eval()
+    input_tensor = torch.randn(1, 3, 32, 32)
+    graph = ExportGraph(
+        model=model,
+        input_tensors=input_tensor,
+        input_names=("input",),
+        output_names=("output",),
+        dynamic_axes=None,
+        shape=(32, 32),
+        backbone_only=False,
+    )
+    return str(OnnxExporter(OnnxConfig(output_dir=tmp_path, verbose=False, notes=notes))(graph))
+
+
+def _embedded_metadata(onnx_path: str) -> dict[str, str]:
+    """Return the ``metadata_props`` of the ONNX file at *onnx_path* as a key/value dict.
+
+    Args:
+        onnx_path: Path to an exported ONNX file.
+
+    Returns:
+        Mapping of each metadata property key to its string value.
+
+    Examples:
+        >>> import contextlib, io, tempfile
+        >>> from pathlib import Path
+        >>> with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
+        ...     meta = _embedded_metadata(_export_tiny_model(Path(d), notes="hi"))
+        >>> meta["rfdetr_notes"]
+        'hi'
+    """
+    import onnx
+
+    return {prop.key: prop.value for prop in onnx.load(onnx_path).metadata_props}
+
+
+@_requires_onnx
+class TestExportOnnxNotes:
+    """Verify ``notes`` metadata round-trips through the ONNX export."""
+
+    @pytest.mark.parametrize(
+        ("notes", "expected_value"),
+        [
+            pytest.param("simple string", "simple string", id="string"),
+            pytest.param(
+                {"date": "2026-01-01", "labeller": "Alice"},
+                '{"date": "2026-01-01", "labeller": "Alice"}',
+                id="dict",
+            ),
+            pytest.param(["class_a", "class_b"], '["class_a", "class_b"]', id="list"),
+            pytest.param(42, "42", id="int"),
+            pytest.param("Reviewer: Łukasz · 2026-Q2 · ✅", "Reviewer: Łukasz · 2026-Q2 · ✅", id="unicode"),
+        ],
+    )
+    def test_notes_embedded_in_onnx_metadata(self, tmp_path: Path, notes: object, expected_value: str) -> None:
+        """Notes are stored as the 'rfdetr_notes' metadata entry: strings verbatim (unicode intact), the rest as
+        JSON."""
+        meta = _embedded_metadata(_export_tiny_model(tmp_path, notes=notes))
+
+        assert "rfdetr_notes" in meta
+        assert meta["rfdetr_notes"] == expected_value
+
+    def test_dict_notes_round_trip_via_json(self, tmp_path: Path) -> None:
+        """Dict notes deserialise back to the original dict via json.loads."""
+        notes = {"project": "ceramics", "batch": 7}
+
+        meta = _embedded_metadata(_export_tiny_model(tmp_path, notes=notes))
+
+        assert json.loads(meta["rfdetr_notes"]) == notes
+
+    def test_no_notes_metadata_when_notes_is_none(self, tmp_path: Path) -> None:
+        """When notes=None (default), no 'rfdetr_notes' metadata entry is written."""
+        meta = _embedded_metadata(_export_tiny_model(tmp_path, notes=None))
+
+        assert "rfdetr_notes" not in meta
+
+    @pytest.mark.parametrize(
+        "notes",
+        [
+            pytest.param("", id="empty_string"),
+            pytest.param({}, id="empty_dict"),
+            pytest.param([], id="empty_list"),
+            pytest.param(0, id="zero"),
+            pytest.param(False, id="false"),
+        ],
+    )
+    def test_falsy_notes_still_embedded(self, tmp_path: Path, notes: object) -> None:
+        """Falsy but non-None notes are embedded; guard is 'is not None', not truthiness."""
+        meta = _embedded_metadata(_export_tiny_model(tmp_path, notes=notes))
+
+        assert "rfdetr_notes" in meta
+
+    def test_embedding_notes_does_not_read_a_module_level_onnx_binding(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Notes still reach the file when the exporter module carries a stale ``onnx = None`` binding.
+
+        The exporter module used to bind ``onnx`` at import, to ``None`` without the package, and ``_embed_notes`` read
+        it, so a notebook that installed ``onnx`` after the import lost its notes. ``_embed_notes`` now imports ``onnx``
+        when it runs and nothing binds the name at module level; the planted binding fails this test only if a read of
+        such a binding comes back. The late-install scenario itself is covered by
+        ``test_onnx_installed_after_a_refused_check_is_found``.
+        """
+        monkeypatch.setattr("rfdetr.export._onnx.exporter.onnx", None, raising=False)
+
+        meta = _embedded_metadata(_export_tiny_model(tmp_path, notes={"run": 1}))
+
+        assert meta["rfdetr_notes"] == '{"run": 1}'
+
+    @pytest.mark.parametrize(
+        "notes, error",
+        [
+            (float("nan"), ValueError),
+            (float("inf"), ValueError),
+            pytest.param({"scores": [float("nan")]}, ValueError, id="nested-nan"),
+            pytest.param({1, 2}, TypeError, id="set"),
+            pytest.param(_CIRCULAR_NOTES, ValueError, id="circular"),
+        ],
+    )
+    def test_unserializable_notes_are_refused_at_construction(
+        self, tmp_path: Path, notes: object, error: type[Exception]
+    ) -> None:
+        """A value the metadata slot cannot hold is refused when the exporter is built, before any trace."""
+        with pytest.raises(error, match="notes"):
+            OnnxExporter(OnnxConfig(output_dir=tmp_path, verbose=False, notes=notes))
+
+
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+
+
+IMAGENET_STD = [0.229, 0.224, 0.225]
+
+
+# Same bound as the TFLite parity file: the torch-free NumPy fallback matches the torchvision
+# path up to float32 op-order noise (~5e-5 in normalised space).
+FALLBACK_MAX_ABS_DIFF_BOUND = 1e-3
+
+
+def _pytorch_preprocess(pil_img: PILImage.Image, hw: tuple[int, int]) -> np.ndarray:
+    """Mirror of the PyTorch predict() preprocessing: to_tensor -> resize(antialias=False) -> normalize.
+
+    Examples:
+        >>> import numpy as np
+        >>> from PIL import Image as PILImage
+        >>> img = PILImage.new("RGB", (64, 64), color=(128, 64, 32))
+        >>> arr = _pytorch_preprocess(img, (32, 32))
+        >>> arr.shape
+        (1, 3, 32, 32)
+        >>> arr.dtype
+        dtype('float32')
+    """
+    img = F.to_tensor(pil_img)
+    img = F.resize(img, list(hw), antialias=False)
+    img = F.normalize(img, IMAGENET_MEAN, IMAGENET_STD)
+    return img.unsqueeze(0).numpy()
+
+
+def _make_synthetic_rgb(seed: int, size: tuple[int, int]) -> PILImage.Image:
+    """Deterministic synthetic RGB image with structure (not pure noise) so resize filtering matters.
+
+    Examples:
+        >>> img = _make_synthetic_rgb(0, (64, 64))
+        >>> img.size
+        (64, 64)
+        >>> img.mode
+        'RGB'
+    """
+    rng = np.random.default_rng(seed)
+    height, width = size
+    base = rng.integers(0, 256, size=(height // 8, width // 8, 3), dtype=np.uint8)
+    pil_small = PILImage.fromarray(base, mode="RGB")
+    return pil_small.resize((width, height), getattr(PILImage, "Resampling", PILImage).NEAREST)
+
+
+class TestOnnxPreprocessingParity:
+    """``preprocess_to_nchw`` must match predict()'s preprocessing bit-for-bit with torchvision."""
+
+    @pytest.mark.parametrize(
+        ("src_hw", "tgt", "seed"),
+        [
+            pytest.param((720, 1280), (384, 384), 5, id="1280x720_to_384x384"),
+            pytest.param((600, 800), (384, 384), 8, id="800x600_to_384x384"),
+            pytest.param((500, 500), (256, 256), 11, id="500x500_to_256x256"),
+            pytest.param((384, 384), (384, 384), 9, id="identity_384x384"),
+        ],
+    )
+    def test_matches_pytorch_predict_preprocessing_bitwise(
+        self, src_hw: tuple[int, int], tgt: tuple[int, int], seed: int
+    ) -> None:
+        """The ONNX preprocessing matches PyTorch predict preprocessing bitwise for each source and target size."""
+        pil = _make_synthetic_rgb(seed=seed, size=src_hw)
+
+        pt = _pytorch_preprocess(pil, tgt)
+        onnx = preprocess_to_nchw(pil, tgt[0], tgt[1], channels=3)
+
+        assert pt.shape == onnx.shape, f"shape mismatch: PT {pt.shape} vs ONNX {onnx.shape}"
+        pt32 = np.ascontiguousarray(pt, dtype=np.float32).view(np.uint32)
+        on32 = np.ascontiguousarray(onnx, dtype=np.float32).view(np.uint32)
+        n_diff = int((pt32 != on32).sum())
+        assert n_diff == 0, (
+            f"ONNX preprocessing diverged from predict(): {n_diff}/{pt32.size} float bits differ "
+            f"(max|diff|={float(np.abs(pt - onnx).max()):.6f}). With torchvision importable it must "
+            f"run predict()'s exact call chain (to_tensor -> resize(antialias=False) -> normalize)."
+        )
+
+    def test_antialias_true_would_be_much_worse(self) -> None:
+        """Discriminator: torchvision's ``antialias=True`` default must diverge far from predict().
+
+        The regression this file guards against — the ONNX path silently resized with antialiasing after predict()
+        switched to ``antialias=False`` (#1206), flipping 91%+ of float bits. The current code must stay bit-identical
+        to predict() while the antialiased variant stays far away, proving the bitwise parity assertion discriminates on
+        the antialias flag rather than passing vacuously.
+        """
+        pil = _make_synthetic_rgb(seed=13, size=(720, 1280))
+        tgt = (384, 384)
+
+        pt = _pytorch_preprocess(pil, tgt)
+        onnx = preprocess_to_nchw(pil, tgt[0], tgt[1], channels=3)
+
+        img = F.to_tensor(pil.convert("RGB"))
+        img = F.resize(img, list(tgt), antialias=True)
+        img = F.normalize(img, IMAGENET_MEAN, IMAGENET_STD)
+        antialias = img.unsqueeze(0).numpy()
+
+        pt32 = np.ascontiguousarray(pt, dtype=np.float32).view(np.uint32)
+        on32 = np.ascontiguousarray(onnx, dtype=np.float32).view(np.uint32)
+        assert int((pt32 != on32).sum()) == 0, "current ONNX code must stay bit-identical to predict()"
+
+        max_diff_antialias = float(np.abs(pt - antialias).max())
+        assert max_diff_antialias > 0.1, (
+            f"antialias=True variant unexpectedly close to predict() (max|diff|={max_diff_antialias:.4f}); "
+            "this test can no longer discriminate the antialias regression."
+        )
+
+    def test_torch_free_fallback_still_close(self) -> None:
+        """With torch masked out, the NumPy fallback stays within float32 op-order noise of predict()."""
+        from unittest import mock
+
+        pil = _make_synthetic_rgb(seed=6, size=(720, 1280))
+        tgt = (384, 384)
+        pt = _pytorch_preprocess(pil, tgt)
+
+        with mock.patch.dict(sys.modules, {"torch": None}):
+            onnx = preprocess_to_nchw(pil, tgt[0], tgt[1], channels=3)
+
+        max_diff = float(np.abs(pt - onnx).max())
+        assert max_diff < FALLBACK_MAX_ABS_DIFF_BOUND, (
+            f"Torch-free NumPy fallback diverged: max|diff|={max_diff:.4f} > {FALLBACK_MAX_ABS_DIFF_BOUND}. "
+            "The fallback must use _bilinear_resize_half_pixel (antialias-free, half-pixel centres)."
+        )
+
+    def test_grayscale_channel_handling(self) -> None:
+        """Grayscale (channels=1) path must produce shape (1, 1, H, W) float32."""
+        rng = np.random.default_rng(7)
+        pil = PILImage.fromarray(rng.integers(0, 256, size=(256, 256), dtype=np.uint8), mode="L")
+        onnx = preprocess_to_nchw(pil, 128, 128, channels=1)
+        assert onnx.shape == (1, 1, 128, 128), f"unexpected shape: {onnx.shape}"
+        assert onnx.dtype == np.float32
