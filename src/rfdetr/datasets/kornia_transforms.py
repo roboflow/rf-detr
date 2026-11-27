@@ -5,8 +5,8 @@
 # ------------------------------------------------------------------------
 """Kornia-based GPU augmentation pipeline for RF-DETR training.
 
-This module provides GPU-side augmentation as an alternative to the CPU-based Albumentations pipeline.  All transforms
-run on the device where the batch already resides (typically CUDA), avoiding a CPU-GPU round-trip per sample.
+This module provides Kornia augmentation as an alternative to the Albumentations pipeline. A geometry-sensitive
+prefix runs per image before resizing; the remaining transforms run on the batch device.
 
 Supports detection (boxes only), segmentation (boxes + instance masks), and
 keypoints (boxes + visible joint coordinates).
@@ -48,9 +48,11 @@ from typing import TYPE_CHECKING, Any, cast
 import numpy as np
 import torch
 from torch import Tensor
+from torchvision.transforms.v2 import functional
 
 from rfdetr.config import AugmentationBackend
 from rfdetr.datasets._aug_utils import filter_keypoint_hflip_augmentations, keypoint_flip_permutation
+from rfdetr.datasets._torchvision import _filter_per_instance_fields
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
@@ -1109,6 +1111,150 @@ _REGISTRY: dict[str, Callable[[dict[str, Any]], Any]] = {
     "Perspective": _make_perspective,
 }
 
+#: aug_config keys whose geometry never commutes with the anisotropic square resize, so they always run on the CPU
+#: before the resize (roboflow/rf-detr#1769): a rotation or perspective applied after the resize turns rigidly in the
+#: network input, a shape no camera produces.
+_ALWAYS_PRE_RESIZE_AUG_KEYS: frozenset[str] = frozenset({"Rotate", "ShiftScaleRotate", "Perspective"})
+
+
+def _affine_has_rotation_or_shear(params: dict[str, Any]) -> bool:
+    """Return whether an ``Affine`` aug_config entry rotates or shears.
+
+    Rotation and shear do not commute with the anisotropic square resize, so such an entry must run on the CPU before
+    the resize (roboflow/rf-detr#1769). A pure scale or a ``translate_percent`` offset (a fraction of the image size)
+    commutes with the resize, but a ``translate_px`` offset is absolute pixels and does not — so it is routed before
+    the resize separately, by :func:`split_aug_config_for_gpu`, not by this helper.
+
+    Args:
+        params: The ``Affine`` aug_config params. An unset or ``None`` ``rotate`` or ``shear`` is the identity.
+
+    Returns:
+        ``True`` when ``rotate`` or ``shear`` is set to anything other than its identity, read the way Albumentations
+        reads it (see :func:`_affine_range_is`).
+
+    Examples:
+        >>> _affine_has_rotation_or_shear({"translate_px": 4, "scale": (0.9, 1.1)})
+        False
+        >>> _affine_has_rotation_or_shear({"rotate": (-15, 15)})
+        True
+        >>> _affine_has_rotation_or_shear({"shear": {"x": 0}})
+        True
+    """
+    for name in ("rotate", "shear"):
+        value = params.get(name)
+        if value is not None and not _affine_range_is(value, 0.0):
+            return True
+    return False
+
+
+def _runs_before_resize(name: str, params: dict[str, Any]) -> bool:
+    """Return whether an aug_config entry must run on the CPU before the resize.
+
+    ``Rotate``, ``ShiftScaleRotate`` and ``Perspective`` never commute with the anisotropic square resize. An
+    ``Affine`` entry must also run before the resize when it rotates or shears — or when it sets ``translate_px``:
+    a whole-pixel offset is in source-image pixels on the CPU path but resized-image pixels on the GPU path, so a
+    fixed shift would land in a different place on each backend. Pure scale and ``translate_percent`` (a fraction of
+    the image size) commute with the resize and stay on the GPU.
+
+    Args:
+        name: The aug_config transform name.
+        params: The transform's aug_config params.
+
+    Returns:
+        ``True`` when the entry must run on the CPU before the resize.
+
+    Examples:
+        >>> _runs_before_resize("Rotate", {"limit": 45, "p": 0.5})
+        True
+        >>> _runs_before_resize("Affine", {"translate_px": 4, "p": 1.0})
+        True
+        >>> _runs_before_resize("Affine", {"scale": (0.9, 1.1), "p": 1.0})
+        False
+        >>> _runs_before_resize("HorizontalFlip", {"p": 0.5})
+        False
+    """
+    if name in _ALWAYS_PRE_RESIZE_AUG_KEYS:
+        return True
+    if name != "Affine":
+        return False
+    return _affine_has_rotation_or_shear(params) or params.get("translate_px") is not None
+
+
+def _pixel_affine_requires_albumentations(config: dict[str, dict[str, Any]]) -> bool:
+    """Identify pixel-affine options that Kornia cannot preserve before resizing."""
+    params = config.get("Affine", {})
+    if params.get("translate_px") is None:
+        return False
+    if params.get("translate_percent") is not None:
+        raise ValueError("Affine accepts either translate_px or translate_percent, not both.")
+    supported = {"translate_px", "rotate", "scale", "shear", "p", "border_mode", "fill", "fill_mask"}
+    if set(params) - supported or isinstance(params.get("scale"), dict) or isinstance(params.get("shear"), dict):
+        return True
+    try:
+        _pixel_translation_bounds(params["translate_px"])
+        _pixel_affine_padding_mode(params)
+    except ValueError:
+        return True
+    return False
+
+
+def split_aug_config_for_gpu(
+    aug_config: dict[str, dict[str, Any]],
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+    """Split an aug_config into the entries that must run on the CPU before the resize and the GPU entries.
+
+    Geometric transforms applied after the square resize act on the squashed image: a rotation becomes a rigid turn in
+    the network input, which no real image produces (roboflow/rf-detr#1769). The entries that rotate, shear or displace
+    corners therefore run on the CPU before the resize, while flips (which commute with a resize exactly) and
+    pixel-level transforms stay on the Kornia GPU pipeline:
+
+    * ``Rotate``, ``ShiftScaleRotate`` and ``Perspective`` always run before the resize.
+    * ``Affine`` runs before the resize when it rotates, shears, or sets ``translate_px`` (absolute pixels change
+      meaning across the resize); pure scale / ``translate_percent`` stays on the GPU.
+    * Every other key stays on the GPU. Unknown keys are kept there too, so :func:`build_kornia_pipeline` still
+      raises its ``ValueError`` for them.
+
+    The split is a prefix cut, not a partition by key: everything up to and including the last entry that must run
+    before the resize runs on the CPU, in configured order, and the rest runs on the GPU. A partition would reorder
+    the transform sequence — a flip configured before a rotation would execute after it on the GPU path, reversing
+    the tilt relative to the CPU path. The prefix runs through Kornia on the CPU, preserving its configured semantics.
+
+    Args:
+        aug_config: Mapping of augmentation names to parameter dicts, as accepted by :func:`build_kornia_pipeline`.
+
+    Returns:
+        ``(pre_resize_config, gpu_config)``: the entries to run on the CPU before the resize first, then the entries
+        for the GPU pipeline, each preserving the input order. When nothing moves before the resize, the returned GPU
+        config is the input object itself.
+
+    Examples:
+        >>> split_aug_config_for_gpu({"Affine": {"rotate": (-15, 15)}, "HorizontalFlip": {"p": 0.5}})
+        ({'Affine': {'rotate': (-15, 15)}}, {'HorizontalFlip': {'p': 0.5}})
+        >>> split_aug_config_for_gpu({"Affine": {"translate_px": 4}, "HorizontalFlip": {"p": 0.5}})
+        ({'Affine': {'translate_px': 4}}, {'HorizontalFlip': {'p': 0.5}})
+        >>> split_aug_config_for_gpu({"HorizontalFlip": {"p": 1.0}, "Rotate": {"limit": 30, "p": 1.0}})
+        ({'HorizontalFlip': {'p': 1.0}, 'Rotate': {'limit': 30, 'p': 1.0}}, {})
+        >>> split_aug_config_for_gpu({})
+        ({}, {})
+    """
+    items = list(aug_config.items())
+    last_pre_resize = -1
+    for index, (name, params) in enumerate(items):
+        if _runs_before_resize(name, params):
+            last_pre_resize = index
+    if last_pre_resize < 0:
+        return {}, aug_config
+    pre_resize: dict[str, dict[str, Any]] = {}
+    gpu: dict[str, dict[str, Any]] = {}
+    for index, (name, params) in enumerate(items):
+        # Unknown keys stay on the GPU even inside the prefix, so build_kornia_pipeline still raises for them
+        # instead of the CPU wrappers silently skipping them as unbuildable.
+        if index <= last_pre_resize and name in _REGISTRY:
+            pre_resize[name] = params
+        else:
+            gpu[name] = params
+    return pre_resize, gpu
+
 
 # ---------------------------------------------------------------------------
 # Pipeline builders
@@ -1122,6 +1268,8 @@ def build_kornia_pipeline(
     include_keypoints: bool = False,
     with_keypoints: bool = False,
     keypoint_flip_pairs: list[int] | None = None,
+    *,
+    allow_mixed_pixel_affine: bool = False,
 ) -> Any:
     """Build a Kornia ``AugmentationSequential`` from an aug_config dict.
 
@@ -1131,6 +1279,10 @@ def build_kornia_pipeline(
     Args:
         aug_config: Mapping of augmentation names to parameter dicts, identical
             to the format accepted by the Albumentations path (e.g. ``{"HorizontalFlip": {"p": 0.5}}``).
+            On the training path the caller passes only the GPU entries from
+            :func:`split_aug_config_for_gpu` — geometric entries that rotate, shear or displace corners run on the
+            CPU before the resize instead (roboflow/rf-detr#1769) — but the builder itself still accepts a full
+            config, as direct callers and tests use it.
         resolution: Target image resolution in pixels (currently reserved for
             future resolution-aware augmentations).
         with_masks: When ``True``, include ``"mask"`` in ``data_keys`` so
@@ -1185,7 +1337,46 @@ def build_kornia_pipeline(
             raise ValueError(
                 f"Unknown augmentation key {name!r} for Kornia GPU backend. Supported keys: {sorted(_REGISTRY)}."
             )
-        transforms.append(factory(params))
+        if (
+            allow_mixed_pixel_affine
+            and name == "Affine"
+            and params.get("translate_px") is not None
+            and any(
+                params.get(key) is not None and not _affine_range_is(params[key], identity)
+                for key, identity in (("rotate", 0.0), ("shear", 0.0), ("scale", 1.0))
+            )
+        ):
+            from rfdetr.datasets._kornia_pixel_affine import PixelTranslatedGeneralAffine
+
+            if params.get("translate_percent") is not None:
+                raise ValueError("Affine accepts either translate_px or translate_percent, not both.")
+            unsupported = set(params) - {
+                "translate_px",
+                "rotate",
+                "scale",
+                "shear",
+                "p",
+                "border_mode",
+                "fill",
+                "fill_mask",
+            }
+            if unsupported:
+                raise ValueError(f"Kornia mixed pixel Affine does not support options: {sorted(unsupported)}.")
+            scale = params.get("scale")
+            if isinstance(scale, (int, float)) and not isinstance(scale, bool):
+                scale = _as_range(scale)
+            transforms.append(
+                PixelTranslatedGeneralAffine(
+                    _pixel_translation_bounds(params["translate_px"]),
+                    degrees=params.get("rotate") if params.get("rotate") is not None else (0.0, 0.0),
+                    scale=scale,
+                    shear=params.get("shear"),
+                    p=params.get("p", 0.5),
+                    padding_mode=_pixel_affine_padding_mode(params),
+                )
+            )
+        else:
+            transforms.append(factory(params))
 
     data_keys = ["input", "bbox_xyxy", "mask"] if with_masks else ["input", "bbox_xyxy"]
     if with_keypoints:
@@ -1194,6 +1385,56 @@ def build_kornia_pipeline(
         *transforms,
         data_keys=data_keys,
     )
+
+
+class KorniaPreResize:
+    """Apply a Kornia augmentation prefix to one image and its annotations before resizing."""
+
+    def __init__(self, config: dict[str, dict[str, Any]], resolution: int, keypoint_flip_pairs: list[int] | None):
+        self.keypoint_flip_pairs = keypoint_flip_pairs
+        self.with_keypoints = keypoint_flip_pairs is not None
+        self.pipeline = build_kornia_pipeline(
+            config,
+            resolution,
+            with_masks=True,
+            include_keypoints=self.with_keypoints,
+            with_keypoints=self.with_keypoints,
+            keypoint_flip_pairs=keypoint_flip_pairs,
+            allow_mixed_pixel_affine=True,
+        )
+
+    def __call__(self, image: Any, target: dict[str, Any]) -> tuple[Any, dict[str, Any]]:
+        """Transform an image, boxes, instance masks, and keypoints in their original coordinate frame."""
+        image_tensor = functional.to_dtype(functional.to_image(image), torch.float32, scale=True).unsqueeze(0)
+        height, width = image_tensor.shape[-2:]
+        boxes, valid = collate_boxes([target], image_tensor.device)
+        masks = collate_masks([target], image_tensor.device, valid.shape[1], height, width)
+        # Kornia needs at least one mask channel, even for detection or an empty image.
+        padding = torch.zeros(1, 1, height, width, dtype=torch.float32, device=image_tensor.device)
+        inputs = [image_tensor, boxes - 0.5, torch.cat((masks, padding), dim=1)]
+        visibility = None
+        empty_points = False
+        if self.with_keypoints:
+            points, visibility = collate_keypoints([target], image_tensor.device, valid.shape[1])
+            empty_points = points.shape[1] == 0
+            inputs.append(points - 0.5 if not empty_points else image_tensor.new_zeros(1, 1, 2))
+        image_aug, boxes_aug, masks_aug, *points_out = self.pipeline(*inputs)
+        points_aug = points_out[0] + 0.5 if points_out and not empty_points else None
+        target_out = unpack_boxes(
+            boxes_aug + 0.5,
+            valid,
+            [target],
+            height,
+            width,
+            masks_aug=masks_aug[:, :-1] if "masks" in target else None,
+            keypoints_aug=points_aug,
+            keypoint_visibility=visibility,
+            keypoint_flip_pairs=self.keypoint_flip_pairs,
+            keypoint_flip_mask=keypoint_horizontal_flip_mask(self.pipeline, 1, image_tensor.device)
+            if points_aug is not None
+            else None,
+        )[0]
+        return image_aug[0], target_out
 
 
 def build_normalize(
@@ -1518,15 +1759,12 @@ def unpack_boxes(
                 boxes_i, keep, masks_aug[i, :n_orig] > _MASK_BINARIZE_THRESHOLD, t.get("masks")
             )
 
-        t["boxes"] = boxes_i[keep]
-        if "labels" in t:
-            t["labels"] = t["labels"][keep]
-        if "area" in t:
-            # Recompute area from clamped boxes
-            kept_boxes = t["boxes"]
-            t["area"] = (kept_boxes[:, 2] - kept_boxes[:, 0]) * (kept_boxes[:, 3] - kept_boxes[:, 1])
-        if "iscrowd" in t:
-            t["iscrowd"] = t["iscrowd"][keep]
+        original_target = t
+        t = _filter_per_instance_fields(t, keep, boxes_i[keep])
+        if masks_aug is None and "masks" in original_target:
+            t["masks"] = original_target["masks"]
+        if keypoints_aug is None and "keypoints" in original_target:
+            t["keypoints"] = original_target["keypoints"]
         if masks_aug is not None:
             masks_i = masks_aug[i, :n_orig]  # [N_orig, H, W]
             t["masks"] = masks_i[keep] > _MASK_BINARIZE_THRESHOLD

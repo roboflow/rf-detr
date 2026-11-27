@@ -8,12 +8,14 @@
 Also covers keypoint handling: horizontal-flip filtering, flip parity and keypoint scaling across resolutions.
 """
 
+import math
+from typing import Any
 from unittest import mock
 
 import numpy as np
 import pytest
 import torch
-from PIL import Image
+from PIL import Image, ImageDraw
 from torch.utils.data import DataLoader
 from torchvision.transforms.v2 import Compose
 
@@ -23,7 +25,7 @@ from rfdetr.datasets._torchvision import RandomHorizontalFlip
 from rfdetr.datasets.coco import make_coco_transforms, make_coco_transforms_square_div_64
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from rfdetr.utilities import collate_fn
-from tests._markers import _requires_albumentations
+from tests._markers import _requires_albumentations, _requires_kornia
 
 
 @_requires_albumentations
@@ -434,7 +436,7 @@ class TestMakeCocoTransformsAugConfig:
         custom = {"HorizontalFlip": {"p": 1.0}}
         pipeline = make_transforms("train", 640, aug_config=custom)
         wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
-        aug_wrappers = wrappers[1:]  # skip resize wrapper
+        aug_wrappers = [w for w in wrappers if "HorizontalFlip" in _transform_leaf_names(w.transform)]
 
         assert len(aug_wrappers) == 1
         assert aug_wrappers[0].transform.transforms[0].__class__.__name__ == "HorizontalFlip"
@@ -446,6 +448,491 @@ class TestMakeCocoTransformsAugConfig:
         pipeline = make_transforms(split, 640, aug_config={"HorizontalFlip": {"p": 1.0}})
 
         assert not any(isinstance(t, AlbumentationsWrapper) for t in pipeline.transforms)
+
+
+def _transform_leaf_names(transform: Any) -> set[str]:
+    """Collect the class names of every transform nested inside *transform* (itself included).
+
+    Albumentations containers expose their children through ``.transforms``, so walking that attribute flattens
+    ``OneOf``/``Sequential`` wrappers down to their leaves.
+
+    Args:
+        transform: An Albumentations transform, possibly a container.
+
+    Returns:
+        The class names of *transform* and every transform nested inside it.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> outer = SimpleNamespace(transforms=[SimpleNamespace(transforms=[]), SimpleNamespace(transforms=[])])
+        >>> sorted(_transform_leaf_names(outer))
+        ['SimpleNamespace']
+    """
+    names = {type(transform).__name__}
+    for child in getattr(transform, "transforms", []) or []:
+        names |= _transform_leaf_names(child)
+    return names
+
+
+def _line_angle(mask: np.ndarray) -> float:
+    """Return the angle (degrees from horizontal) of the principal axis of a boolean *mask*.
+
+    Args:
+        mask: Two-dimensional boolean array marking the line's pixels.
+
+    Returns:
+        The line's angle in degrees, in ``(-90, 90]``.
+
+    Examples:
+        >>> _line_angle(np.eye(5, dtype=bool))
+        45.0
+    """
+    ys, xs = np.nonzero(mask)
+    covariance = np.cov(np.stack([xs - xs.mean(), ys - ys.mean()]))
+    values, vectors = np.linalg.eigh(covariance)
+    dx, dy = vectors[:, np.argmax(values)]
+    return (math.degrees(math.atan2(dy, dx)) + 90) % 180 - 90
+
+
+class TestAugmentationCompatibility:
+    """Preserve existing augmentation configurations when geometry moves before resizing."""
+
+    @staticmethod
+    def _sample() -> tuple[Image.Image, dict[str, Any]]:
+        """Return a small image with one detection."""
+        image = Image.new("RGB", (80, 60), color=(100, 50, 25))
+        target = {
+            "boxes": torch.tensor([[10.0, 10.0, 50.0, 40.0]]),
+            "labels": torch.tensor([1]),
+            "image_id": torch.tensor(1),
+            "orig_size": torch.tensor([60, 80]),
+            "size": torch.tensor([60, 80]),
+        }
+        return image, target
+
+    @_requires_albumentations
+    def test_fixed_crop_larger_than_source_is_padded(self):
+        """A fixed crop accepts a smaller source image and retains the final training size."""
+        pipeline = make_coco_transforms_square_div_64(
+            "train",
+            128,
+            aug_config={"RandomCrop": {"height": 100, "width": 100, "p": 1.0}},
+            scale_jitter=False,
+            skip_random_resize=True,
+        )
+        image, target = pipeline(*self._sample())
+        assert image.shape[-2:] == (128, 128)
+        assert target["boxes"].shape == (1, 4)
+
+    @_requires_albumentations
+    def test_nested_crop_then_rotation_keeps_source_geometry(self):
+        """Nested crops pad small sources and leave later rotation before the square resize."""
+        config = {
+            "OneOf": {"transforms": [{"RandomCrop": {"height": 100, "width": 100, "p": 1.0}}], "p": 1.0},
+            "Rotate": {"limit": (10, 10), "p": 1.0},
+        }
+        pipeline = make_coco_transforms_square_div_64(
+            "train", 128, aug_config=config, scale_jitter=False, skip_random_resize=True
+        )
+
+        image, result = pipeline(*self._sample())
+
+        assert image.shape[-2:] == (128, 128)
+        assert result["boxes"].shape == (1, 4)
+
+    @_requires_albumentations
+    @pytest.mark.parametrize(
+        "config",
+        [
+            pytest.param({"Crop": {"x_min": 0, "y_min": 0, "x_max": 100, "y_max": 100, "p": 1.0}}, id="crop"),
+            pytest.param(
+                {"RandomSizedCrop": {"min_max_height": (100, 100), "size": (100, 100), "p": 1.0}},
+                id="random-sized-crop",
+            ),
+        ],
+    )
+    def test_other_fixed_crops_pad_small_images(self, config):
+        """Fixed-coordinate and sized crops accept images smaller than their sampled crop."""
+        pipeline = make_coco_transforms_square_div_64(
+            "train", 128, aug_config=config, scale_jitter=False, skip_random_resize=True
+        )
+
+        image, _ = pipeline(*self._sample())
+
+        assert image.shape[-2:] == (128, 128)
+
+    @_requires_albumentations
+    def test_skipped_crop_does_not_pad_image(self):
+        """Padding follows the crop probability rather than running for a skipped crop."""
+        pipeline = make_coco_transforms_square_div_64(
+            "train",
+            128,
+            aug_config={"RandomCrop": {"height": 100, "width": 100, "p": 0.0}},
+            scale_jitter=False,
+            skip_random_resize=True,
+        )
+        crop = next(t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper))
+
+        image, target = crop(*self._sample())
+
+        assert image.size == (80, 60)
+        torch.testing.assert_close(target["boxes"], torch.tensor([[10.0, 10.0, 50.0, 40.0]]))
+
+    @_requires_albumentations
+    def test_crop_then_rotation_runs_before_final_resize(self):
+        """A crop followed by rotation retains the crop's non-square frame until resizing."""
+        pipeline = make_coco_transforms_square_div_64(
+            "train",
+            128,
+            aug_config={"CenterCrop": {"height": 100, "width": 120, "p": 1.0}, "Rotate": {"limit": (10, 10), "p": 1.0}},
+            scale_jitter=False,
+            skip_random_resize=True,
+        )
+        image, target = self._sample()
+        crop, rotate = pipeline.transforms[:2]
+
+        image, target = crop(image, target)
+        image, _ = rotate(image, target)
+
+        assert image.size == (120, 100)
+
+    @_requires_kornia
+    def test_gpu_prefix_preserves_kornia_grayscale_channels(self):
+        """ToGray's ignored channel option stays ignored when rotation follows it."""
+        pipeline = make_coco_transforms_square_div_64(
+            "train",
+            128,
+            aug_config={"ToGray": {"num_output_channels": 1, "p": 1.0}, "Rotate": {"limit": 0, "p": 1.0}},
+            scale_jitter=False,
+            skip_random_resize=True,
+            gpu_postprocess=True,
+        )
+        image, target = pipeline(*self._sample())
+        assert image.shape == (3, 128, 128)
+        assert target["boxes"].shape == (1, 4)
+
+    @_requires_kornia
+    def test_gpu_prefix_keeps_masks_and_keypoints_aligned(self):
+        """A pre-resize flip transforms boxes, masks, and relabeled keypoints together."""
+        image, target = self._sample()
+        mask = torch.zeros((1, 60, 80), dtype=torch.bool)
+        mask[:, 10:40, 10:50] = True
+        target["masks"] = mask
+        target["keypoints"] = torch.tensor([[[20.0, 20.0, 2.0], [40.0, 30.0, 2.0]]])
+        pipeline = make_coco_transforms_square_div_64(
+            "train",
+            128,
+            aug_config={"HorizontalFlip": {"p": 1.0}, "Rotate": {"limit": (0, 0), "p": 1.0}},
+            scale_jitter=False,
+            skip_random_resize=True,
+            gpu_postprocess=True,
+            keypoint_flip_pairs=[0, 1],
+        )
+
+        _, result = pipeline(image, target)
+
+        torch.testing.assert_close(result["boxes"], torch.tensor([[48.0, 128 / 6, 112.0, 256 / 3]]), atol=2, rtol=0)
+        torch.testing.assert_close(result["keypoints"][0, :, 0], torch.tensor([64.0, 96.0]), atol=1, rtol=0)
+        assert result["masks"][0, 40, 64]
+        assert not result["masks"][0, 40, 16]
+
+    @_requires_kornia
+    def test_gpu_prefix_preserves_values_outside_unit_range(self):
+        """Kornia noise is not clipped or quantized before the batch pipeline."""
+        torch.manual_seed(0)
+        image, target = self._sample()
+        image = Image.new("RGB", image.size, color="white")
+        pipeline = make_coco_transforms_square_div_64(
+            "train",
+            128,
+            aug_config={"GaussNoise": {"std_range": (0.5, 0.5), "p": 1.0}, "Rotate": {"limit": (0, 0), "p": 1.0}},
+            scale_jitter=False,
+            skip_random_resize=True,
+            gpu_postprocess=True,
+        )
+
+        result, _ = pipeline(image, target)
+
+        assert result.max() > 1.0
+
+    @_requires_kornia
+    def test_gpu_prefix_filters_custom_fields_with_removed_boxes(self):
+        """Instance metadata stays aligned when a pre-resize transform removes a box."""
+        image, target = self._sample()
+        target["boxes"] = torch.tensor([[10.0, 10.0, 20.0, 20.0], [70.0, 10.0, 79.0, 20.0]])
+        target["labels"] = torch.tensor([1, 2])
+        target["track_ids"] = torch.tensor([11, 22])
+        pipeline = make_coco_transforms_square_div_64(
+            "train",
+            128,
+            aug_config={"Affine": {"translate_px": {"x": 40, "y": 0}, "p": 1.0}},
+            scale_jitter=False,
+            skip_random_resize=True,
+            gpu_postprocess=True,
+        )
+
+        _, result = pipeline(image, target)
+
+        assert result["labels"].tolist() == [1]
+        assert result["track_ids"].tolist() == [11]
+
+    @_requires_albumentations
+    @_requires_kornia
+    def test_gpu_prefix_accepts_pixel_translation_with_rotation(self):
+        """A combined pixel shift and rotation remains accepted in the pre-resize prefix."""
+        pipeline = make_coco_transforms_square_div_64(
+            "train",
+            128,
+            aug_config={"Affine": {"translate_px": {"x": 4, "y": 0}, "rotate": (10, 10), "p": 1.0}},
+            scale_jitter=False,
+            skip_random_resize=True,
+            gpu_postprocess=True,
+        )
+
+        image, result = pipeline(*self._sample())
+
+        assert image.shape == (3, 128, 128)
+        assert result["boxes"].shape == (1, 4)
+
+    @_requires_albumentations
+    @_requires_kornia
+    def test_mixed_pixel_affine_preserves_fit_output(self):
+        """Mixed pixel affine keeps options supported by Albumentations before the resize."""
+        config = {"Affine": {"translate_px": 4, "rotate": (10, 10), "fit_output": True, "p": 1.0}}
+        pipeline = make_coco_transforms_square_div_64(
+            "train", 128, aug_config=config, scale_jitter=False, skip_random_resize=True, gpu_postprocess=True
+        )
+
+        image, _ = pipeline(*self._sample())
+
+        assert image.shape == (3, 128, 128)
+
+    @_requires_albumentations
+    @_requires_kornia
+    def test_mixed_pixel_affine_fallback_preserves_grayscale_channels(self):
+        """The Albumentations fallback retains Kornia's three-channel grayscale contract."""
+        config = {
+            "ToGray": {"num_output_channels": 1, "p": 1.0},
+            "Affine": {"translate_px": 4, "rotate": (10, 10), "fit_output": True, "p": 1.0},
+        }
+        pipeline = make_coco_transforms_square_div_64(
+            "train", 128, aug_config=config, scale_jitter=False, skip_random_resize=True, gpu_postprocess=True
+        )
+
+        image, _ = pipeline(*self._sample())
+
+        assert image.shape == (3, 128, 128)
+
+    @_requires_kornia
+    def test_gpu_prefix_rejects_conflicting_translation_options(self):
+        """Mixed affine geometry must not discard an additional percentage translation."""
+        config = {"Affine": {"translate_px": 4, "translate_percent": 0.1, "rotate": (10, 10), "p": 1.0}}
+
+        with pytest.raises(ValueError, match="either translate_px or translate_percent"):
+            make_coco_transforms_square_div_64("train", 128, aug_config=config, gpu_postprocess=True)
+
+    @_requires_kornia
+    def test_gpu_prefix_combines_rotation_and_pixel_translation(self):
+        """The configured pixel shift moves the rotated box in source-image coordinates."""
+        config = {"Affine": {"translate_px": {"x": 0, "y": 0}, "rotate": (10, 10), "p": 1.0}}
+        kwargs = {"scale_jitter": False, "skip_random_resize": True, "gpu_postprocess": True}
+        unshifted = make_coco_transforms_square_div_64("train", 128, aug_config=config, **kwargs)
+        config_shifted = {"Affine": {"translate_px": {"x": 4, "y": 0}, "rotate": (10, 10), "p": 1.0}}
+        shifted = make_coco_transforms_square_div_64("train", 128, aug_config=config_shifted, **kwargs)
+
+        _, target_before = unshifted(*self._sample())
+        _, target_after = shifted(*self._sample())
+
+        torch.testing.assert_close(
+            target_after["boxes"] - target_before["boxes"], torch.tensor([[6.4, 0.0, 6.4, 0.0]]), atol=0.1, rtol=0
+        )
+
+    @_requires_kornia
+    def test_gpu_rotation_does_not_require_albumentations(self, monkeypatch):
+        """The Kornia path applies rotation before resize without Albumentations."""
+        import rfdetr.datasets.transforms as transforms
+
+        monkeypatch.setattr(transforms, "alb", None)
+        pipeline = make_coco_transforms_square_div_64(
+            "train",
+            128,
+            aug_config={"Rotate": {"limit": (10, 10), "p": 1.0}},
+            scale_jitter=False,
+            skip_random_resize=True,
+            gpu_postprocess=True,
+        )
+        image, target = pipeline(*self._sample())
+        assert image.shape == (3, 128, 128)
+        assert target["boxes"].shape == (1, 4)
+
+
+@_requires_albumentations
+class TestAugmentBeforeResize:
+    """Regression tests for #1769: geometric aug_config entries run before the square resize.
+
+    A rotation applied after the square resize turns rigidly in the network input, a shape no camera produces. On a
+    non-square image the augmentation must run on the image as loaded, so the resize then preserves the
+    camera-realistic slant: the two axes of a tilted object turn by different angles.
+    """
+
+    _ROTATION = 7.5
+
+    def _rotated_line_angles(self, pipeline: Compose) -> tuple[float, float]:
+        """Run the reporter's 800x1500 line image through *pipeline* and measure the two line angles.
+
+        Args:
+            pipeline: Train transform pipeline built with a fixed 7.5 degree ``Affine`` rotation.
+
+        Returns:
+            ``(horizontal_angle, vertical_lean)`` in degrees: the horizontal line's turn from horizontal and the
+            vertical line's lean from vertical, as the network input sees them.
+        """
+        width, height = 800, 1500
+        image = Image.new("RGB", (width, height))
+        draw = ImageDraw.Draw(image)
+        draw.line([(100, height // 2), (width - 100, height // 2)], fill=(255, 0, 0), width=9)
+        draw.line([(width // 2, 150), (width // 2, height - 150)], fill=(0, 255, 0), width=9)
+        target = {
+            "boxes": torch.zeros((0, 4)),
+            "labels": torch.zeros((0,), dtype=torch.int64),
+            "image_id": torch.tensor(1),
+            "orig_size": torch.tensor([height, width]),
+            "size": torch.tensor([height, width]),
+        }
+        output, _ = pipeline(image, target)
+        mean = torch.tensor([0.485, 0.456, 0.406])[:, None, None]
+        std = torch.tensor([0.229, 0.224, 0.225])[:, None, None]
+        if any(isinstance(t, Normalize) for t in pipeline.transforms):
+            output = output * std + mean
+        rgb = (output.clamp(0, 1).permute(1, 2, 0).numpy() * 255).astype(np.uint8)
+        horizontal = _line_angle((rgb[..., 0] > 128) & (rgb[..., 1] < 100))
+        vertical = _line_angle((rgb[..., 1] > 128) & (rgb[..., 0] < 100))
+        return horizontal, (vertical - 90 if vertical > 0 else vertical + 90)
+
+    @pytest.mark.parametrize("make_transforms", [make_coco_transforms, make_coco_transforms_square_div_64])
+    def test_geometric_aug_wrapper_precedes_resize_wrapper(self, make_transforms):
+        """The geometric aug wrapper sits before the resize wrapper in the train pipeline."""
+        pipeline = make_transforms(
+            "train",
+            576,
+            aug_config={"Affine": {"rotate": [self._ROTATION, self._ROTATION], "p": 1.0}},
+            scale_jitter=False,
+        )
+        wrappers = [t for t in pipeline.transforms if isinstance(t, AlbumentationsWrapper)]
+        aug_index = next(i for i, w in enumerate(wrappers) if "Affine" in _transform_leaf_names(w.transform))
+        resize_index = next(
+            i for i, w in enumerate(wrappers) if _transform_leaf_names(w.transform) & {"Resize", "SmallestMaxSize"}
+        )
+
+        assert aug_index < resize_index
+
+    def test_rotation_on_non_square_image_keeps_camera_realistic_slant(self):
+        """A 7.5 degree rotation of an 800x1500 image slants the two axes by different angles."""
+        pipeline = make_coco_transforms_square_div_64(
+            "train",
+            576,
+            aug_config={"Affine": {"rotate": [self._ROTATION, self._ROTATION], "p": 1.0}},
+            scale_jitter=False,
+        )
+
+        horizontal, vertical_lean = self._rotated_line_angles(pipeline)
+
+        # Rotate-then-resize reference values from the issue: a rigid -7.5 / -7.5 would mean the rotation ran
+        # after the square resize.
+        assert horizontal == pytest.approx(-4.0, abs=1.5)
+        assert vertical_lean == pytest.approx(-13.9, abs=1.5)
+
+    @_requires_kornia
+    def test_gpu_postprocess_still_runs_geometry_before_resize(self):
+        """With gpu_postprocess the geometric entry still runs on the CPU before the resize."""
+        pipeline = make_coco_transforms_square_div_64(
+            "train",
+            576,
+            aug_config={"Affine": {"rotate": [self._ROTATION, self._ROTATION], "p": 1.0}},
+            scale_jitter=False,
+            gpu_postprocess=True,
+        )
+        horizontal, vertical_lean = self._rotated_line_angles(pipeline)
+
+        assert horizontal == pytest.approx(4.0, abs=1.5)
+        assert vertical_lean == pytest.approx(13.9, abs=1.5)
+        assert not any(isinstance(t, Normalize) for t in pipeline.transforms)
+
+    _TRANSLATE_PX = 100
+
+    def _translated_bar_centroid(self, pipeline: Compose) -> float:
+        """Run a non-square image with one white vertical bar through *pipeline* and return the bar's x-centroid.
+
+        Args:
+            pipeline: Train transform pipeline built with a fixed 100-pixel ``Affine`` x-translation.
+
+        Returns:
+            The output x-centroid of the white bar, in output pixels.
+        """
+        width, height = 800, 600
+        image = Image.new("RGB", (width, height))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle([(200, 0), (209, height - 1)], fill=(255, 255, 255))
+        target = {
+            "boxes": torch.zeros((0, 4)),
+            "labels": torch.zeros((0,), dtype=torch.int64),
+            "image_id": torch.tensor(1),
+            "orig_size": torch.tensor([height, width]),
+            "size": torch.tensor([height, width]),
+        }
+        output, _ = pipeline(image, target)
+        if any(isinstance(t, Normalize) for t in pipeline.transforms):
+            mean = torch.tensor([0.485, 0.456, 0.406])[:, None, None]
+            std = torch.tensor([0.229, 0.224, 0.225])[:, None, None]
+            output = output * std + mean
+        gray = output.clamp(0, 1).mean(dim=0).numpy()
+        xs = np.where(gray > 0.5)[1]
+        return float(xs.mean())
+
+    def test_translate_px_shifts_by_source_pixels_on_both_backends(self):
+        """A fixed translate_px shift is in source-image pixels on the CPU and the GPU path.
+
+        The 10-pixel bar starts centred at x=204.5 on an 800-pixel-wide image and shifts 100 source pixels before
+        the square resize to 576, so its output centroid is (204.5 + 100) * 576 / 800 = 219.2. A shift applied after
+        the resize would be 100 resized pixels (centroid 247.6), and the old split dropped it from the CPU pipeline
+        entirely, leaving the centroid at 147.2.
+        """
+        aug_config = {"Affine": {"translate_px": {"x": self._TRANSLATE_PX}, "p": 1.0}}
+        cpu_pipeline = make_coco_transforms_square_div_64(
+            "train",
+            576,
+            aug_config=aug_config,
+            scale_jitter=False,
+        )
+        gpu_pipeline = make_coco_transforms_square_div_64(
+            "train",
+            576,
+            aug_config=aug_config,
+            scale_jitter=False,
+            gpu_postprocess=True,
+        )
+
+        assert self._translated_bar_centroid(cpu_pipeline) == pytest.approx(219.2, abs=6.0)
+        assert self._translated_bar_centroid(gpu_pipeline) == pytest.approx(219.2, abs=6.0)
+
+    @_requires_kornia
+    def test_gpu_postprocess_keeps_flip_before_rotation(self):
+        """With gpu_postprocess a flip configured before a rotation still runs before it.
+
+        Flips do not commute with rotations, so the split must be a prefix cut in configured order: a partition by key
+        would run the rotation on the CPU before the resize and the flip on the GPU after it, reversing the tilt
+        relative to the CPU path.
+        """
+        pipeline = make_coco_transforms_square_div_64(
+            "train",
+            576,
+            aug_config={"HorizontalFlip": {"p": 1.0}, "Rotate": {"limit": (30, 30), "p": 1.0}},
+            scale_jitter=False,
+            gpu_postprocess=True,
+        )
+        # A horizontal line is mirrored first; rotation then tilts it in the same direction as a plain rotation.
+        horizontal, _ = self._rotated_line_angles(pipeline)
+        assert horizontal == pytest.approx(-16.1, abs=2.0)
 
 
 @_requires_albumentations

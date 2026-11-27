@@ -9,6 +9,8 @@ All tests in this module are CPU-compatible — Kornia operates on CPU tensors i
 ``@pytest.mark.gpu`` is needed.
 """
 
+from typing import Any
+
 import pytest
 import torch
 
@@ -26,6 +28,7 @@ from rfdetr.datasets.kornia_transforms import (
     build_kornia_pipeline,
     resolve_augmentation_backend,
     resolve_backend_for_build,
+    split_aug_config_for_gpu,
 )
 from rfdetr.datasets.transforms import AlbumentationsWrapper, Normalize
 from tests._markers import _requires_albumentations, _requires_kornia
@@ -664,6 +667,126 @@ class TestResolveBackendForBuild:
             resolve_backend_for_build("gpu", has_cuda=True)
 
         assert "rfdetr[augment]" in str(exc_info.value)
+
+
+class TestSplitAugConfigForGpu:
+    """split_aug_config_for_gpu routes geometric entries to the CPU pre-resize step (#1769).
+
+    A rotation, shear or perspective applied on the GPU after the square resize turns rigidly in the network input, a
+    shape no camera produces, so those entries run on the CPU before the resize while flips and pixel-level transforms
+    stay on the Kornia GPU pipeline.
+    """
+
+    def test_rotate_perspective_and_shift_scale_rotate_run_before_resize(self) -> None:
+        """Geometry that displaces corners always runs before the resize."""
+        config = {
+            "Rotate": {"limit": 45, "p": 0.5},
+            "Perspective": {"p": 0.5},
+            "ShiftScaleRotate": {"rotate_limit": 15, "p": 0.5},
+            "HorizontalFlip": {"p": 0.5},
+        }
+
+        pre_resize, gpu = split_aug_config_for_gpu(config)
+
+        assert set(pre_resize) == {"Rotate", "Perspective", "ShiftScaleRotate"}
+        assert set(gpu) == {"HorizontalFlip"}
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"rotate": (-15, 15), "p": 1.0},
+            {"shear": (-5, 5), "p": 1.0},
+        ],
+    )
+    def test_rotating_or_shearing_affine_runs_before_resize(self, params: dict[str, Any]) -> None:
+        """An Affine that rotates or shears runs before the resize."""
+        config = {"Affine": params}
+
+        assert split_aug_config_for_gpu(config) == (config, {})
+
+    @pytest.mark.parametrize(
+        "params",
+        [
+            {"scale": (0.9, 1.1), "rotate": (0.0, 0.0), "p": 1.0},
+            {"translate_percent": (-0.05, 0.05), "p": 1.0},
+        ],
+    )
+    def test_pure_scale_or_percent_translation_affine_stays_on_gpu(self, params: dict[str, Any]) -> None:
+        """An Affine with only scale or a fractional translation stays on the GPU."""
+        config = {"Affine": params}
+
+        assert split_aug_config_for_gpu(config) == ({}, config)
+
+    def test_translate_px_affine_runs_before_resize(self) -> None:
+        """A whole-pixel translate_px offset is in source-image pixels, so it runs before the resize.
+
+        On the GPU path the same offset would be applied after the resize, in resized-image pixels — for an 800-pixel-
+        wide image resized to 576, a fixed 100-pixel shift would be 72 output pixels on the CPU path but 100 on the GPU
+        path.
+        """
+        config = {"Affine": {"translate_px": 4, "p": 1.0}}
+
+        assert split_aug_config_for_gpu(config) == (config, {})
+
+    def test_flip_before_rotation_keeps_configured_order(self) -> None:
+        """A flip configured before a rotation stays before it on the GPU path.
+
+        The split is a prefix cut, not a partition by key: a partition would run the rotation before the resize and the
+        flip after it, reversing the tilt relative to the CPU path, where flips do not commute with rotations.
+        """
+        config = {"HorizontalFlip": {"p": 1.0}, "Rotate": {"limit": 30, "p": 1.0}}
+
+        assert split_aug_config_for_gpu(config) == (config, {})
+
+    def test_entries_before_last_geometric_entry_run_before_resize(self) -> None:
+        """The prefix runs through the last geometric entry, in configured order."""
+        config = {
+            "ColorJitter": {"p": 0.5},
+            "Rotate": {"limit": 30, "p": 1.0},
+            "HorizontalFlip": {"p": 0.5},
+        }
+
+        pre_resize, gpu = split_aug_config_for_gpu(config)
+
+        assert list(pre_resize) == ["ColorJitter", "Rotate"]
+        assert list(gpu) == ["HorizontalFlip"]
+
+    def test_unknown_key_after_rotation_stays_on_gpu(self) -> None:
+        """An unknown key inside the prefix stays on the GPU so the pipeline still raises for it."""
+        config = {"Rotate": {"limit": 30, "p": 1.0}, "NoSuchTransform": {"p": 1.0}}
+
+        pre_resize, gpu = split_aug_config_for_gpu(config)
+
+        assert set(pre_resize) == {"Rotate"}
+        assert set(gpu) == {"NoSuchTransform"}
+
+    def test_reporter_config_splits_rotation_from_flip_and_pixel_transforms(self) -> None:
+        """The reporter's aug_config keeps only the flip and brightness/contrast on the GPU."""
+        config = {
+            "Affine": {"rotate": (-15, 15), "scale": (0.9, 1.1), "translate_percent": (-0.05, 0.05), "p": 1.0},
+            "HorizontalFlip": {"p": 0.5},
+            "RandomBrightnessContrast": {"p": 0.3},
+        }
+
+        pre_resize, gpu = split_aug_config_for_gpu(config)
+
+        assert set(pre_resize) == {"Affine"}
+        assert set(gpu) == {"HorizontalFlip", "RandomBrightnessContrast"}
+
+    def test_nothing_moves_when_no_entry_rotates(self) -> None:
+        """Without geometric entries the GPU config is returned unchanged."""
+        config = {"HorizontalFlip": {"p": 0.5}}
+
+        pre_resize, gpu = split_aug_config_for_gpu(config)
+
+        assert pre_resize == {}
+        assert gpu is config
+
+    def test_unknown_keys_stay_on_gpu(self) -> None:
+        """Unknown keys stay on the GPU so build_kornia_pipeline still raises for them."""
+        pre_resize, gpu = split_aug_config_for_gpu({"NoSuchTransform": {"p": 1.0}})
+
+        assert pre_resize == {}
 
 
 @_requires_kornia

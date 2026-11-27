@@ -31,7 +31,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
     ``segmentation_head``. Direct callers must provide either ``dataset_dir``
     or ``coco_path``, plus ``square_resize_div_64``, ``multi_scale``,
     ``expanded_scales``, ``patch_size``, and
-    ``num_windows`` on ``args``. Optional ``scale_jitter`` and
+    ``num_windows`` on ``args``. Optional ``scale_jitter``, ``aug_config`` and
     ``augmentation_backend`` values retain safe defaults.
 
     Args:
@@ -66,13 +66,15 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
     augmentation_backend = getattr(args, "augmentation_backend", "cpu")
     resolved_backend = resolve_backend_for_build(augmentation_backend)
     gpu_postprocess = is_gpu_postprocess(resolved_backend)
+    aug_config = getattr(args, "aug_config", None)
     skip_unreadable = image_set == "train" and bool(getattr(args, "skip_unreadable_images", False))
 
-    if gpu_postprocess:
+    if gpu_postprocess and aug_config not in (None, {}):
         logger.warning(
-            "O365 dataset does not support custom aug_config with the Kornia GPU augmentation backend; "
-            "Albumentations augmentation is skipped and normalization runs on GPU. "
-            "Pass augmentation_backend='cpu' or 'albumentations' for full CPU augmentation pipeline with O365."
+            "O365 dataset runs geometric custom aug_config entries (rotation, shear, perspective) on the CPU "
+            "before the resize with the Kornia GPU augmentation backend (roboflow/rf-detr#1769); the remaining "
+            "entries run on the GPU. Pass augmentation_backend='cpu' or 'albumentations' for the full CPU "
+            "augmentation pipeline."
         )
 
     if square_resize_div_64:
@@ -87,6 +89,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 skip_random_resize=multi_scale is not MultiScale.PER_SAMPLE,
                 patch_size=patch_size,
                 num_windows=num_windows,
+                aug_config=aug_config,
                 scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
             ),
@@ -106,6 +109,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
                 skip_random_resize=multi_scale is not MultiScale.PER_SAMPLE,
                 patch_size=patch_size,
                 num_windows=num_windows,
+                aug_config=aug_config,
                 scale_jitter=scale_jitter,
                 gpu_postprocess=gpu_postprocess,
             ),
