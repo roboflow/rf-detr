@@ -130,7 +130,7 @@ REGISTRY: Mapping[str, ExporterEntry] = {
         "OpenVINOExporter",
         "openvino",
         "OpenVINO",
-        dynamic_batch_reason="(omit dynamic_batch; the converted OpenVINO IR already accepts any batch size).",
+        dynamic_batch_reason="(omit dynamic_batch; the IR is dynamic unless openvino_static_shape=True).",
         suffixes=frozenset({".xml"}),
     ),
     "litert": ExporterEntry(

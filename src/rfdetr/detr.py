@@ -2153,6 +2153,7 @@ class RFDETR:
         coreml_neural_engine: bool = False,
         coreai_precision: str | None = None,
         openvino_precision: str | None = None,
+        openvino_static_shape: bool = False,
         int8_keep_mlp_float: bool = False,
     ) -> Path:
         """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, CoreML, OpenVINO, or LiteRT format.
@@ -2169,6 +2170,7 @@ class RFDETR:
             verbose: Print export progress information.
             shape: ``(height, width)`` tuple; defaults to square at model resolution.
                 Both dimensions must be divisible by ``patch_size * num_windows``.
+                OpenVINO accepts variable batches at this spatial resolution unless *openvino_static_shape* is set.
             batch_size: Static batch size to bake into the ONNX graph; a positive integer. With ``dynamic_batch=True``
                 and ``format="tensorrt"`` it is also the batch the engine's optimization profile is tuned for.
             dynamic_batch: If True, export with a dynamic batch dimension
@@ -2182,8 +2184,8 @@ class RFDETR:
                 dynamic ``.pte`` runs only at the traced batch — export one
                 ``.pte`` per batch size instead. Also unsupported for native CoreML
                 (``format="coreml"``): fixed shapes are required for reliable ANE / GPU scheduling.
-                Also refused for ``format="openvino"``, where it is not needed: omit ``dynamic_batch``;
-                the converted OpenVINO IR already accepts any batch size.
+                Also refused for ``format="openvino"``: its batch is dynamic by default. Set
+                ``openvino_static_shape=True`` for a fixed input shape.
                 Also refused for ``format="tflite"``: ``onnx2tf`` fails on the dynamic-batch graph (an ``Add``
                 against the dynamic-shaped encoder input reports mismatched dimensions) — export one ``.tflite``
                 per batch size instead. Also unsupported for ``format="litert"``: the ``.tflite`` bakes a fixed
@@ -2382,6 +2384,9 @@ class RFDETR:
                 FP16 weight compression, controlling IR *storage* precision only (execution precision still
                 depends on the compiled device — not guaranteed to match eager PyTorch on non-CPU devices).
                 Ignored for every other format.
+            openvino_static_shape: Fix the OpenVINO IR input to the export batch size and spatial resolution.
+                The default preserves variable batches at the traced resolution even with an explicit shape.
+                Ignored for every other format.
             int8_keep_mlp_float: For ONNX INT8, also keep GELU-fed weighted projections in float. This includes the
                 second layer of backbone MLPs and can include other projections, such as in segmentation heads.
                 Defaults to ``False``. Refused for ONNX without ``quantization="int8"`` and ignored for other formats.
@@ -2541,6 +2546,7 @@ class RFDETR:
             coreml_neural_engine=coreml_neural_engine,
             coreai_precision=coreai_precision,
             openvino_precision=openvino_precision,
+            openvino_static_shape=openvino_static_shape,
             quantization=quantization,
             calibration_data=calibration_data,
             max_images=max_images,
