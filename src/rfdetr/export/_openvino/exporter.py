@@ -134,7 +134,7 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
     }
     format = "openvino"
     display_name = "OpenVINO"
-    dynamic_batch_reason = "(omit dynamic_batch; the default IR has a dynamic batch unless shape is specified)."
+    dynamic_batch_reason = "(omit dynamic_batch; the IR is dynamic unless openvino_static_shape=True)."
     pip_extra = "openvino"
     notes_reason = "OpenVINO IR has no ONNX-style metadata slot"
 
@@ -301,7 +301,7 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
         convert_model, save_model = converters
         try:
             with torch.no_grad():
-                if self.config.static_input_shape:
+                if self.config.static_input_shape and self.config.quantization != "int8":
                     ov_model = convert_model(
                         wrapped_model, input=list(input_tensors.shape), example_input=input_tensors
                     )
@@ -317,6 +317,9 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
                     channels=int(channels),
                     max_images=self.config.max_images,
                 )
+                # NNCF collects activation ranges from one image at a time.
+                if self.config.static_input_shape:
+                    ov_model.reshape(list(input_tensors.shape))
             save_model(ov_model, str(output_xml), compress_to_fp16=compress_to_fp16)
         except (ImportError, NotImplementedError, TypeError, ValueError):
             # ImportError: convert_model lazily imports private submodules that can still fail on a

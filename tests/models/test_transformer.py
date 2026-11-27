@@ -2579,6 +2579,7 @@ class TestGroupedSelfAttention:
 
     @pytest.mark.gpu
     @_requires_cuda
+    @pytest.mark.usefixtures("highest_float32_matmul_precision")
     @pytest.mark.parametrize(
         ("group_detr", "batch", "queries_per_group", "heads", "d_model"),
         [
@@ -2595,21 +2596,19 @@ class TestGroupedSelfAttention:
     def test_is_bitwise_the_module_path(
         self, group_detr: int, batch: int, queries_per_group: int, heads: int, d_model: int
     ) -> None:
-        """On CUDA, batch-major regrouping reproduces the group-major ``cat`` path bit for bit in forward and input
-        grads.
+        """CUDA regrouping reproduces the module path bitwise in the forward pass and input gradients.
 
-        Projections run on the ungrouped layout plus a batch-major view; every kernel sees the same rows in a different
-        order. The weight gradients reduce over those rows, so their summation order changes; they are checked to fp32
-        rounding here and bitwise on CUDA in the GPU test.
+        Weight gradients sum the same rows in a different order, so their comparison allows FP32 rounding.
 
         The group count, batch size, queries per group, head count and width each take their singleton or an odd value
         in turn, since the regrouping views are where a boundary shape would go wrong.
         """
-        layer = decoder_layer(group_detr=group_detr, heads=heads, d_model=d_model)
+        torch.manual_seed(0)
+        layer = decoder_layer(group_detr=group_detr, heads=heads, d_model=d_model).cuda()
         num_queries = group_detr * queries_per_group
-        tgt = torch.randn(batch, num_queries, d_model, requires_grad=True)
-        query_pos = torch.randn(batch, num_queries, d_model, requires_grad=True)
-        grad_out = torch.randn(batch, num_queries, d_model)
+        tgt = torch.randn(batch, num_queries, d_model, device="cuda", requires_grad=True)
+        query_pos = torch.randn(batch, num_queries, d_model, device="cuda", requires_grad=True)
+        grad_out = torch.randn(batch, num_queries, d_model, device="cuda")
 
         expected = _module_path_self_attention(layer, tgt, query_pos)
         expected.backward(grad_out)

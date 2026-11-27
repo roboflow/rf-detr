@@ -322,7 +322,9 @@ def openvino_export_stub(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:
     return fake_ov
 
 
-@pytest.mark.parametrize("static_input_shape", [False, True], ids=["dynamic", "static"])
+@pytest.mark.integration
+@pytest.mark.e2e_openvino
+@pytest.mark.parametrize("static_input_shape", [False, True])
 @_requires_openvino
 def test_export_serializes_input_shape(tmp_path: Path, static_input_shape: bool) -> None:
     """The serialized IR is dynamic by default and fixed when an input shape is requested."""
@@ -346,11 +348,10 @@ def test_export_serializes_input_shape(tmp_path: Path, static_input_shape: bool)
     )
 
     exported_model = openvino.Core().read_model(output_xml)
-    partial_shape = exported_model.input(0).partial_shape
-    if static_input_shape:
-        assert partial_shape.to_shape() == list(example.shape)
-    else:
-        assert all(dimension.is_dynamic for dimension in partial_shape)
+    expected_shape = (
+        openvino.PartialShape(list(example.shape)) if static_input_shape else openvino.PartialShape.dynamic(4)
+    )
+    assert exported_model.input(0).partial_shape == expected_shape
 
 
 class TestExportOpenvinoNaming:
@@ -975,17 +976,22 @@ class TestExportFormatParameter:
         exporter = self._mock_openvino_convert.call_args.args[0]
         assert getattr(exporter.config, config_field) == expected
 
-    @pytest.mark.parametrize("shape", [None, (560, 560)], ids=["omitted", "explicit-default"])
-    def test_shape_request_selects_input_mode(self, tmp_path: Path, shape: tuple[int, int] | None) -> None:
-        """An explicit shape fixes the IR even when it equals the model's default resolution."""
-        _make_rfdetr().export(format="openvino", output_dir=str(tmp_path / "out"), shape=shape)
+    def test_custom_shape_keeps_variable_batches(self, tmp_path: Path) -> None:
+        """An explicit rectangular resolution still selects a dynamic IR."""
+        _make_rfdetr().export(format="openvino", output_dir=str(tmp_path / "out"), shape=(560, 574))
         exporter = self._mock_openvino_convert.call_args.args[0]
-        assert exporter.config.static_input_shape is (shape is not None)
+        assert exporter.config.static_input_shape is False
+
+    def test_static_shape_is_opt_in(self, tmp_path: Path) -> None:
+        """A static batch can be selected independently of the spatial resolution override."""
+        _make_rfdetr().export(format="openvino", output_dir=str(tmp_path / "out"), openvino_static_shape=True)
+        exporter = self._mock_openvino_convert.call_args.args[0]
+        assert exporter.config.static_input_shape is True
 
     def test_dynamic_batch_rejected_before_forward_pass(self, tmp_path: Path) -> None:
         """``dynamic_batch=True`` raises ``NotImplementedError`` before ``make_infer_image`` runs the forward pass.
 
-        OpenVINO selects the input mode through ``shape``; rejection happens before the forward pass.
+        OpenVINO uses variable batches by default and sets a fixed shape with ``openvino_static_shape``.
         """
         obj = _make_rfdetr()
         with pytest.raises(NotImplementedError) as exc_info:
@@ -1066,14 +1072,26 @@ def openvino_detection_export(
     out_dir = tmp_path_factory.mktemp("openvino_nano")
     detector = rfdetr.RFDETRNano()
     resolution = int(detector.model.resolution)
-    xml_path = detector.export(
-        output_dir=str(out_dir), format="openvino", shape=(resolution, resolution), verbose=False
-    )
+    xml_path = detector.export(output_dir=str(out_dir), format="openvino", verbose=False)
 
     model = detector.model.model.to("cpu").eval()
     model.export()
     example = _parity_input_from_image(people_walking_image_path, resolution)
     return model, example, Path(xml_path)
+
+
+@pytest.fixture(scope="module")
+def openvino_static_detection_xml(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """Export a fixed batch-one IR without fetching another checkpoint."""
+    from rfdetr import RFDETRNano
+
+    detector = RFDETRNano(pretrain_weights=None, device="cpu")
+    return detector.export(
+        output_dir=str(tmp_path_factory.mktemp("openvino_static_nano")),
+        format="openvino",
+        openvino_static_shape=True,
+        verbose=False,
+    )
 
 
 @pytest.fixture(scope="module")
@@ -1144,37 +1162,48 @@ def openvino_backbone_export(tmp_path_factory: pytest.TempPathFactory) -> tuple[
 class TestOpenVINOEndToEnd:
     """Real OpenVINO IR export + CPU numerical parity (``-m e2e_openvino``, requires ``openvino`` installed)."""
 
-    def test_default_export_has_dynamic_input_and_runs_two_images(self, tmp_path: Path) -> None:
-        """The default IR has dynamic dimensions and accepts a batch at the traced resolution."""
-        import openvino as ov
-
-        from rfdetr import RFDETRNano
-
-        detector = RFDETRNano(pretrain_weights=None, device="cpu")
-        xml_path = detector.export(output_dir=str(tmp_path), format="openvino", verbose=False)
-        core = ov.Core()
-        ir = core.read_model(xml_path)
-        assert all(dimension.is_dynamic for dimension in ir.input(0).partial_shape)
-        assert read_metadata(xml_path).input_shape[0] == -1
-
-        resolution = detector.model.resolution
-        inputs = np.zeros((2, 3, resolution, resolution), dtype=np.float32)
-        outputs = core.compile_model(ir, "CPU")(inputs)
-        assert all(output.shape[0] == 2 for output in outputs.values())
-
-    def test_public_predictor_uses_static_batch_metadata(
+    def test_public_predictor_accepts_two_images(
         self,
         openvino_detection_export: tuple[Any, torch.Tensor, Path],
         people_walking_image_path: Path,
     ) -> None:
-        """Saved metadata records the batch size of the fixed input."""
+        """Saved dynamic-batch metadata lets the public predictor execute a two-image batch."""
         _, _, xml_path = openvino_detection_export
         predictor = RFDETRInference(xml_path, device="cpu")
+
+        results = predictor.predict([people_walking_image_path, people_walking_image_path])
+
+        assert isinstance(results, list)
+        assert len(results) == 2
+        assert read_metadata(xml_path).input_shape[0] == -1
+
+    def test_custom_resolution_accepts_two_images(self, tmp_path: Path) -> None:
+        """A rectangular spatial override preserves variable batches through the public predictor."""
+        from rfdetr import RFDETRNano
+
+        detector = RFDETRNano(pretrain_weights=None, device="cpu")
+        height, width = 384, 416
+        xml_path = detector.export(output_dir=str(tmp_path), format="openvino", shape=(height, width), verbose=False)
+        image = np.zeros((height, width, 3), dtype=np.uint8)
+
+        results = RFDETRInference(xml_path, device="cpu").predict([image, image])
+
+        assert isinstance(results, list)
+        assert len(results) == 2
+        assert read_metadata(xml_path).input_shape == (-1, 3, height, width)
+
+    def test_public_predictor_uses_static_batch_metadata(
+        self,
+        openvino_static_detection_xml: Path,
+        people_walking_image_path: Path,
+    ) -> None:
+        """A fixed batch-one artifact is usable through the public predictor."""
+        predictor = RFDETRInference(openvino_static_detection_xml, device="cpu")
 
         result = predictor.predict(people_walking_image_path)
 
         assert result is not None
-        assert read_metadata(xml_path).input_shape[0] == 1
+        assert read_metadata(openvino_static_detection_xml).input_shape[0] == 1
 
     def test_xml_and_bin_written(self, openvino_detection_export: tuple[Any, torch.Tensor, Path]) -> None:
         """Export must write both the ``.xml`` graph and its companion ``.bin`` weights file."""
@@ -1199,12 +1228,31 @@ class TestOpenVINOEndToEnd:
         assert box_diff < 1e-3, f"OpenVINO detection boxes diverge from PyTorch: max abs diff {box_diff}"
         assert label_diff < 0.1, f"OpenVINO detection logits diverge from PyTorch: max abs diff {label_diff}"
 
-    def test_ir_input_shape_matches_example(self, openvino_detection_export: tuple[Any, torch.Tensor, Path]) -> None:
-        """A detection IR records the exact traced input shape."""
-        import openvino as ov
+    def test_batch_one_ir_accepts_larger_batch(self, openvino_detection_export: tuple[Any, torch.Tensor, Path]) -> None:
+        """A default (batch-1) detection IR must run a tiled batch of 4 and match eager PyTorch for every sample.
 
-        _, example, xml_path = openvino_detection_export
-        assert ov.Core().read_model(xml_path).input(0).partial_shape.to_shape() == list(example.shape)
+        ``dynamic_batch=True`` is refused for OpenVINO on the premise that the converted IR already takes any batch
+        size, so this pins that premise on a real IR instead of leaving it to the registry flag alone. The same image is
+        tiled four times, so each output sample must equal the batch-1 eager reference on the confident queries (see
+        ``_confident_query_diffs``).
+        """
+        model, example, xml_path = openvino_detection_export
+        batch = 4
+        eager_tensors = eager_reference_tensors(model, example)
+        ov_tensors = [
+            torch.from_numpy(output) for output in _infer_openvino_f32(xml_path, example.repeat(batch, 1, 1, 1).numpy())
+        ]
+
+        assert [tensor.shape[0] for tensor in ov_tensors] == [batch, batch], (
+            f"a batch-1 IR must return batch dimension {batch} for a batch-{batch} input, "
+            f"got shapes {[tuple(tensor.shape) for tensor in ov_tensors]}"
+        )
+        sample_diffs = [
+            _confident_query_diffs(eager_tensors, [tensor[index : index + 1] for tensor in ov_tensors])
+            for index in range(batch)
+        ]
+        assert max(box_diff for box_diff, _ in sample_diffs) < 1e-3, f"batch-{batch} boxes diverge: {sample_diffs}"
+        assert max(label_diff for _, label_diff in sample_diffs) < 0.1, f"batch-{batch} logits diverge: {sample_diffs}"
 
     def test_segmentation_outputs_match_pytorch(
         self, openvino_segmentation_export: tuple[Any, torch.Tensor, Path]

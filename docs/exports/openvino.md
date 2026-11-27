@@ -49,7 +49,13 @@ model = RFDETRMedium(pretrain_weights="<path/to/checkpoint.pth>")
 model.export(format="openvino", shape=(608, 608))
 ```
 
-Without `shape`, the IR input is dynamic and supports variable batch sizes at the model's default resolution. Specifying `shape` fixes all input dimensions, including `batch_size` (default `1`); export a separate model for each required batch size. Despite the dynamic input declaration, changing the spatial resolution at inference is not supported because the model's spatial-dependent operations are traced at export time.
+The IR accepts variable batch sizes at the traced spatial resolution, including when you set `shape`. To produce an IR that accepts only the requested batch and resolution, set `openvino_static_shape=True`.
+
+```python
+model.export(format="openvino", shape=(608, 608), batch_size=2, openvino_static_shape=True)
+```
+
+Use a separate static artifact for each batch size. For INT8, the exporter calibrates with single images before fixing the input dimensions.
 
 ## OpenVINO Export with Precision
 
