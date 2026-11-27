@@ -35,6 +35,7 @@ from rfdetr.datasets.webdataset.index import ShardIndex, index_name
 from rfdetr.datasets.webdataset.load import WebDatasetDetection
 from rfdetr.detr import RFDETR, _save_training_config
 from rfdetr.detr import logger as detr_logger
+from rfdetr.models.postprocess import PostProcess
 from rfdetr.training.auto_batch import AutoBatchResult
 from rfdetr.training.checkpoint import convert_legacy_checkpoint
 from rfdetr.training.module_model import RFDETRModelModule
@@ -335,6 +336,23 @@ class TestRFDETRTrainPTL:
         assert mock_self.model.args.num_classes == 7
         assert mock_self.model.args.dataset_dir == str(tmp_path / "ds")
         assert mock_self.model.args.output_dir == str(tmp_path / "out")
+
+    @pytest.mark.usefixtures("patch_lit")
+    def test_postprocess_keypoint_schema_synced_after_training(self, tmp_path):
+        """self.model.postprocess decodes with the keypoint schema the run trained with after train().
+
+        train() aligns ``model_config.num_keypoints_per_class`` to the dataset, while the postprocessor was built at
+        construction from the pretrained schema, so predict() raised on the slot count of the retrained head.
+        """
+        mock_self = _make_rfdetr_self(tmp_path)
+        stale = PostProcess(num_keypoints_per_class=[0, 17])
+        mock_self.model.postprocess = stale
+        mock_self.model_config.num_keypoints_per_class = [3]
+
+        RFDETR.train(mock_self)
+
+        assert mock_self.model.postprocess.num_keypoints_per_class == [3]
+        assert stale.num_keypoints_per_class == [0, 17]
 
     @pytest.mark.parametrize(
         "device",

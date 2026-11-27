@@ -72,27 +72,27 @@ The numbers come from [Section 8.1 of the CUDA cookbook](../../cookbooks/export-
 
 === "Detection"
 
-    | Model  | Box AP, FP16 | Box AP, INT8 | Δ     | FP16 ms | INT8 ms | Speedup | Size, FP16 → INT8 |
-    | ------ | ------------ | ------------ | ----- | ------- | ------- | ------- | ----------------- |
-    | Nano   | 48.07        | 47.57        | −0.50 | 3.653   | 2.923   | 1.25×   | 61 → 37 MB        |
-    | Small  | 52.80        | 52.44        | −0.36 | 5.485   | 4.684   | 1.17×   | 65 → 40 MB        |
-    | Medium | 54.67        | 54.02        | −0.65 | 6.964   | 5.895   | 1.18×   | 68 → 42 MB        |
-    | Large  | 56.53        | 56.26        | −0.27 | 10.795  | 9.418   | 1.15×   | 70 → 48 MB        |
+    | Model  | Box AP, FP16 | Box AP, INT8 | Δ AP  | FP16 [ms] | INT8 [ms] | Speedup | Size [MB], FP16 → INT8 |
+    | ------ | ------------ | ------------ | ----- | --------- | --------- | ------- | ---------------------- |
+    | Nano   | 48.07        | 47.57        | −0.50 | 3.653     | 2.923     | 1.25×   | 61 → 37                |
+    | Small  | 52.80        | 52.44        | −0.36 | 5.485     | 4.684     | 1.17×   | 65 → 40                |
+    | Medium | 54.67        | 54.02        | −0.65 | 6.964     | 5.895     | 1.18×   | 68 → 42                |
+    | Large  | 56.53        | 56.26        | −0.27 | 10.795    | 9.418     | 1.15×   | 70 → 48                |
 
 === "Segmentation"
 
-    | Model  | Mask AP, FP16 | Mask AP, INT8 | Δ     | FP16 ms | INT8 ms | Speedup | Size, FP16 → INT8 |
-    | ------ | ------------- | ------------- | ----- | ------- | ------- | ------- | ----------------- |
-    | Nano   | 40.07         | 39.50         | −0.58 | 5.642   | 5.244   | 1.08×   | 66 → 49 MB        |
-    | Small  | 42.89         | 42.22         | −0.67 | 7.186   | 6.508   | 1.10×   | 67 → 44 MB        |
-    | Medium | 45.00         | 44.03         | −0.97 | 9.885   | 9.044   | 1.09×   | 71 → 47 MB        |
-    | Large  | 46.38         | 46.03         | −0.35 | 14.309  | 12.982  | 1.10×   | 72 → 52 MB        |
+    | Model  | Mask AP, FP16 | Mask AP, INT8 | Δ AP  | FP16 [ms] | INT8 [ms] | Speedup | Size [MB], FP16 → INT8 |
+    | ------ | ------------- | ------------- | ----- | --------- | --------- | ------- | ---------------------- |
+    | Nano   | 40.07         | 39.50         | −0.58 | 5.642     | 5.244     | 1.08×   | 66 → 49                |
+    | Small  | 42.89         | 42.22         | −0.67 | 7.186     | 6.508     | 1.10×   | 67 → 44                |
+    | Medium | 45.00         | 44.03         | −0.97 | 9.885     | 9.044     | 1.09×   | 71 → 47                |
+    | Large  | 46.38         | 46.03         | −0.35 | 14.309    | 12.982    | 1.10×   | 72 → 52                |
 
 === "Keypoints"
 
-    | Model   | Keypoint AP, FP16 | Keypoint AP, INT8 | Δ     | FP16 ms | INT8 ms | Speedup | Size, FP16 → INT8 |
-    | ------- | ----------------- | ----------------- | ----- | ------- | ------- | ------- | ----------------- |
-    | Preview | 71.72             | 71.11             | −0.61 | 15.303  | 13.921  | 1.10×   | 81 → 60 MB        |
+    | Model   | Keypoint AP, FP16 | Keypoint AP, INT8 | Δ AP  | FP16 [ms] | INT8 [ms] | Speedup | Size [MB], FP16 → INT8 |
+    | ------- | ----------------- | ----------------- | ----- | --------- | --------- | ------- | ---------------------- |
+    | Preview | 71.72             | 71.11             | −0.61 | 15.303    | 13.921    | 1.10×   | 81 → 60                |
 
 What the table supports:
 
@@ -111,7 +111,7 @@ The INT8 placement follows what was measured, not "quantize every matrix multipl
 - **The first six MLPs of Atto, Femto and Pico stay FP16.** In the PE-Core-T backbone the input of the second MLP projection in block 3 has a range 52 to 55 times its typical 99.9th percentile, and blocks 2 and 4 reach 13 to 16 times. One INT8 step per tensor is set by those outliers, so quantizing these MLPs cost 7.0 to 8.7 AP in an earlier development build, and neither smoothing nor the bias correction below recovered it. The export keeps the two projections of blocks 0 to 5 in FP16 by node name; the other backbones are unaffected.
 - **Detection backbone norms are smoothed ([SmoothQuant](https://arxiv.org/abs/2211.10438)).** One INT8 step per LayerNorm output is set by its widest channels. The export divides each channel of the norm's scale and bias by a factor measured on the calibration images and multiplies the matching rows of the projections that read it. The outputs are the same and the engine has no extra layer.
 - **Detection backbone MLP biases are corrected.** Rounding a layer's input to INT8 shifts the mean of its output, most of all for the one-sided GELU output the second MLP projection reads. The export measures that shift per output channel and subtracts it from the bias. On an RTX 5070 (a measurement not repeated on the table above) the two steps cut the box AP lost at batch 1 from 0.66, 0.71, 0.94 and 0.60 points to 0.50, 0.47, 0.66 and 0.32 (Nano to Large), at the same latency and size. Keep any new op off the GELU → second-projection path: on TensorRT 11.4 even a no-op subtraction there changed the fusion and cost more AP than the whole INT8 plan.
-- **Attention is all INT8 or all FP16.** A block with head size 16, 32 or 64 and at most 325 tokens gets INT8 projections and INT8 attention matrix multiplies, fused into one INT8 attention kernel. That covers the windowed blocks of detection Nano (145 tokens), Small (257) and Medium (325), and Seg Small (257) and Seg Medium (325). Detection Large (485), Seg Large (442), Keypoint Preview (577) and Seg Nano (677) keep attention in FP16: INT8 was no faster or less accurate at 442 to 485 tokens and much slower above the fused kernel's 512. Windows of 326 to 484 tokens that are not listed were not measured and stay FP16, as do global blocks and the decoder self-attention. A windowed block has `(resolution / patch_size / num_windows)² + 1` tokens, so a higher export resolution can move a model's attention to FP16; the export logs how many backbone attention blocks stay FP16.
+- **Attention is all INT8 or all FP16.** A block with head size 16, 32 or 64 and at most 325 tokens gets INT8 projections and INT8 attention matrix multiplies, fused into one INT8 attention kernel. That covers the windowed blocks of detection Nano (145 tokens), Small (257) and Medium (325), and Seg Small (257) and Seg Medium (325). Detection Large (485), Seg Large (442), Keypoint Preview (577) and Seg Nano (677) keep attention in FP16: INT8 was no faster or less accurate at 442 to 485 tokens and much slower above the fused kernel's 512. Windows of 326 to 484 tokens that are not listed were not measured and stay FP16, as do global blocks and the decoder self-attention. A windowed block has `(resolution / patch_size / num_windows)² + 1` tokens, so a higher export resolution can move a model's attention to FP16; the export logs how many backbone attention blocks stay FP16. In an FP16 block every projection stays FP16, including the fused `qkv` projection of Atto, Femto and Pico.
 
 ### Requirements and limits
 
@@ -326,7 +326,7 @@ model.export(format="tensorrt", trt_version_compatible=True)
 
 `trt_version_compatible=True` asks for an engine that other releases of the same TensorRT major version may load. It worked between TensorRT 11.2 and 11.3, in both directions. It didn't work across major versions (10 and 11), or between TensorRT 10.13 and 10.16, so test your pair of releases before you rely on it. The build needs TensorRT's lean runtime, which is a separate package: install the lean wheel that matches your `tensorrt` wheel, for example [`tensorrt-lean-cu13-libs`](https://pypi.org/project/tensorrt-lean-cu13-libs/) next to [`tensorrt-cu13-libs`](https://pypi.org/project/tensorrt-cu13-libs/) (the version may differ by a `.post` suffix), or use the library from the TensorRT archive or system package. Without it the export raises `ImportError` naming the library, before it runs the model.
 
-The options have a cost, so measure on your own model. In our FP16 tests, `ampere_plus` made the build about 3.5 times slower, the engine about 60% larger and inference about 10% slower. `same_compute_capability` cost nothing we could measure. `trt_version_compatible` added about 105 MB to an `RFDETRNano` engine on TensorRT 11 (on TensorRT 10.16 the engine was the size of a default one). The [changelog](https://github.com/roboflow/rf-detr/blob/main/CHANGELOG.md) has the numbers.
+The options have a cost, so measure on your own model. In our FP16 tests, `ampere_plus` made the build about 3.5 times slower, the engine about 60% larger and inference about 10% slower. `same_compute_capability` cost nothing we could measure. `trt_version_compatible` added about 105 MB to an `RFDETRNano` engine on TensorRT 11 (on TensorRT 10.16 the engine was the size of a default one). The [changelog](https://github.com/roboflow/rf-detr/blob/develop/CHANGELOG.md) has the numbers.
 
 An engine built by TensorRT 11 with `trt_version_compatible=True` contains host code, and TensorRT only loads it if you say you trust the file. `RFDETRInference` takes `engine_host_code_allowed` in `runtime_options` for that; it is off by default:
 

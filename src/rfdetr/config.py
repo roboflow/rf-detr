@@ -1373,6 +1373,31 @@ class TrainConfig(BaseConfig):
     eval_max_dets: int = 500
     eval_interval: int = 1
     log_per_class_metrics: bool = False
+    min_class_support: int = Field(
+        default=0,
+        ge=0,
+        description=(
+            "Minimum ground-truth instances a class needs in the evaluated split to count toward the gated "
+            "'<split>/mAP_50_95_gated' (and its 'ema_' / 'segm_' variants) and toward the macro-F1 that the "
+            "confidence-threshold sweep maximises. With log_per_class_metrics=True, classes below the floor are still "
+            "reported per class (table rows with a Support column, and AP keys). When above "
+            "0 and best_model_metric='map', best-checkpoint selection and early stopping monitor the gated metric, "
+            "so a class with a handful of instances cannot swing model selection. 0 disables gating."
+        ),
+    )
+    class_agnostic_eval: bool = Field(
+        default=False,
+        description=(
+            "Also evaluate validation and test boxes with every label collapsed to one class, logged as "
+            "'<split>/mAP_50_95_agnostic' and '<split>/mAP_50_agnostic'. Separates localisation quality from "
+            "classification quality. Adds a second box-metric accumulation to every evaluation: one more host copy "
+            "of the boxes, scores and ground truth, and one more all_gather per list state under DDP. It is never "
+            "streamed, even with eval_backend='hotcoco_streaming'. The agnostic rows come from the class-aware "
+            "top-num_select query x class selection, de-duplicated per box afterwards; queries displaced by a "
+            "neighbour's extra labels are not recovered, so agnostic recall can read lower than a selection made "
+            "directly over queries."
+        ),
+    )
     eval_backend: CocoEvalBackend = Field(
         default="vernier",
         description=(
@@ -1399,6 +1424,13 @@ class TrainConfig(BaseConfig):
     eval_masks_head_resolution: bool = False
     aug_config: Optional[Dict[str, Any]] = None
     scale_jitter: bool = True
+    # Opt-in, training split only. A failed image read (missing, truncated or I/O-failed file) is retried, and an
+    # image that stays unreadable is replaced by the next readable sample and logged as an error, so one bad file
+    # does not end the run. False (the default) raises on the first failed read. Validation and test splits always
+    # raise. Applies to COCO-format and YOLO datasets only, not WebDataset shards. A YOLO dataset scans image headers
+    # once while it is built; a file that goes bad later is handled by the read-time substitution. See
+    # docs/learn/train/training-parameters.md for the retry behaviour.
+    skip_unreadable_images: bool = False
     augmentation_backend: AugmentationBackend | Literal["cpu", "auto"] = "cpu"
     save_dataset_grids: bool = False
 

@@ -17,6 +17,7 @@ that way.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any
 
@@ -95,16 +96,18 @@ def decode_detections(
         array([0])
     """
     # RF-DETR uses per-class sigmoid (not softmax) — mirrors PostProcess.forward in postprocess.py.
-    if logits.size:
-        logger.debug(
-            "Logits stats: shape=%s min=%.3f max=%.3f mean=%.3f",
-            logits.shape,
-            float(logits.min()),
-            float(logits.max()),
-            float(logits.mean()),
-        )
-    else:
-        logger.debug("Logits stats: empty shape=%s", logits.shape)
+    # The statistics are log arguments, evaluated before the logger checks its level, so compute them only for DEBUG.
+    if logger.isEnabledFor(logging.DEBUG):
+        if logits.size:
+            logger.debug(
+                "Logits stats: shape=%s min=%.3f max=%.3f mean=%.3f",
+                logits.shape,
+                float(logits.min()),
+                float(logits.max()),
+                float(logits.mean()),
+            )
+        else:
+            logger.debug("Logits stats: empty shape=%s", logits.shape)
     # Use at least float32 intermediates, then round once to the original score dtype, as PyTorch sigmoid does.
     # Copy even FP32/FP64 inputs so the reusable work buffer never modifies caller-owned logits.
     work_dtype = np.result_type(logits.dtype, np.float32)
@@ -124,18 +127,23 @@ def decode_detections(
     selection_cap = logits.shape[0] if num_select is None else num_select
     scores, cls, query_idx = _select_topk_multiclass(scores_all, threshold, num_select=selection_cap)
     cls = class_ids[cls]
-    if scores_all.size:
-        logger.debug(
-            "Scores stats: min=%.3f max=%.3f — detections above threshold %.2f: %d",
-            float(scores_all.min()),
-            float(scores_all.max()),
-            threshold,
-            int(scores.shape[0]),
-        )
-    else:
-        logger.debug("Scores stats: empty — detections above threshold %.2f: %d", threshold, int(scores.shape[0]))
+    if logger.isEnabledFor(logging.DEBUG):
+        if scores_all.size:
+            logger.debug(
+                "Scores stats: min=%.3f max=%.3f — detections above threshold %.2f: %d",
+                float(scores_all.min()),
+                float(scores_all.max()),
+                threshold,
+                int(scores.shape[0]),
+            )
+        else:
+            logger.debug("Scores stats: empty — detections above threshold %.2f: %d", threshold, int(scores.shape[0]))
 
-    cx, cy, bw, bh = boxes_cwh[query_idx].T
+    boxes = boxes_cwh[query_idx]
+    # Widen selected half-precision coordinates before rounding either corner.
+    if boxes.dtype.type == np.float16:
+        boxes = boxes.astype(np.float32)
+    cx, cy, bw, bh = boxes.T
     width, height = image_size
     scale = np.array([width, height, width, height], dtype=np.float32)
     xyxy = np.stack([cx - bw / 2, cy - bh / 2, cx + bw / 2, cy + bh / 2], axis=1)

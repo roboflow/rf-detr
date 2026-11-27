@@ -10,15 +10,17 @@ import json
 import sys
 import warnings
 from pathlib import Path
+from typing import IO
 
 import numpy as np
-from PIL import Image, PngImagePlugin
+from PIL import Image, PngImagePlugin, UnidentifiedImageError
 
 #: EXIF orientation tag; the parent process turns the pixels upright, so this worker only reports it.
 _ORIENTATION_TAG = 0x0112
 
 #: PIL mode an image is decoded to for each input channel count a dataset can supply.
 CHANNEL_MODES = {1: "L", 3: "RGB", 4: "RGBA"}
+
 
 #: Pillow modes that store 16-bit grayscale pixels. ``I;16`` is the mode Pillow reports for a 16-bit
 #: grayscale PNG; ``I;16B`` and ``I;16L`` are its explicit-endianness spellings.
@@ -44,6 +46,34 @@ def image_mode(num_channels: int) -> str:
             "4 (RGBA) channels."
         )
     return CHANNEL_MODES[num_channels]
+
+
+def open_image(source: Path | IO[bytes]) -> Image.Image:
+    """Open an image with ``Image.open``, reporting a header Pillow rejects with ``ValueError`` as unidentifiable.
+
+    ``Image.open`` lets a ``ValueError`` raised by a format plugin through, for example for a PNG ``pHYs`` chunk shorter
+    than its 9 bytes, while it reports other header damage as ``PIL.UnidentifiedImageError``, an ``OSError``.  This
+    raises that type for both, so callers that skip corrupt files catch one type.
+
+    Args:
+        source: Image file path, or a binary stream positioned at the start of the encoded bytes.
+
+    Returns:
+        The opened image, with its pixels not yet decoded.
+
+    Raises:
+        PIL.UnidentifiedImageError: If no Pillow plugin recognises the image, or the one that does rejects its header.
+
+    Examples:
+        >>> encoded = io.BytesIO()
+        >>> Image.new("RGB", (4, 2)).save(encoded, format="PNG")
+        >>> open_image(io.BytesIO(encoded.getvalue())).size
+        (4, 2)
+    """
+    try:
+        return Image.open(source)
+    except ValueError as exc:
+        raise UnidentifiedImageError(f"cannot identify image file {source!r}: {exc}") from exc
 
 
 def to_8bit_grayscale(image: Image.Image) -> Image.Image:
@@ -91,9 +121,12 @@ def to_8bit_grayscale(image: Image.Image) -> Image.Image:
 def convert_image(image: Image.Image, mode: str, name: str) -> Image.Image:
     """Convert an opened image to *mode* without inventing a fourth channel or clipping deep grayscale.
 
-    16-bit grayscale is scaled to 8 bits first (see :func:`to_8bit_grayscale`), so it keeps its
-    dynamic range instead of clipping to white. Pixels deeper than 16 bits still refuse a
-    1-channel target, as before.
+    Reject a missing fourth channel before decoding. Scale 16-bit grayscale before converting to the target mode.
+    Pillow reports some corrupt files with a ``SyntaxError`` or a
+    ``ValueError`` while it loads the pixels, for example a PNG whose chunk header between two image data chunks is cut
+    short, or whose ``pHYs`` chunk after them is too short.  That error is raised as an ``OSError`` chained to it, the
+    type Pillow uses for every other corrupt or truncated file, so callers catch one type and a corrupt file never
+    passes for a channel mismatch.
 
     Args:
         image: Opened image.
@@ -105,20 +138,28 @@ def convert_image(image: Image.Image, mode: str, name: str) -> Image.Image:
 
     Raises:
         ValueError: If *mode* is ``RGBA`` and the image stores no fourth channel, or *mode* is ``L`` and the image
-            holds ``I`` or ``F`` pixels deeper than 16 bits, which ``convert`` would saturate at 255.
+            cannot be converted from a deep grayscale mode without clipping.
+        OSError: If the pixels cannot be decoded.
 
     Examples:
         >>> convert_image(Image.new("LA", (2, 2)), "RGBA", "image").mode
         'RGBA'
     """
-    image = to_8bit_grayscale(image)
+    if mode == "RGBA" and not _has_fourth_channel(image):
+        raise ValueError(_no_fourth_channel_message(image, name))
+    try:
+        image = to_8bit_grayscale(image)
+    except (SyntaxError, ValueError) as exc:
+        raise OSError(str(exc)) from exc
     if mode == "L" and _is_deep_gray(image.mode):
         raise ValueError(
             f"{name} stores {image.mode!r} pixels deeper than 8 bits, which a model with num_channels=1 cannot read "
             "without saturating them at 255. Convert the file to 8-bit grayscale first."
         )
-    if mode == "RGBA" and not _has_fourth_channel(image):
-        raise ValueError(_no_fourth_channel_message(image, name))
+    try:
+        image.load()
+    except (SyntaxError, ValueError) as exc:
+        raise OSError(str(exc)) from exc
     return image.convert(mode)
 
 
@@ -185,7 +226,7 @@ def main() -> None:
         warnings.simplefilter("always")
         warnings.simplefilter("ignore" if allow_warning else "error", Image.DecompressionBombWarning)
         try:
-            with Image.open(source) as image:
+            with open_image(source) as image:
                 full_width, full_height = image.size
                 if draft_size is not None:
                     image.draft("RGB", (draft_size, draft_size))
@@ -217,7 +258,8 @@ def main() -> None:
             header = {"warning": str(warning)}
             pixels = b""
         except Exception as error:
-            header = {"error": type(error).__name__, "message": str(error)}
+            error_number = error.errno if isinstance(error, OSError) else None
+            header = {"error": type(error).__name__, "message": str(error), "errno": error_number}
             pixels = b""
     sys.stdout.buffer.write(json.dumps(header).encode("utf-8") + b"\n" + pixels)
 

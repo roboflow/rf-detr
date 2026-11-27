@@ -36,6 +36,18 @@ except ImportError:
 
 from rfdetr._prediction.sources import has_only_finite_images, is_expanded_source
 from rfdetr._prediction.thresholds import _class_thresholds
+from rfdetr._prediction.tta import (
+    TTAConfig,
+    _View,
+    build_views,
+    canvas_shape,
+    fuse_passes,
+    group_passes,
+    map_to_image,
+    place_view,
+    view_count,
+    vote_masks,
+)
 from rfdetr._prediction.types import _ImageInput, _PredictionInput, _ThresholdInput
 from rfdetr.models.postprocess import PostProcess
 from rfdetr.utilities.exif import exif_orientation, upright_image
@@ -43,6 +55,8 @@ from rfdetr.utilities.keypoints import _is_bg_first_schema, precision_cholesky_t
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
+    from supervision import Detections
+
     from rfdetr._prediction.types import _PredictionOutput, _PredictionResult
 
 logger = get_logger()
@@ -88,6 +102,8 @@ class PredictionContext:
     batch_size: int | None = None
     max_batch_size: int | None = None
     antialias: bool = False
+    # The side a snapshot enforces on every batch (an optimized native snapshot), or ``None`` when any shape runs.
+    fixed_resolution: int | None = None
 
 
 def _tensor_to_source_array(image: torch.Tensor) -> np.ndarray[Any, Any]:
@@ -731,6 +747,7 @@ def predict(
     vid_stride: int = 1,
     stream_buffer: bool = False,
     prepare_ahead: bool = False,
+    tta: TTAConfig | None = None,
 ) -> _PredictionOutput | Generator[_PredictionResult, None, None]:
     """Route both public prediction APIs through the same source and runtime pipeline.
 
@@ -762,10 +779,17 @@ def predict(
         prepare_ahead: Let a CUDA context build the next batch's input while the current batch runs. That reads the
             next batch's context before the current batch's results are yielded, so pass it only when nothing changes
             the model between batches, as for a predictor that owns its model or runtime.
+        tta: The test-time augmentation views to fuse (see :class:`~rfdetr._prediction.tta.TTAConfig`). ``None`` and
+            ``TTAConfig(zoom=())`` run the plain prediction; ``TTAConfig()`` runs the plain image and three zooms. A
+            request with several views is refused for a fixed-shape or fixed-batch runtime before any source is
+            opened, and it skips ``prepare_ahead``.
 
     Returns:
         A lazy generator, a scalar image result, or a list of results.
     """
+    if tta is not None:
+        # Refused here, before a stream opens its source: nothing below needs an image to know the request cannot run.
+        _plan_views(context_factory(), tta, shape, patch_size)
     for name, value in (("batch", 1 if batch is None else batch), ("vid_stride", vid_stride)):
         if isinstance(value, bool) or not isinstance(value, int) or value < 1:
             raise ValueError(f"{name} must be a positive integer.")
@@ -798,9 +822,12 @@ def predict(
             stream_buffer=stream_buffer,
             warn_on_live=not stream,
             prepare_ahead=prepare_ahead,
+            tta=tta,
         )
         return results if stream else list(results)
-    return _predict_batch(context_factory, images, threshold, shape, patch_size, include_source_image, antialias)
+    return _predict_batch(
+        context_factory, images, threshold, shape, patch_size, include_source_image, antialias, tta=tta
+    )
 
 
 #: Images per batch when ``batch=None`` predicts an eager directory or glob on a model without a fixed batch size.
@@ -891,6 +918,13 @@ def _decode_prefetched_jpegs(images: Sequence[Any], device: torch.device) -> dic
     return dict(zip(encoded, _decode_jpegs_on_gpu(list(encoded.values()), device)))
 
 
+@dataclass
+class _ViewRetryState:
+    """Remember the reduced view limit for one prediction request."""
+
+    limit: int | None = None
+
+
 @torch.inference_mode()
 def _predict_batch(
     context_factory: Callable[[], PredictionContext],
@@ -900,6 +934,9 @@ def _predict_batch(
     patch_size: int | None,
     include_source_image: bool,
     antialias: bool | None,
+    *,
+    tta: TTAConfig | None = None,
+    view_retry: _ViewRetryState | None = None,
 ) -> _PredictionOutput:
     """Prepare images, execute one batch, and decode results using a shared contract.
 
@@ -916,22 +953,359 @@ def _predict_batch(
         patch_size: Backbone patch size for shape validation.
         include_source_image: Store the source image in result metadata.
         antialias: Use antialiasing during image resize. Match the checkpoint training resize.
+        tta: The views to fuse (see :func:`_predict_shifted`); ``None`` runs the plain prediction.
+        view_retry: The reduced view limit shared by batches of this request, if any.
 
     Returns:
         One Supervision result or a list matching the input container.
 
     Raises:
-        TypeError: If ``threshold`` is neither a number nor a ``ClassThresholds``, such as a list or a ``dict``.
+        TypeError: If ``threshold`` is neither a number nor a ``ClassThresholds``, such as a list or a ``dict``, or
+            ``tta`` is not a ``TTAConfig``.
         ValueError: If a list or tuple is empty, the batch violates an export's fixed or maximum batch size, the shape
             or patch size is invalid or conflicts with an export's fixed shape, an input fails range or channel
-            validation, ``threshold`` is NaN, or a ``ClassThresholds`` does not fit the model: it names a class that
-            ``class_names`` does not hold, has a different number of entries than ``class_names``, or is given to a
-            model without classes. A ``ClassThresholds`` also raises when the export's ``class_id_to_name`` does not
-            match ``class_names`` (more ids than names, names in another order, or an id outside
-            ``0..num_classes``).
+            validation, ``threshold`` is NaN, ``tta`` asks for a shift above the patch size or for several views of a
+            keypoint model, the views need a larger canvas or more rows than a
+            fixed-shape, fixed-batch or resolution-enforcing runtime accepts, or a ``ClassThresholds`` does not fit the
+            model: it
+            names a class that ``class_names`` does not hold, has a different number of entries than ``class_names``,
+            or is given to a model without classes. A ``ClassThresholds`` also raises when the export's
+            ``class_id_to_name`` does not match ``class_names`` (more ids than names, names in another order, or an id
+            outside ``0..num_classes``).
     """
-    prepared = _prepare_batch(context_factory, images, threshold, shape, patch_size, include_source_image, antialias)
+    prepared = _prepare_batch(
+        context_factory,
+        images,
+        threshold,
+        shape,
+        patch_size,
+        include_source_image,
+        antialias,
+        tta=tta,
+    )
+    if len(prepared.views) > 1:
+        return _predict_shifted(prepared, patch_size, view_retry if view_retry is not None else _ViewRetryState())
     return _decode_batch(prepared, prepared.context.run(prepared.batch_tensor))
+
+
+#: Output keys fusion reads; every other output of the model is left whole.
+_FUSED_OUTPUT_KEYS = ("pred_logits", "pred_boxes", "pred_masks")
+
+#: Rows times canvas pixels one forward may hold on CUDA. Provisional: set by guess in the prototype, to be replaced by
+#: the value measured on the worst-case model and canvas.
+_MAX_PIXELS_PER_FORWARD = 8_388_608
+
+
+def _views_per_forward(context: PredictionContext, rows: int, canvas: tuple[int, int], views: int) -> int:
+    """Return how many views of one canvas shape run in one forward pass.
+
+    Only CUDA batches views, up to a budget of rows times canvas pixels. MPS and CPU run one view per forward, the
+    footprint of the per-view loop, until a measurement supports a larger one.
+
+    Args:
+        context: The prediction rules for this batch.
+        rows: Images per view.
+        canvas: The canvas ``(height, width)`` every view of the group shares.
+        views: How many views share this canvas.
+
+    Returns:
+        A count from 1 to ``views``.
+
+    Examples:
+        >>> import torch
+        >>> context = type("Context", (), {"device": torch.device("cuda")})()
+        >>> _views_per_forward(context, rows=2, canvas=(1024, 1024), views=8)
+        4
+        >>> _views_per_forward(type("Context", (), {"device": torch.device("cpu")})(), 2, (64, 64), 8)
+        1
+    """
+    if context.device.type != "cuda":
+        return 1
+    return max(1, min(views, _MAX_PIXELS_PER_FORWARD // (rows * canvas[0] * canvas[1])))
+
+
+def _mask_size(
+    masks: torch.Tensor, size: tuple[int, int], canvas: tuple[int, int], ratio: int, groups: int
+) -> tuple[int, int]:
+    """Return the ``(height, width)`` every view's mask logits are resampled to.
+
+    One canvas group keeps the size derived from its own mask head, as the first shift TTA did. Several groups share the
+    size the mask head gives the image itself, ``round(H / ratio)``, because their own heads round differently and the
+    masks of different views must stack.
+
+    Args:
+        masks: One view's ``(B, Q, Hm, Wm)`` mask logits on its canvas.
+        size: The image's ``(H, W)`` in model input pixels.
+        canvas: The canvas ``(height, width)``.
+        ratio: The model's mask downsample ratio.
+        groups: How many canvas shapes the request has.
+
+    Returns:
+        The mask size.
+
+    Examples:
+        >>> _mask_size(torch.zeros(1, 1, 24, 24), (64, 64), (96, 96), 4, groups=1)
+        (16, 16)
+        >>> _mask_size(torch.zeros(1, 1, 24, 24), (64, 64), (96, 96), 4, groups=2)
+        (16, 16)
+    """
+    height, width = size
+    if groups == 1:
+        mask_h, mask_w = masks.shape[-2:]
+        return max(1, round(mask_h * height / canvas[0])), max(1, round(mask_w * width / canvas[1]))
+    return max(1, round(height / ratio)), max(1, round(width / ratio))
+
+
+def _run_views(prepared: _PreparedBatch, chunk: list[int], canvas: tuple[int, int]) -> dict[str, torch.Tensor] | None:
+    """Place the views of ``chunk`` on ``canvas`` and run them as one forward pass.
+
+    An out-of-memory error of a forward with several views is not raised: the caller retries with fewer views, after
+    this function has returned, because the traceback of the error keeps the failed forward's tensors alive until the
+    ``except`` block ends.
+
+    Args:
+        prepared: The batch :func:`_prepare_batch` built.
+        chunk: Indices into ``prepared.views`` of the views that share this forward pass.
+        canvas: The canvas ``(height, width)`` every view of ``chunk`` shares.
+
+    Returns:
+        The model outputs for ``len(chunk) * B`` rows, view-major, or ``None`` when CUDA ran out of memory and the
+        chunk holds more than one view.
+
+    Raises:
+        torch.cuda.OutOfMemoryError: If a forward of a single view runs out of memory.
+    """
+    try:
+        placed = [
+            place_view(
+                prepared.batch_tensor,
+                prepared.views[i],
+                canvas,
+                antialias=prepared.antialias,
+                resize_on_cpu=prepared.resize_on_cpu,
+            )
+            for i in chunk
+        ]
+        return prepared.context.run(placed[0] if len(placed) == 1 else torch.cat(placed))
+    except torch.cuda.OutOfMemoryError:
+        if len(chunk) == 1:
+            raise
+    torch.cuda.empty_cache()
+    return None
+
+
+@torch.inference_mode()
+def _predict_shifted(
+    prepared: _PreparedBatch, patch_size: int | None, view_retry: _ViewRetryState
+) -> _PredictionOutput:
+    """Run a prepared batch once per view and average the matching detections.
+
+    Each view scales and places the batch on a canvas at least one ``patch_size * num_windows`` block larger
+    than needed for its shift, then maps the outputs back to the image. Views that share a canvas shape run together as
+    one forward pass over ``B * V`` rows on CUDA (see :func:`_views_per_forward`), view-major, and the original view
+    order is restored before fusion. A forward that runs out of CUDA memory is retried with half the views, down to
+    one, and the smaller size holds for the rest of the request. Each view keeps every top-k detection scoring above
+    0, with no threshold of its own, so the fused score of :func:`~rfdetr._prediction.tta.fuse_passes` is the plain
+    mean over the views; ``threshold`` applies to that fused score only. Masks are built only for the detections kept.
+
+    Args:
+        prepared: The batch :func:`_prepare_batch` built, with at least two views.
+        patch_size: Backbone patch size, or ``None`` for the model's own.
+        view_retry: Request-local limit lowered after a grouped forward runs out of memory.
+
+    Returns:
+        One Supervision result or a list matching the input container.
+    """
+    context = prepared.context
+    # `_prepare_batch` has already checked the views against this patch size and refused keypoint models.
+    patch_size = _resolve_patch_size(patch_size, context.config, "predict")
+    block = patch_size * getattr(context.config, "num_windows", 1)
+    batch = prepared.batch_tensor
+    size = (batch.shape[2], batch.shape[3])
+    views = prepared.views
+    groups: dict[tuple[int, int], list[int]] = {}
+    for index, view in enumerate(views):
+        groups.setdefault(canvas_shape(view, size, block), []).append(index)
+    ratio = getattr(context.config, "mask_downsample_ratio", 4)
+    # Filled by view index, so fusion sees the views in their original order whichever canvas group ran first.
+    candidates: list[list[_ShiftCandidates]] = [[] for _ in views]
+    # Mask logits stay at mask-head resolution until fusion has decided which detections are kept.
+    mask_logits: list[torch.Tensor | None] = [None] * len(views)
+    for canvas, indices in groups.items():
+        start = 0
+        while start < len(indices):
+            step = _views_per_forward(context, batch.shape[0], canvas, len(indices))
+            if view_retry.limit is not None:
+                step = min(step, view_retry.limit)
+            chunk = indices[start : start + step]
+            outputs = _run_views(prepared, chunk, canvas)
+            if outputs is None:
+                view_retry.limit = max(1, len(chunk) // 2)
+                continue
+            start += len(chunk)
+            split = {key: torch.chunk(outputs[key], len(chunk)) for key in _FUSED_OUTPUT_KEYS if key in outputs}
+            mapped_boxes = []
+            for position, index in enumerate(chunk):
+                view_outputs = {key: parts[position] for key, parts in split.items()}
+                masks = view_outputs.get("pred_masks")
+                mask_size = None if masks is None else _mask_size(masks, size, canvas, ratio, len(groups))
+                view_outputs = map_to_image(view_outputs, views[index], size, canvas, mask_size)
+                mapped_boxes.append(view_outputs["pred_boxes"])
+                mask_logits[index] = view_outputs.get("pred_masks")
+            # One top-k and one copy to the host for every view of the forward, not one pair per view: the rows are
+            # independent, so the result is the one a per-view call gives.
+            rows = _shift_candidates(
+                context.postprocess,
+                {"pred_logits": outputs["pred_logits"], "pred_boxes": torch.cat(mapped_boxes)},
+                prepared.target_sizes.repeat(len(chunk), 1),
+            )
+            for position, index in enumerate(chunk):
+                candidates[index] = rows[position * batch.shape[0] : (position + 1) * batch.shape[0]]
+
+    thresholds = (
+        None if prepared.threshold_by_class_id is None else prepared.threshold_by_class_id.float().cpu().numpy()
+    )
+    results: list[_PredictionResult] = [
+        _fuse_shifted_image(
+            prepared,
+            i,
+            [pass_candidates[i] for pass_candidates in candidates],
+            [None if logits is None else logits[i] for logits in mask_logits],
+            thresholds,
+        )
+        for i in range(len(prepared.orig_sizes))
+    ]
+    return results[0] if prepared.single_input else results
+
+
+@dataclass(frozen=True)
+class _ShiftCandidates:
+    """One image's detections from one shifted pass, before fusion.
+
+    Attributes:
+        detections: Boxes in source pixels, scores and class ids of every top-k row scoring above 0.
+        queries: The query each row comes from, to find its mask logits.
+    """
+
+    detections: Detections
+    queries: np.ndarray[Any, Any]
+
+
+def _shift_candidates(
+    postprocess: PostProcess, outputs: dict[str, torch.Tensor], target_sizes: torch.Tensor
+) -> list[_ShiftCandidates]:
+    """Decode one shifted pass into every top-k row scoring above 0, per image, without masks.
+
+    Args:
+        postprocess: The model's postprocessor.
+        outputs: The pass's outputs, mapped back to the image's frame.
+        target_sizes: ``(B, 2)`` source heights and widths.
+
+    Returns:
+        One candidate set per image.
+
+    Examples:
+        >>> outputs = {"pred_logits": torch.tensor([[[2.0], [-200.0]]]), "pred_boxes": torch.full((1, 2, 4), 0.5)}
+        >>> [c.queries.tolist() for c in _shift_candidates(PostProcess(), outputs, torch.tensor([[10, 10]]))]
+        [[0]]
+    """
+    from supervision import Detections
+
+    scores, labels, boxes, queries = postprocess.select_queries(outputs, target_sizes)
+    # One copy to the host for the whole batch. Class ids and query indices stay far below 2**24, so float32 holds
+    # them exactly; boxes and scores are float32, as the plain path returns them.
+    rows = torch.cat(
+        [boxes.float(), scores.float().unsqueeze(-1), labels.float().unsqueeze(-1), queries.float().unsqueeze(-1)],
+        dim=-1,
+    ).cpu()
+    candidates = []
+    for image_rows in rows:
+        # Mapping then clipping can collapse a padding-only box to the image boundary. Exclude it before fusion.
+        valid_boxes = (image_rows[:, 2] > image_rows[:, 0]) & (image_rows[:, 3] > image_rows[:, 1])
+        kept_rows = image_rows[(image_rows[:, 4] > 0.0) & valid_boxes].numpy()
+        detections = Detections(
+            xyxy=kept_rows[:, :4],
+            confidence=kept_rows[:, 4],
+            class_id=kept_rows[:, 5].astype(np.int64),
+        )
+        candidates.append(_ShiftCandidates(detections=detections, queries=kept_rows[:, 6].astype(np.int64)))
+    return candidates
+
+
+def _above_threshold(
+    detections: Detections, score_floor: float, thresholds: np.ndarray[Any, Any] | None
+) -> np.ndarray[Any, Any]:
+    """Return which detections score above their threshold, with the comparison the plain path uses.
+
+    Args:
+        detections: Detections with float32 scores.
+        score_floor: The single threshold, used when ``thresholds`` is ``None``.
+        thresholds: The per-class float32 table, ending in an ``inf`` sentinel, or ``None``.
+
+    Returns:
+        One bool per detection.
+
+    Examples:
+        >>> import supervision as sv
+        >>> scores, class_ids = np.float32([0.5, 0.7]), np.array([0, 5])
+        >>> detections = sv.Detections(xyxy=np.zeros((2, 4)), confidence=scores, class_id=class_ids)
+        >>> _above_threshold(detections, 0.6, None).tolist()
+        [False, True]
+        >>> _above_threshold(detections, 0.0, np.float32([0.4, np.inf])).tolist()
+        [True, False]
+    """
+    scores = np.asarray(detections.confidence)
+    if thresholds is None:
+        return np.asarray(scores > score_floor, dtype=bool)
+    # -1 and every id past the table read the trailing inf sentinel, as in _decode_batch.
+    row_thresholds = thresholds[np.clip(np.asarray(detections.class_id), -1, len(thresholds) - 1)]
+    return np.asarray(scores > row_thresholds, dtype=bool)
+
+
+def _fuse_shifted_image(
+    prepared: _PreparedBatch,
+    index: int,
+    passes: list[_ShiftCandidates],
+    mask_logits: list[torch.Tensor | None],
+    thresholds: np.ndarray[Any, Any] | None,
+) -> Detections:
+    """Fuse one image's shifted passes, keep the fused detections above threshold, and build their masks.
+
+    Only rows above their own threshold may seed a group (see :func:`~rfdetr._prediction.tta.group_passes`):
+    every group that can be kept stays the same, and the many low-score rows of every pass still join groups as members.
+
+    Args:
+        prepared: The batch :func:`_prepare_batch` built.
+        index: The image's position in the batch.
+        passes: The image's candidates from every pass.
+        mask_logits: The image's ``(Q, Hm, Wm)`` mask logits from every pass, or ``None`` for each pass of a detection
+            model.
+        thresholds: The per-class float32 threshold table, or ``None`` for the single ``prepared.score_floor``.
+
+    Returns:
+        The fused detections above threshold, highest score first.
+    """
+    from supervision import Detections
+
+    detections = [candidates.detections for candidates in passes]
+    seeds = _above_threshold(Detections.merge(detections), prepared.score_floor, thresholds)
+    groups = group_passes(detections, can_seed=seeds)
+    fused = fuse_passes(detections, groups)
+    keep = _above_threshold(fused, prepared.score_floor, thresholds)
+    kept = cast("Detections", fused[keep])
+    if mask_logits[0] is not None:
+        source = np.repeat(np.arange(len(passes)), [len(candidates.queries) for candidates in passes])
+        queries = np.concatenate([candidates.queries for candidates in passes])
+        kept_groups = [group for group, kept_group in zip(groups, keep) if kept_group]
+        members = [[(int(source[j]), int(queries[j])) for j in group] for group in kept_groups]
+        logits = cast("list[torch.Tensor]", mask_logits)
+        kept.mask = vote_masks(logits, members, prepared.orig_sizes[index]).cpu().numpy()
+    context = prepared.context
+    kept.data["source_shape"] = np.tile(np.array(prepared.orig_sizes[index], dtype=np.int64), (len(kept), 1))
+    kept.data["class_name"] = _class_names(np.asarray(kept.class_id), context.class_id_to_name, context.num_classes)
+    if prepared.include_source_image:
+        kept.metadata["source_image"] = prepared.source_images[index]
+    return kept
 
 
 @dataclass(frozen=True)
@@ -948,6 +1322,9 @@ class _PreparedBatch:
         single_input: The caller passed one image, so decoding returns one result instead of a list.
         score_floor: The single threshold, or the lowest per-class one.
         threshold_by_class_id: The per-class threshold table, or ``None`` for a single threshold.
+        views: The test-time augmentation views to run; empty or a single view means the plain pass.
+        antialias: Whether the batch was resized with antialiasing; a scaled view resizes the same way.
+        resize_on_cpu: Whether that resize runs on the CPU because the device has no antialiased resize kernel.
     """
 
     context: PredictionContext
@@ -959,6 +1336,94 @@ class _PreparedBatch:
     single_input: bool
     score_floor: float
     threshold_by_class_id: torch.Tensor | None
+    views: tuple[_View, ...] = ()
+    antialias: bool = False
+    resize_on_cpu: bool = False
+
+
+def _refuse_unsupported_views(context: PredictionContext, views: Sequence[_View]) -> None:
+    """Refuse a request with several views on a runtime that cannot take a larger canvas or more rows.
+
+    Args:
+        context: The prediction rules for this batch.
+        views: The requested views.
+
+    Raises:
+        ValueError: If there is more than one view and the runtime fixes the input shape, the batch size or the
+            resolution it enforces.
+
+    Examples:
+        >>> _refuse_unsupported_views(type("Context", (), {"fixed_shape": False, "batch_size": None,
+        ...                                                "max_batch_size": None, "fixed_resolution": None})(), [1, 2])
+    """
+    if len(views) <= 1:
+        return
+    reasons = [
+        reason
+        for reason, fixed in (
+            ("a fixed input shape", context.fixed_shape),
+            ("a fixed batch size", context.batch_size is not None),
+            ("a maximum batch size", context.max_batch_size is not None),
+            ("an enforced resolution", context.fixed_resolution is not None),
+        )
+        if fixed
+    ]
+    if reasons:
+        raise ValueError(
+            f"Test-time augmentation runs {len(views)} views as a larger batch on a larger canvas, which this "
+            f"predictor cannot run: it has {' and '.join(reasons)}. "
+            "Use a predictor built from a live model or a checkpoint path."
+        )
+
+
+def _plan_views(
+    context: PredictionContext,
+    tta: TTAConfig | None,
+    shape: tuple[int, int] | None,
+    patch_size: int | None,
+) -> tuple[int, tuple[int, int] | None, list[_View]]:
+    """Check every argument that needs no image and return the patch size, input shape and views.
+
+    Args:
+        context: The prediction rules for this batch.
+        tta: The views to run, or ``None`` for the plain prediction.
+        shape: Input height and width, or ``None`` for the model's default.
+        patch_size: Backbone patch size, or ``None`` for the model's own.
+
+    Returns:
+        The resolved patch size, the validated ``shape`` (``None`` keeps the model's default) and the views; one view
+        means the plain path.
+
+    Raises:
+        TypeError: If ``tta`` is neither ``None`` nor a ``TTAConfig``.
+        ValueError: If an argument is invalid, a keypoint model is given several views, or the runtime cannot take them.
+    """
+    patch_size = _resolve_patch_size(patch_size, context.config, "predict")
+    if tta is not None and not isinstance(tta, TTAConfig):
+        raise TypeError(f"tta must be a TTAConfig or None, got {type(tta).__name__}.")
+    config = TTAConfig(zoom=()) if tta is None else tta
+    if view_count(config) > 1 and any(context.num_keypoints_per_class):
+        raise ValueError("tta does not support keypoint models.")
+    num_windows = getattr(context.config, "num_windows", 1)
+    if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
+        raise ValueError(f"model_config.num_windows must be a positive integer, got {num_windows!r}")
+    block_size = patch_size * num_windows
+
+    if shape is None:
+        default_res = context.default_shape[0]
+        if default_res % block_size != 0:
+            raise ValueError(
+                f"Model's default resolution ({default_res}) is not divisible by "
+                f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "
+                f"Provide an explicit shape divisible by {block_size}.",
+            )
+    else:
+        shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
+        if context.fixed_shape and shape != context.default_shape:
+            raise ValueError(f"Export requires shape {context.default_shape}, but got {shape}.")
+    views = build_views(config, patch_size, shape if shape is not None else context.default_shape)
+    _refuse_unsupported_views(context, views)
+    return patch_size, shape, views
 
 
 @torch.inference_mode()
@@ -970,6 +1435,8 @@ def _prepare_batch(
     patch_size: int | None,
     include_source_image: bool,
     antialias: bool | None,
+    *,
+    tta: TTAConfig | None = None,
 ) -> _PreparedBatch:
     """Read the batch's context, check its arguments and images, and build the model input on the context device.
 
@@ -984,6 +1451,7 @@ def _prepare_batch(
         patch_size: Backbone patch size for shape validation.
         include_source_image: Store the source image in result metadata.
         antialias: Use antialiasing during image resize.
+        tta: The views to run; checked here, before any image is read.
 
     Returns:
         The model input and the data :func:`_decode_batch` needs.
@@ -1004,24 +1472,7 @@ def _prepare_batch(
         if context.max_batch_size is not None and batch_size > context.max_batch_size:
             raise ValueError(f"Batch size {batch_size} exceeds export maximum {context.max_batch_size}.")
 
-    patch_size = _resolve_patch_size(patch_size, context.config, "predict")
-    num_windows = getattr(context.config, "num_windows", 1)
-    if isinstance(num_windows, bool) or not isinstance(num_windows, int) or num_windows <= 0:
-        raise ValueError(f"model_config.num_windows must be a positive integer, got {num_windows!r}")
-    block_size = patch_size * num_windows
-
-    if shape is None:
-        default_res = context.default_shape[0]
-        if default_res % block_size != 0:
-            raise ValueError(
-                f"Model's default resolution ({default_res}) is not divisible by "
-                f"block_size={block_size} (patch_size={patch_size} * num_windows={num_windows}). "
-                f"Provide an explicit shape divisible by {block_size}.",
-            )
-    else:
-        shape = _validate_shape_dims(shape, block_size, patch_size, num_windows)
-        if context.fixed_shape and shape != context.default_shape:
-            raise ValueError(f"Export requires shape {context.default_shape}, but got {shape}.")
+    patch_size, shape, views = _plan_views(context, tta, shape, patch_size)
 
     # Built before the forward pass, where a class-id map that does not match `class_names` can still be refused.
     score_floor, threshold_by_class_id = _class_thresholds(threshold, context)
@@ -1263,7 +1714,41 @@ def _prepare_batch(
         single_input=single_input,
         score_floor=score_floor,
         threshold_by_class_id=threshold_by_class_id,
+        views=tuple(views),
+        antialias=antialias,
+        resize_on_cpu=resize_on_cpu,
     )
+
+
+def _class_names(
+    class_ids: np.ndarray[Any, Any], class_id_to_name: dict[int, str], background_id: int
+) -> np.ndarray[Any, Any]:
+    """Name each class id for a result's ``data["class_name"]``.
+
+    Explicit ``class_id_to_name`` entries take precedence, including at the background id. Only an unmapped background
+    id maps to ``"__background__"`` without warning. Other unmapped ids produce an empty string with a one-time
+    warning.
+
+    Args:
+        class_ids: The detections' class ids.
+        class_id_to_name: The model's class id to name map.
+        background_id: The no-object or background class id.
+
+    Returns:
+        An object array of names, one per class id.
+
+    Examples:
+        >>> _class_names(np.array([0, 1]), {0: "cat"}, background_id=1).tolist()
+        ['cat', '__background__']
+    """
+    truly_oob = [cid for cid in class_ids if cid not in class_id_to_name and cid != background_id]
+    if truly_oob:
+        logger.warning_once(
+            "predict() encountered unmapped class_id(s): %s — mapping to empty string",
+            truly_oob[:5],
+        )
+    class_names = [class_id_to_name.get(cid, "__background__" if cid == background_id else "") for cid in class_ids]
+    return np.array(class_names, dtype=object)
 
 
 @torch.inference_mode()
@@ -1432,24 +1917,12 @@ def _decode_batch(prepared: _PreparedBatch, predictions: dict[str, torch.Tensor]
 
         # Attach class names so callers can map class_id → name without a
         # separate lookup. Always set data["class_name"] for a consistent interface.
-        #
-        # Explicit _class_id_to_name entries take precedence, including at the
-        # background sentinel. Only an unmapped sentinel maps to "__background__"
-        # without warning. Other unmapped IDs produce an empty string with a
-        # one-time warning.
         class_ids = detections.class_id if detections.class_id is not None else np.array([], dtype=int)
         # Sentinel for the no-object / background class differs by model type.
         # Legacy background-first keypoint models: slot 0 is background in the keypoint schema.
         # Detection/segmentation models: the no-object slot is at index num_logit_slots.
         _bg_sentinel = 0 if _is_legacy_bgfirst_keypoint else num_logit_slots
-        truly_oob = [cid for cid in class_ids if cid not in _class_id_to_name and cid != _bg_sentinel]
-        if truly_oob:
-            logger.warning_once(
-                "predict() encountered unmapped class_id(s): %s — mapping to empty string",
-                truly_oob[:5],
-            )
-        class_names = [_class_id_to_name.get(cid, "__background__" if cid == _bg_sentinel else "") for cid in class_ids]
-        detections.data["class_name"] = np.array(class_names, dtype=object)
+        detections.data["class_name"] = _class_names(class_ids, _class_id_to_name, _bg_sentinel)
 
         if has_keypoints and keypoints_array is not None:
             keypoint_data = dict(detections.data)
