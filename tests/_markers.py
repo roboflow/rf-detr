@@ -15,9 +15,11 @@ import pytest
 import torch
 
 from rfdetr.export._coreai import _IS_COREAI_TORCH_AVAILABLE
+from rfdetr.export._tensorrt.exporter import _IS_POLYGRAPHY_AVAILABLE, _IS_TENSORRT_AVAILABLE
 from rfdetr.export.imports import (
     _IS_COREAI_INSTALLED,
     _IS_ONNX_INSTALLED,
+    _IS_ONNXCONVERTER_COMMON_INSTALLED,
     _IS_ONNXRUNTIME_INSTALLED,
     _IS_OPENVINO_INSTALLED,
 )
@@ -30,6 +32,7 @@ from rfdetr.utilities.imports import (
     _IS_PEFT_INSTALLED,
     _IS_PYCOCOTOOLS_INSTALLED,
     _IS_SAFETENSORS_INSTALLED,
+    _IS_SIMPLEJPEG_INSTALLED,
     _IS_TORCH_XLA_INSTALLED,
     _IS_UFCOCO_INSTALLED,
     _IS_VERNIER_INSTALLED,
@@ -88,6 +91,16 @@ _requires_onnx_and_onnxruntime = pytest.mark.skipif(
     reason="onnx/onnxruntime not installed; skip ONNX inference tests",
 )
 
+#: Skip a test node that needs ``onnxconverter-common``, the FP16 graph rewrite behind the TensorRT INT8 source graph.
+_requires_onnxconverter_common = pytest.mark.skipif(
+    not _IS_ONNXCONVERTER_COMMON_INSTALLED, reason="onnxconverter-common not installed (the FP16 graph rewrite)"
+)
+
+#: Skip a test node that needs TensorRT and polygraphy, which build the engine.
+_requires_tensorrt = pytest.mark.skipif(
+    not (_IS_TENSORRT_AVAILABLE and _IS_POLYGRAPHY_AVAILABLE), reason="tensorrt/polygraphy not installed"
+)
+
 #: Skip a test node that needs two CUDA devices, such as a model and its input on different GPUs.
 _requires_two_cuda_devices = pytest.mark.skipif(torch.cuda.device_count() < 2, reason="needs two CUDA devices")
 
@@ -110,6 +123,9 @@ _requires_albumentations = pytest.mark.skipif(not _IS_ALBUMENTATIONS_INSTALLED, 
 
 #: Skip a test node that needs ``kornia`` (the ``augment`` extra).
 _requires_kornia = pytest.mark.skipif(not _IS_KORNIA_INSTALLED, reason="kornia not installed")
+
+#: Skip a test node that decodes JPEG files through ``simplejpeg`` (the ``train`` extra); Pillow decodes without it.
+_requires_simplejpeg = pytest.mark.skipif(not _IS_SIMPLEJPEG_INSTALLED, reason="simplejpeg is not installed")
 
 #: Skip a test node that needs a COCO evaluation backend; each gates one ``TrainConfig.eval_backend`` choice.
 _requires_pycocotools = pytest.mark.skipif(not _IS_PYCOCOTOOLS_INSTALLED, reason="pycocotools not installed")

@@ -7,6 +7,7 @@
 
 import warnings
 from collections.abc import Callable
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock
@@ -15,10 +16,12 @@ import pytest
 import torch
 from pytest_mock import MockerFixture
 
-from rfdetr.config import RFDETRBaseConfig, TrainConfig
+from rfdetr.config import KeypointTrainConfig, RFDETRBaseConfig, RFDETRKeypointPreviewConfig, TrainConfig
 from rfdetr.detr import RFDETR
+from rfdetr.models import build_criterion_from_config
 from rfdetr.training import auto_batch, build_trainer
 from rfdetr.training.auto_batch import AutoBatchResult
+from rfdetr.utilities.tensors import NestedTensor
 from tests._markers import _requires_cuda
 
 
@@ -72,6 +75,34 @@ class _PartiallyUsedDummyModel(torch.nn.Module):
     def forward(self, samples, targets):
         """Return a prediction that only depends on ``used``."""
         return {"pred": self.used.sum() * len(targets)}
+
+
+class _KeypointOutputsModel(torch.nn.Module):
+    """Return keypoint outputs from its own parameters, so a probe step reaches the real keypoint matcher and loss.
+
+    Examples:
+        >>> model = _KeypointOutputsModel(num_logits=2, num_queries=26, total_keypoints=17)
+        >>> samples = NestedTensor(torch.zeros(2, 3, 8, 8), torch.zeros(2, 8, 8, dtype=torch.bool))
+        >>> {name: tuple(value.shape) for name, value in model(samples, []).items()}
+        {'pred_logits': (2, 26, 2), 'pred_boxes': (2, 26, 4), 'pred_keypoints': (2, 26, 17, 8)}
+    """
+
+    def __init__(self, num_logits: int, num_queries: int, total_keypoints: int) -> None:
+        super().__init__()
+        generator = torch.Generator().manual_seed(0)
+        self.logits = torch.nn.Parameter(torch.zeros(num_queries, num_logits))
+        self.boxes = torch.nn.Parameter(torch.randn(num_queries, 4, generator=generator))
+        # Eight values per keypoint, as the keypoint head outputs them; small, so the Gaussian NLL stays finite.
+        self.keypoints = torch.nn.Parameter(0.1 * torch.randn(num_queries, total_keypoints, 8, generator=generator))
+
+    def forward(self, samples: NestedTensor, targets: list[dict[str, torch.Tensor]]) -> dict[str, torch.Tensor]:
+        """Expand the per-query outputs over the batch in ``samples``."""
+        batch_size = samples.tensors.shape[0]
+        return {
+            "pred_logits": self.logits.expand(batch_size, -1, -1),
+            "pred_boxes": self.boxes.sigmoid().expand(batch_size, -1, -1),
+            "pred_keypoints": self.keypoints.expand(batch_size, -1, -1, -1),
+        }
 
 
 class _CpuAsCuda(str):
@@ -211,6 +242,34 @@ def _probe_step_kwargs(
         "shadow_params": shadow_params,
     }
     return kwargs | overrides
+
+
+def _keypoint_criterion_and_model(
+    tmp_path: Path, num_keypoints_per_class: list[int], num_classes: int
+) -> tuple[torch.nn.Module, torch.nn.Module]:
+    """Return the real keypoint criterion for a schema and a model whose outputs that criterion can score.
+
+    Examples:
+        >>> import tempfile
+        >>> with tempfile.TemporaryDirectory() as tmp:
+        ...     criterion, model = _keypoint_criterion_and_model(Path(tmp), [0, 17], 1)
+        >>> list(criterion.num_keypoints_per_class), model.keypoints.shape[1]
+        ([0, 17], 34)
+    """
+    model_config = RFDETRKeypointPreviewConfig(
+        num_classes=num_classes,
+        num_keypoints_per_class=num_keypoints_per_class,
+        pretrain_weights=None,
+        device="cpu",
+    )
+    train_config = KeypointTrainConfig(dataset_dir=str(tmp_path), output_dir=str(tmp_path), tensorboard=False)
+    criterion, _ = build_criterion_from_config(model_config, train_config)
+    model = _KeypointOutputsModel(
+        num_logits=num_classes + 1,
+        num_queries=2 * criterion.group_detr,
+        total_keypoints=len(num_keypoints_per_class) * max(num_keypoints_per_class),
+    )
+    return criterion, model
 
 
 @pytest.fixture
@@ -558,6 +617,81 @@ class TestProbeStepShadowOptimizer:
         assert ok is False
         for shadow_p in kwargs["shadow_params"]:
             assert shadow_p.grad is None
+
+
+class TestProbeStepKeypointTargets:
+    """A keypoint model's probe step must give the keypoint matcher and loss real keypoint targets.
+
+    The docs' keypoint quick start trains with ``batch_size="auto"``, and its probe step used to stop with ``KeyError:
+    'keypoints'`` because the synthetic targets only carried boxes and labels.
+    """
+
+    @pytest.mark.parametrize(
+        ("num_keypoints_per_class", "num_classes"),
+        [
+            pytest.param([17], 1, id="person"),
+            pytest.param([0, 17], 1, id="background_first_person"),
+            pytest.param([17, 4], 2, id="two_keypoint_classes"),
+            pytest.param([4, 17], 2, id="largest_class_not_first"),
+        ],
+    )
+    def test_keypoint_loss_scores_visible_keypoints(
+        self, tmp_path: Path, num_keypoints_per_class: list[int], num_classes: int
+    ) -> None:
+        """The criterion receives padded, fully visible keypoints labelled with the first class of maximum size."""
+        criterion, model = _keypoint_criterion_and_model(tmp_path, num_keypoints_per_class, num_classes)
+        loss_dicts: list[dict[str, torch.Tensor]] = []
+        criterion_targets: list[list[dict[str, torch.Tensor]]] = []
+        criterion.register_forward_hook(lambda _module, _inputs, output: loss_dicts.append(output))
+        criterion.register_forward_hook(lambda _module, inputs, _output: criterion_targets.append(inputs[1]))
+        micro_batch_size, max_targets = 2, 3
+
+        ok = auto_batch._probe_step(
+            **_probe_step_kwargs(
+                model,
+                criterion,
+                micro_batch_size=micro_batch_size,
+                resolution=32,
+                num_classes=num_classes,
+                max_targets_per_image=max_targets,
+            )
+        )
+
+        assert ok is True
+        (losses,) = loss_dicts
+        # Zero would mean every target was labelled with a class that has no keypoints, e.g. the background slot
+        # of a ``[0, 17]`` schema, so the probe would not measure the keypoint loss a real person target costs.
+        assert losses["loss_keypoints_l1"] > 0
+        # The loss alone cannot tell the first class of maximum size from any other class that has keypoints, nor
+        # visibility 2 from 1, so pin what the targets themselves carry.
+        (targets,) = criterion_targets
+        max_keypoints = max(num_keypoints_per_class)
+        expected_label = num_keypoints_per_class.index(max_keypoints)
+        assert len(targets) == micro_batch_size
+        for target in targets:
+            assert target["labels"].tolist() == [expected_label] * max_targets
+            assert tuple(target["keypoints"].shape) == (max_targets, max_keypoints, 3)
+            assert (target["keypoints"][..., 2] == 2).all()
+
+    @pytest.mark.usefixtures("mock_empty_cache")
+    def test_probe_max_micro_batch_searches_with_keypoint_criterion(self, tmp_path: Path) -> None:
+        """The search ``batch_size="auto"`` runs probes every candidate with a keypoint criterion, not one step."""
+        criterion, model = _keypoint_criterion_and_model(tmp_path, [0, 17], 1)
+
+        safe = auto_batch.probe_max_micro_batch(
+            **_probe_max_kwargs(
+                model,
+                criterion,
+                resolution=32,
+                num_classes=1,
+                device=_CpuAsCuda("cpu"),
+                max_targets_per_image=3,
+                safety_margin=1.0,
+                max_micro_batch=2,
+            )
+        )
+
+        assert safe == 2
 
 
 class TestBuildShadowOptimizer:

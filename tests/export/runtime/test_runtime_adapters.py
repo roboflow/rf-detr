@@ -619,6 +619,45 @@ class TestRuntimeSuffixes:
 
         create.assert_called_once_with(artifact, providers=["CPUExecutionProvider"], num_threads=8)
 
+    def test_onnx_cpu_defaults_to_every_usable_logical_core(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Without `num_threads` the CPU provider gets one thread per logical core the process may use.
+
+        ONNX Runtime alone would size the pool to the physical cores and leave the hyperthreads idle, so the loader asks
+        for the affinity-limited logical count, the same pool PyTorch and OpenVINO use when they are given every core.
+        """
+        artifact = tmp_path / "model.onnx"
+        artifact.write_bytes(b"artifact")
+        create = Mock(side_effect=RuntimeError("stop after the session hand-off"))
+        monkeypatch.setitem(
+            sys.modules, "onnxruntime", types.SimpleNamespace(get_available_providers=lambda: ["CPUExecutionProvider"])
+        )
+        monkeypatch.setattr("rfdetr.export._onnx.inference._create_onnx_session", create)
+        monkeypatch.setattr("rfdetr.export._onnx.inference._logical_cpu_count", lambda: 6)
+
+        with pytest.raises(RuntimeError, match="stop after"):
+            load_runtime(artifact, _detect_metadata("onnx"), device="cpu")
+
+        create.assert_called_once_with(artifact, providers=["CPUExecutionProvider"], num_threads=6)
+
+    def test_onnx_cuda_keeps_the_runtime_thread_default(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        """The CUDA provider runs its work on the GPU, so no CPU thread count is imposed on it."""
+        artifact = tmp_path / "model.onnx"
+        artifact.write_bytes(b"artifact")
+        create = Mock(side_effect=RuntimeError("stop after the session hand-off"))
+        monkeypatch.setitem(
+            sys.modules,
+            "onnxruntime",
+            types.SimpleNamespace(get_available_providers=lambda: ["CUDAExecutionProvider", "CPUExecutionProvider"]),
+        )
+        monkeypatch.setattr("rfdetr.export._onnx.inference._create_onnx_session", create)
+
+        with pytest.raises(RuntimeError, match="stop after"):
+            load_runtime(artifact, _detect_metadata("onnx"), device="cuda")
+
+        create.assert_called_once_with(artifact, providers=[("CUDAExecutionProvider", {"device_id": 0})])
+
     @pytest.mark.parametrize(
         "value",
         [

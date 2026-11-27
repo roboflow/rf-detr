@@ -39,6 +39,7 @@ from rfdetr._prediction.types import _ImageInput, _ThresholdInput
 from rfdetr.assets.coco_classes import COCO_CLASS_NAMES
 from rfdetr.assets.model_weights import download_pretrain_weights, get_model_cache_dir
 from rfdetr.config import ModelConfig, TrainConfig
+from rfdetr.datasets._aug_utils import cycle_channel_stats
 from rfdetr.datasets._keypoint_schema import (
     active_keypoint_counts,
     infer_coco_keypoint_schema,
@@ -50,6 +51,7 @@ from rfdetr.datasets.yolo import _extract_yolo_class_names, find_yolo_data_file,
 from rfdetr.inference import ModelContext, RFDETRInference, _build_model_context
 from rfdetr.models.backbone.dinov2_with_windowed_attn import _fold_layer_scales
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
+from rfdetr.models.postprocess import PostProcess
 
 # The lightweight package holds the symbol set; rfdetr.platform.models would import rfdetr_plus, which imports rfdetr.
 from rfdetr.platform import _PLUS_EXPORTS
@@ -765,12 +767,10 @@ class RFDETR:
         self.means = list(self.means)
         self.stds = list(self.stds)
 
-        # repeat means and stds for non-rgb images
+        # repeat means and stds for non-rgb images, the rule training normalization applies too
         if self.model_config.num_channels != 3:
-            from itertools import cycle
-
-            self.means = [val for _, val in zip(range(self.model_config.num_channels), cycle(self.means))]
-            self.stds = [val for _, val in zip(range(self.model_config.num_channels), cycle(self.stds))]
+            self.means = list(cycle_channel_stats(self.means, self.model_config.num_channels))
+            self.stds = list(cycle_channel_stats(self.stds, self.model_config.num_channels))
 
         self.model.inference_model = None
         self._is_optimized_for_inference = False
@@ -1130,12 +1130,13 @@ class RFDETR:
         elif "rfdetr_version" in ckpt or "best_total_source" in ckpt:
             # checkpoint_best_total.pth files written before strip_checkpoint kept model_config have lost it; the
             # unstripped file they were copied from, named by best_total_source, still has it. These settings then
-            # fall back to class defaults without an error (a changed num_queries or group_detr fails loudly on the
-            # weight shapes instead), so keep warning until the caller has passed all of them.
+            # fall back to class defaults without an error (a changed group_detr fails loudly on the weight shapes
+            # instead; a num_queries below the default is padded by load_pretrain_weights, so it is listed too),
+            # so keep warning until the caller has passed all of them.
             # Both keys discriminate, because neither is present on its own in every affected file: rfdetr_version
             # reaches back to 1.7.0 but is omitted when get_version() cannot resolve a version (editable install
             # without package metadata), while best_total_source covers those but only exists since 1.9.0.
-            silent_fields = ["resolution", "num_select", "dec_layers"]
+            silent_fields = ["resolution", "num_queries", "num_select", "dec_layers"]
             segmentation_field = _mc_fields.get("segmentation_head")
             if kwargs.get("segmentation_head", getattr(segmentation_field, "default", False)) is True:
                 silent_fields.append("mask_downsample_ratio")
@@ -1603,6 +1604,13 @@ class RFDETR:
         # construction-time snapshot built from a dummy TrainConfig, so overrides like lr/lr_encoder
         # never appeared in model.model.__dict__['args'] even though the optimizer used them correctly.
         self.model.args = _namespace_from_configs(self.model_config, config)
+        # Rebuild the postprocessor too: the run may have aligned the keypoint schema to the dataset, and the one
+        # built at construction would decode the retrained head with the pretrained layout.
+        self.model.postprocess = PostProcess(
+            num_select=self.model.args.num_select,
+            num_keypoints_per_class=self.model.args.num_keypoints_per_class,
+            trace_alpha=self.model.args.postprocess_trace_alpha,
+        )
         # Mark this instance as trained so a subsequent train() call warns that it will
         # restart from pretrain_weights rather than continue from the in-memory state.
         self._has_been_trained = True
@@ -2145,10 +2153,11 @@ class RFDETR:
         coreml_neural_engine: bool = False,
         coreai_precision: str | None = None,
         openvino_precision: str | None = None,
+        int8_keep_mlp_float: bool = False,
     ) -> Path:
         """Export the trained model to ONNX, TFLite, TensorRT, ExecuTorch, CoreML, OpenVINO, or LiteRT format.
 
-        See the `export documentation <https://rfdetr.roboflow.com/exports/>`_ for more information.
+        See the `export documentation <https://rfdetr.roboflow.com/latest/exports/>`_ for more information.
 
         Args:
             output_dir: Directory to write the exported model to.
@@ -2202,7 +2211,9 @@ class RFDETR:
                 When ``"executorch"`` is selected the model is exported
                 directly via ``torch.export`` to an ExecuTorch
                 ``.pte`` file (no ONNX step), configured by *backend* / *soc* below.  Requires
-                ``pip install rfdetr[executorch]``. ``"openvino"`` converts directly from PyTorch to OpenVINO IR
+                ``pip install rfdetr[executorch]``, or ``rfdetr[executorch-tensorrt]`` (Linux, Python 3.11 or newer)
+                for ``backend="tensorrt"``; the two extras cannot share an environment. ``"openvino"`` converts
+                directly from PyTorch to OpenVINO IR
                 format (requires ``pip install rfdetr[openvino]``). ``"litert"`` converts directly from PyTorch to
                 a LiteRT ``.tflite`` file via ``litert-torch`` (``torch.export`` capture, no ONNX or TensorFlow
                 step; requires ``pip install rfdetr[litert]``) — the same file type as ``"tflite"``, reached
@@ -2279,8 +2290,11 @@ class RFDETR:
             backend: Hardware backend to specialize the export for.  Required when ``format="executorch"`` and
                 ignored — with a warning — for any other format.  Accepted values for ExecuTorch:
                 ``"xnnpack"`` (portable CPU, fp32), ``"coreml"`` (Apple devices, fp16; requires ``coremltools``),
-                and ``"qnn"`` (Qualcomm Snapdragon HTP, fp16; requires an ExecuTorch source build against the
-                QAIRT SDK — not available via pip).
+                ``"qnn"`` (Qualcomm Snapdragon HTP, fp16; requires an ExecuTorch source build against the
+                QAIRT SDK — not available via pip), and ``"tensorrt"`` (NVIDIA GPUs, fp32; requires
+                ``pip install rfdetr[executorch-tensorrt]`` and a CUDA device at export time; the engine is built on
+                the CUDA device of the model being exported, or on the current CUDA device when the model is on the
+                CPU, and runs only on GPUs and TensorRT releases compatible with it).
             soc: Target SoC (System on Chip) — the specific Qualcomm Snapdragon chip the exported model will run
                 on.  Required when ``backend="qnn"``: the QNN backend compiles the ``.pte`` ahead-of-time for one
                 chip's Hexagon Tensor Processor (HTP), unlike ``"xnnpack"``/``"coreml"`` which run on any device of
@@ -2288,7 +2302,7 @@ class RFDETR:
                 any other backend or format.  Must be a
                 :class:`~executorch.backends.qualcomm.serialization.qc_schema.QcomChipset` name, e.g. ``"SM8650"``
                 (Snapdragon 8 Gen 3); see that enum for the full list of supported chips.  Has no effect for
-                ``"xnnpack"`` or ``"coreml"``.
+                ``"xnnpack"``, ``"coreml"`` or ``"tensorrt"``.
             fp16: Build the TensorRT engine with FP16 precision.  Only applies when ``format="tensorrt"``
                 (alias ``"trt"``); ignored for every other format.  Defaults to ``True`` for lowest latency
                 on NVIDIA GPUs.  TensorRT 11+ removed the FP16 builder flag, so there the engine is built
@@ -2370,6 +2384,9 @@ class RFDETR:
                 FP16 weight compression, controlling IR *storage* precision only (execution precision still
                 depends on the compiled device — not guaranteed to match eager PyTorch on non-CPU devices).
                 Ignored for every other format.
+            int8_keep_mlp_float: For ONNX INT8, also keep GELU-fed weighted projections in float. This includes the
+                second layer of backbone MLPs and can include other projections, such as in segmentation heads.
+                Defaults to ``False``. Refused for ONNX without ``quantization="int8"`` and ignored for other formats.
             output_name: Full filename override (without extension), e.g. ``"my-model"``. When set, takes
                 precedence over the model's variant name (``self.size``) and the exported file is named
                 ``{output_name}.{ext}`` verbatim — this also suppresses the ``_fp32``/``_fp16``/``_{backend}``
@@ -2438,7 +2455,8 @@ class RFDETR:
                 ``format``/``backend`` are not installed (e.g.
                 ``rfdetr[onnx]``, ``rfdetr[tensorrt]``, ``rfdetr[executorch]``,
                 ``rfdetr[coreml]``, ``coremltools`` for ExecuTorch
-                ``backend="coreml"``, ``openvino`` for OpenVINO export,
+                ``backend="coreml"``, ``rfdetr[executorch-tensorrt]`` for ExecuTorch ``backend="tensorrt"``,
+                ``openvino`` for OpenVINO export,
                 ``rfdetr[litert]`` for LiteRT export,
                 ``onnxruntime`` for ``format="onnx"`` with ``quantization="int8"``, ``nncf`` for
                 ``format="openvino"`` with ``quantization="int8"``,
@@ -2453,7 +2471,8 @@ class RFDETR:
                 backend's extension, the TensorRT cast's packages, the Core AI runtime package, ``onnxruntime`` or
                 ``nncf`` for INT8) is found missing only during the conversion.
             RuntimeError: If called after the model has undergone in-place inference optimization (the original
-                model has been cleared; instantiate a new :class:`RFDETR` to export).
+                model has been cleared; instantiate a new :class:`RFDETR` to export), or for ExecuTorch
+                ``backend="tensorrt"`` on a host without a CUDA device.
             OSError: If ``trt_metadata=True`` and the description file cannot be written, after the engine was built.
 
         Examples:
@@ -2529,6 +2548,7 @@ class RFDETR:
             quantization=quantization,
             calibration_data=calibration_data,
             max_images=max_images,
+            int8_keep_mlp_float=int8_keep_mlp_float,
             batch_size=export_batch_size,
             max_batch_size=export_max_batch_size,
             trt_metadata=trt_metadata,
@@ -2594,7 +2614,19 @@ class RFDETR:
                 backbone_only=backbone_only,
                 metadata=metadata,
             )
-            return exporter(graph)
+            # The graph is on CPU by contract and carries no device, so an exporter that builds on the GPU follows
+            # torch.cuda.current_device(): Torch-TensorRT's default device is that one, and the native TensorRT
+            # exporter's capability and metadata probes read it. Make it the GPU the model is configured for, so a model
+            # on cuda:1 is not built on GPU 0. A no-op when it is already current; a CPU-configured model keeps the
+            # caller's current device.
+            export_device = torch.device(device)
+            cuda_ctx = (
+                torch.cuda.device(export_device)
+                if export_device.type == "cuda" and torch.cuda.is_available()
+                else contextlib.nullcontext()
+            )
+            with cuda_ctx:
+                return exporter(graph)
         finally:
             self.model.model = _locked_move(self.model.model, device)
 
@@ -3022,7 +3054,8 @@ class RFDETR:
                         f"Loaded checkpoint uses a legacy background-first keypoint schema "
                         f"num_keypoints_per_class={current_schema!r}, but the dataset infers "
                         f"active-first {inferred_schema!r}. Training will shift person from slot 1 "
-                        f"to slot 0; checkpoint head weights are now misaligned. "
+                        f"to slot 0; the pretrained class-head rows move with it when the weights are reloaded for "
+                        f"training. "
                         f"Pass num_keypoints_per_class={current_schema!r} to the model constructor "
                         f"to keep the legacy schema.",
                         UserWarning,
@@ -3142,6 +3175,8 @@ class RFDETR:
             runtime_info={"backend": "pytorch", "device": str(self.model.device)},
             # A compiled snapshot runs only the batch size it was compiled for; eager models take any.
             batch_size=self._optimized_batch_size if self._optimized_has_been_compiled else None,
+            # An optimized snapshot enforces its square resolution on every batch, compiled or not.
+            fixed_resolution=self._optimized_resolution if self._is_optimized_for_inference else None,
         )
 
     def _run_inference_batch(self, batch_tensor: torch.Tensor) -> dict[str, torch.Tensor]:
@@ -3343,7 +3378,13 @@ class RFDETR:
         if isinstance(images, torch.Tensor) and images.ndim == 4:
             images = list(images.unbind(0))
         return _predict_batch(
-            self._prediction_context, images, threshold, shape, patch_size, include_source_image, antialias
+            self._prediction_context,
+            images,
+            threshold,
+            shape,
+            patch_size,
+            include_source_image,
+            antialias,
         )
 
     def deploy_to_roboflow(

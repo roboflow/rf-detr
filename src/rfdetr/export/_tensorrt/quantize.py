@@ -50,6 +50,12 @@ to Seg Large and Keypoint Preview on an RTX 5070 and a Tesla T4 with TensorRT 11
 * **A GELU never feeds an FP16 consumer from an INT8 multiply.** TensorRT 10.16 and 11.3 return NaN for an INT8
   ``MatMul`` -> bias -> GELU -> FP16 consumer chain, so an MLP's first projection is quantized only when its second one
   is.
+* **The MLPs of the first six PE-Core-T backbone blocks stay FP16.** Atto, Femto and Pico lost 7.0 to 8.7 AP in INT8
+  with the placement above, because the second MLP projection of block 3 reads a post-GELU activation whose maximum is
+  more than 50 times its typical range (:data:`_PE_FLOAT_MLP_BLOCKS`). Keeping ``fc1`` and ``fc2`` of blocks 0 to 5 in
+  FP16 and everything else as above lowered the loss to 0.2 to 0.6 AP in a CPU simulation of the plan (ONNX Runtime,
+  FP32 scales, val2017). The rule keys on the PE block names, so the DINOv2 backbones are unchanged. TensorRT accuracy
+  and speed of this placement are not yet measured.
 * **A detection model's backbone norms are smoothed.** A backbone ``LayerNormalization`` output is quantized per
   tensor, and its widest channels, several times wider than its median one, set the one INT8 step of every channel.
   SmoothQuant (:func:`measure_smoothing_scales`) divides each channel of the norm's scale and bias by a per-channel
@@ -76,6 +82,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import tempfile
 from collections import Counter
 from collections.abc import Callable, Generator, Iterable, Iterator, Mapping
@@ -183,10 +190,27 @@ _BACKBONE_ENCODER = _QUANTIZED_REGIONS[0]
 #: kernel's size limits too, but TensorRT does not fuse it in INT8 and the unfused INT8 path is slower than FP16.
 _INT8_ATTENTION_REGION = "/backbone/backbone.0/encoder/"
 
-#: Ops a projection's output passes through on its way into a batched multiply: bias, reshape to heads, scaling.
+#: Ops a projection's output passes through on its way into a batched multiply: bias, reshape to heads, scaling, and
+#: taking q, k and v apart after a fused ``qkv`` projection (PE-Core-T: Atto, Femto, Pico).
 _PROJECTION_PASSTHROUGH = frozenset(
-    {"Add", "Cast", "Div", "Identity", "Mul", "Reshape", "Squeeze", "Transpose", "Unsqueeze"}
+    {
+        "Add",
+        "Cast",
+        "Div",
+        "Gather",
+        "Identity",
+        "Mul",
+        "Reshape",
+        "Slice",
+        "Split",
+        "Squeeze",
+        "Transpose",
+        "Unsqueeze",
+    }
 )
+
+#: Ops whose inputs after the first are shapes, axes, sizes or indices, never the data a projection passes on.
+_DATA_INPUT_ONLY = frozenset({"Gather", "Reshape", "Slice", "Split", "Squeeze", "Unsqueeze"})
 
 #: Ops between a first MLP projection and its activation-path successor, including both GELU forms.
 _GELU_PATH = frozenset({"Add", "Div", "Erf", "Gelu", "Mul"})
@@ -195,6 +219,19 @@ _GELU_PATH = frozenset({"Add", "Div", "Erf", "Gelu", "Mul"})
 #: A patch embedding is quantized as a matrix multiply only when its flattened patch is a multiple of this; one that is
 #: not (the segmentation and keypoint models' 432 values) is a matrix multiply that stays FP16.
 _INT8_CONV_CHANNEL_MULTIPLE = 32
+
+#: ``fc1`` and ``fc2`` of a PE-Core-T backbone block (Atto, Femto, Pico), which names its blocks ``encoder/blocks.N``
+#: where the DINOv2 backbones use ``encoder/encoder/encoder/layer.N``; group 1 is the block index. The pattern matches
+#: no DINOv2 layer, so the rule it serves leaves Nano to Large and every segmentation and keypoint model alone.
+_PE_MLP_PROJECTION = re.compile(r"^/backbone/backbone\.0/encoder/blocks\.(\d+)/mlp/fc[12]/")
+
+#: Number of leading PE-Core-T backbone blocks whose MLP stays FP16. The second MLP projection of block 3 reads a
+#: post-GELU activation whose absolute maximum is 52 to 55 times its mean 99.9th percentile (blocks 2 and 4: 13 to 16
+#: times, every other block at most 5 times), so one per-tensor INT8 step is set by a few outlier channels. Clipping the
+#: range collapses AP, and neither smoothing nor bias correction touches it. Leaving the MLPs of blocks 0 to 5 in FP16
+#: lowered the loss on COCO val2017 from 7.0 to 8.5 AP to 0.2 to 0.6 AP for Atto, Femto and Pico (ONNX Runtime CPU
+#: simulation with FP32 scales; no TensorRT engine measured).
+_PE_FLOAT_MLP_BLOCKS = 6
 
 #: Ops that make a path a GELU.
 _GELU_OPS = frozenset({"Erf", "Gelu"})
@@ -236,6 +273,9 @@ class _Attention:
     projections: frozenset[str]
     output_projection: str | None
     int8: bool
+    #: Every weight-bearing node reaching q, k or v through any op (see :func:`_weights_reaching`), a superset of the
+    #: q/k/v entries of ``projections``.
+    reaching: frozenset[str]
 
 
 def _constant_weights(graph: Any) -> dict[str, Any]:
@@ -592,8 +632,10 @@ def _patch_embedding_as_matmul(model: Any, *, multiple_of: int = 1) -> int:
 def _trace_projection(start: str, producers: Mapping[str, Any], initializers: Mapping[str, Any]) -> str | None:
     """Walk upstream from a batched-multiply input to the weight-bearing projection that produced it.
 
-    Follows only the shape and scaling ops a projection passes through on its way into attention, so a path through
-    shape arithmetic (``Shape`` -> ``Sqrt``) or another block's output ends without a match.
+    Follows only the shape and scaling ops a projection passes through on its way into attention, including the
+    ``Split``, ``Slice`` or ``Gather`` that takes q, k and v apart after a fused ``qkv`` projection, and only the data
+    input of an op with shape or index inputs. A path through shape arithmetic (``Shape`` -> ``Sqrt``) or another
+    block's output ends without a match.
 
     Examples:
         >>> from onnx import helper, numpy_helper
@@ -614,9 +656,40 @@ def _trace_projection(start: str, producers: Mapping[str, Any], initializers: Ma
             return str(node.name)
         if node.op_type not in _PROJECTION_PASSTHROUGH:
             continue
-        data_inputs = node.input[:1] if node.op_type in ("Reshape", "Squeeze", "Unsqueeze") else node.input
+        data_inputs = node.input[:1] if node.op_type in _DATA_INPUT_ONLY else node.input
         frontier.extend(name for name in data_inputs if name and name not in initializers)
     return None
+
+
+def _weights_reaching(
+    starts: tuple[str, ...], producers: Mapping[str, Any], initializers: Mapping[str, Any]
+) -> set[str]:
+    """Return the weight-bearing nodes whose output reaches *starts* without passing another weight-bearing node.
+
+    Walks upstream through any op, unlike :func:`_trace_projection`, so a projection behind an op the trace does not
+    follow (a ``LayerNormalization`` on q, say) is still found. It ends at ``Shape`` and ``Size``, which pass on no
+    data, and follows only the data input of the ops in :data:`_DATA_INPUT_ONLY`.
+
+    Examples:
+        >>> from onnx import helper, numpy_helper
+        >>> weights = {"w": numpy_helper.from_array(np.zeros((4, 4), np.float32), "w")}
+        >>> nodes = [helper.make_node("MatMul", ["x", "w"], ["q"], "q_proj"),
+        ...          helper.make_node("LayerNormalization", ["q", "scale"], ["q_norm"], "norm")]
+        >>> _weights_reaching(("q_norm",), {o: n for n in nodes for o in n.output}, weights)
+        {'q_proj'}
+    """
+    frontier, seen, found = list(starts), set(), set()
+    while frontier:
+        node = producers.get(frontier.pop())
+        if node is None or id(node) in seen:
+            continue
+        seen.add(id(node))
+        if _holds_weight(node, initializers):
+            found.add(str(node.name))
+        elif node.op_type not in ("Shape", "Size"):
+            data_inputs = node.input[:1] if node.op_type in _DATA_INPUT_ONLY else node.input
+            frontier.extend(name for name in data_inputs if name and name not in initializers)
+    return found
 
 
 def _output_projection(context: Any, consumers: Mapping[str, list[Any]], initializers: Mapping[str, Any]) -> str | None:
@@ -773,7 +846,10 @@ def _attention_blocks(model: Any) -> list[_Attention]:
             and query_dims[-1] in _FUSED_INT8_HEAD_SIZES
             and all(d is not None and d <= _INT8_ATTENTION_MAX_TOKENS for d in score_dims[-2:])
         )
-        blocks.append(_Attention(scores, context, frozenset(p for p in projections if p), output_projection, int8))
+        reaching = frozenset(_weights_reaching(sources, producers, initializers))
+        blocks.append(
+            _Attention(scores, context, frozenset(p for p in projections if p), output_projection, int8, reaching)
+        )
     return blocks
 
 
@@ -808,6 +884,69 @@ def _feeds_gelu_into(node: Any, consumers: Mapping[str, list[Any]], initializers
     return found
 
 
+def _is_float_pe_mlp(name: str) -> bool:
+    """Return whether *name* is an MLP projection of a PE-Core-T backbone block that stays FP16.
+
+    Examples:
+        >>> _is_float_pe_mlp("/backbone/backbone.0/encoder/blocks.3/mlp/fc2/MatMul")
+        True
+        >>> _is_float_pe_mlp("/backbone/backbone.0/encoder/blocks.6/mlp/fc2/MatMul")
+        False
+        >>> _is_float_pe_mlp("/backbone/backbone.0/encoder/blocks.3/attn/qkv/MatMul")
+        False
+        >>> _is_float_pe_mlp("/backbone/backbone.0/encoder/encoder/encoder/layer.3/mlp/fc2/MatMul")
+        False
+    """
+    match = _PE_MLP_PROJECTION.match(name)
+    return match is not None and int(match.group(1)) < _PE_FLOAT_MLP_BLOCKS
+
+
+def _refuse_mixed_precision_attention(
+    fused_blocks: list[_Attention], float_blocks: list[_Attention], weighted: set[str]
+) -> None:
+    """Raise unless every attention block is all INT8 or all FP16 together with the layers feeding its q, k and v.
+
+    :func:`_trace_projection` identifies one projection per input; a layer behind any other path (a norm on q, say) is
+    known only from :attr:`_Attention.reaching`. A rule that runs after the attention decision (the GELU rule, say) can
+    also drop a projection of a fused block.
+
+    Args:
+        fused_blocks: The attention blocks quantized whole.
+        float_blocks: The attention blocks that stay FP16.
+        weighted: Names of the nodes the plan quantizes.
+
+    Raises:
+        ValueError: If a fused block lost a projection or a layer reaching it, or if a planned layer reaches an FP16
+            block's q, k or v.
+
+    Examples:
+        >>> from onnx import helper
+        >>> scores = helper.make_node("MatMul", ["q", "k"], ["s"], "scores")
+        >>> context = helper.make_node("MatMul", ["p", "v"], ["c"], "context")
+        >>> block = _Attention(scores, context, frozenset(), "out", False, frozenset({"q_proj"}))
+        >>> _refuse_mixed_precision_attention([], [block], {"q_proj"})
+        Traceback (most recent call last):
+        ...
+        ValueError: Cannot place INT8 safely: the layer 'q_proj' reaches the FP16 attention at 'scores' ...
+    """
+    for block in fused_blocks:
+        missing = sorted((block.projections | block.reaching) - weighted)
+        if missing:
+            raise ValueError(
+                f"Cannot place INT8 safely: the layer {missing[0]!r} feeding the INT8 attention at "
+                f"{block.scores.name!r} is left in FP16 by a later placement rule. "
+                "For an FP16 export, omit both quantization and calibration_data."
+            )
+    for block in float_blocks:
+        reaching = sorted(block.reaching & weighted)
+        if reaching:
+            raise ValueError(
+                f"Cannot place INT8 safely: the layer {reaching[0]!r} reaches the FP16 attention at "
+                f"{block.scores.name!r} without being identified as its q, k or v projection, so it cannot be kept "
+                "out of INT8 with that attention. For an FP16 export, omit both quantization and calibration_data."
+            )
+
+
 def plan_int8(model: Any) -> Int8Plan:
     """Decide which nodes of an FP32 RF-DETR graph get INT8 Q/DQ (see the module docstring for the rules).
 
@@ -819,8 +958,9 @@ def plan_int8(model: Any) -> Int8Plan:
 
     Raises:
         ValueError: If the graph has nothing to quantize, which means it is not an RF-DETR model export; if an FP16
-            attention block's output projection cannot be identified; or if a top-level ``Softmax`` feeds a
-            multiply of two activations without being a recognised attention block.
+            attention block's output projection cannot be identified; if an attention block would mix INT8 and FP16
+            with the layers feeding its q, k and v (see :func:`_refuse_mixed_precision_attention`); or if a top-level
+            ``Softmax`` feeds a multiply of two activations without being a recognised attention block.
     """
     graph = model.graph
     initializers = _constant_weights(graph)
@@ -836,35 +976,46 @@ def plan_int8(model: Any) -> Int8Plan:
         and _weight_name(node, initializers)
         and not _pads_input_channels(node, initializers)
     }
-    attention_inputs: list[tuple[str, int]] = []
-    backbone_blocks = fused = 0
-    unfused: list[str] = []  # backbone blocks whose attention stays FP16 because of its shape
-    for block in _attention_blocks(model):
-        in_region = block.scores.name.startswith(_INT8_ATTENTION_REGION)
-        backbone_blocks += in_region
-        unnamed = {block.scores.name, block.context.name} & duplicated
-        if block.int8 and in_region and not unnamed and block.projections <= weighted:
-            fused += 1
-            attention_inputs += [(block.scores.name, 0), (block.scores.name, 1)]
-            attention_inputs += [(block.context.name, 0), (block.context.name, 1)]
-            continue
-        if block.output_projection is None:
-            # A quantized projection behind FP16 attention is what TensorRT 11 computes wrongly, and an output that
-            # cannot be followed to its projection cannot be kept out of INT8 with certainty.
-            raise ValueError(
-                f"Cannot place INT8 safely: the output projection of the FP16 attention at {block.scores.name!r} "
-                "could not be identified. INT8 TensorRT export applies to RF-DETR model exports only (detection, "
-                "segmentation or keypoint)."
-            )
-        weighted -= block.projections
-        if in_region and not block.int8:
-            unfused.append(block.scores.name)
-    if unfused:
+    blocks = _attention_blocks(model)
+    backbone_blocks = [block for block in blocks if block.scores.name.startswith(_INT8_ATTENTION_REGION)]
+    unfused_by_shape = [block.scores.name for block in backbone_blocks if not block.int8]
+    float_blocks: list[_Attention] = []
+    pending = blocks
+    # Keeping a block in FP16 can remove a projection another block needs. Recheck the remaining blocks until their
+    # projections stabilize, then add the attention input Q/DQ. ONNX node order cannot decide whether a block fuses.
+    while True:
+        fused_blocks = []
+        for block in pending:
+            in_region = block.scores.name.startswith(_INT8_ATTENTION_REGION)
+            unnamed = {block.scores.name, block.context.name} & duplicated
+            if block.int8 and in_region and not unnamed and (block.projections | block.reaching) <= weighted:
+                fused_blocks.append(block)
+                continue
+            if block.output_projection is None:
+                # TensorRT 11 can compute an FP16 attention with an INT8 output projection incorrectly.
+                raise ValueError(
+                    f"Cannot place INT8 safely: the output projection of the FP16 attention at {block.scores.name!r} "
+                    "could not be identified. INT8 TensorRT export applies to RF-DETR model exports only (detection, "
+                    "segmentation or keypoint)."
+                )
+            weighted -= block.projections
+            float_blocks.append(block)
+        if len(fused_blocks) == len(pending):
+            break
+        pending = fused_blocks
+
+    attention_inputs = {
+        (node.name, index) for block in fused_blocks for node in (block.scores, block.context) for index in (0, 1)
+    }
+    if unfused_by_shape:
         logger.info(
-            f"INT8 attention in {fused} of {backbone_blocks} backbone attention blocks; "
-            f"{len(unfused)} stay FP16 by shape (e.g. {unfused[0]!r}): INT8 attention needs a head size in "
-            f"{sorted(_FUSED_INT8_HEAD_SIZES)} and at most {_INT8_ATTENTION_MAX_TOKENS} tokens"
+            f"INT8 attention in {len(fused_blocks)} of {len(backbone_blocks)} backbone attention blocks; "
+            f"{len(unfused_by_shape)} stay FP16 by shape (e.g. {unfused_by_shape[0]!r}): INT8 attention needs a head "
+            f"size in {sorted(_FUSED_INT8_HEAD_SIZES)} and at most {_INT8_ATTENTION_MAX_TOKENS} tokens"
         )
+
+    # The first MLPs of a PE-Core-T backbone carry the outlier activation that INT8 cannot represent (see the constant).
+    weighted -= {name for name in weighted if _is_float_pe_mlp(name)}
 
     # A projection feeding an FP16 consumer through a GELU comes back as NaN from TensorRT; dropping one projection can
     # expose another, so repeat until nothing changes.
@@ -877,6 +1028,7 @@ def plan_int8(model: Any) -> Int8Plan:
                 weighted.discard(name)
                 changed = True
 
+    _refuse_mixed_precision_attention(fused_blocks, float_blocks, weighted)
     if not weighted:
         raise ValueError(
             "Found no backbone encoder or decoder layer to quantize in this graph; INT8 TensorRT export applies to "
@@ -884,9 +1036,7 @@ def plan_int8(model: Any) -> Int8Plan:
             f"prefixes {list(_QUANTIZED_REGIONS)} that the TorchScript ONNX exporter (dynamo=False) gives them."
         )
     order = {name: index for index, name in enumerate(names)}
-    activations = sorted(
-        {(name, 0) for name in weighted} | set(attention_inputs), key=lambda key: (order[key[0]], key[1])
-    )
+    activations = sorted({(name, 0) for name in weighted} | attention_inputs, key=lambda key: (order[key[0]], key[1]))
     return Int8Plan(weighted=tuple(sorted(weighted, key=order.__getitem__)), activations=tuple(activations))
 
 

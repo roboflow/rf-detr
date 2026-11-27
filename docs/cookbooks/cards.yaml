@@ -1,4 +1,22 @@
 cards:
+  - href: tta-ablation-study/
+    name: "TTA Ablation for One RF-DETR Size: Zoom Range, Antialiasing and Masks"
+    labels: [INFERENCE, SEGMENTATION, COCO2017, CUDA]
+    version: v1.13.0
+    author: Borda
+    description: "Set MODEL_SIZE and sweep the zoom scale, antialiasing of zoom-out views and shift plus zoom recipes over folds of COCO val2017, with a mask AP guard on the segmentation model of the same size, to settle the zoom range and defaults."
+  - href: tta-latency-accuracy/
+    name: "TTA Views: Latency, Memory and Accuracy"
+    labels: [INFERENCE, LATENCY, COCO2017]
+    version: v1.13.0
+    author: Borda
+    description: "Run shifted and zoomed test-time augmentation views for every model size on full COCO val2017, and plot box AP against latency per image to see when extra views pay and when a larger model is the better choice."
+  - href: multi-source-rf100vl/
+    name: "Train on RF100-VL sources with size-balanced weights"
+    labels: [TRAINING, PYTORCH LIGHTNING]
+    version: v1.13.0
+    author: Borda
+    description: "Fine-tune RF-DETR jointly on three RF100-VL datasets 20x apart in size, with WeightedMultiSourceBatchSampler weights computed automatically as the inverse of each source's measured size."
   - href: coco-accuracy/
     name: "Reproduce the COCO Accuracy of Pretrained Models"
     labels: [INFERENCE, COCO2017, CUDA]

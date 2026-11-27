@@ -20,10 +20,18 @@ that :func:`decode_pil_image` avoids for its own callers, a scope call deferred 
 
 from __future__ import annotations
 
+import builtins
+import errno
 import io
+import json
+import struct
+import subprocess
+import sys
+import time
 import warnings
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
-from typing import IO
+from typing import IO, Any, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -32,9 +40,32 @@ try:
     import simplejpeg  # type: ignore[import-untyped,import-not-found,unused-ignore]
 except ImportError:  # optional (``rfdetr[train]``); JPEG decoding falls back to Pillow without it
     simplejpeg = None
-from PIL import Image
+from PIL import Image, JpegImagePlugin, UnidentifiedImageError
+
+from rfdetr.datasets._pillow_worker import convert_image, image_mode, open_image
+from rfdetr.utilities.exif import exif_orientation, swaps_axes, upright_image
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
+
+_T = TypeVar("_T")
 
 _JPEG_SOI = b"\xff\xd8"
+
+# Reads of one image before it is judged unreadable: a short read off network storage raises the same ``OSError``
+# Pillow raises for a file that is truncated on disk, and only a second read tells the two apart.
+_IMAGE_READ_ATTEMPTS = 3
+_IMAGE_READ_BACKOFF_SECONDS = 0.5
+# Following samples tried in place of an unreadable one; bounded so that a broken dataset or filesystem still raises.
+_MAX_SUBSTITUTIONS = 10
+# ``errno`` values of an ``OSError`` raised because this process ran out of file descriptors (``EMFILE``, ``ENFILE``),
+# memory (``ENOMEM``) or processes to start the decoder in (``EAGAIN``): the read may succeed later, but the file it
+# reads is no less healthy, so it is retried and never substituted.
+_PROCESS_RESOURCE_ERRNOS = frozenset({errno.EMFILE, errno.ENFILE, errno.ENOMEM, errno.EAGAIN})
+
+#: Pixels a COCO box may run past the decoded image before it counts as drawn in another frame.  Annotation tools round
+#: box corners, and ``ConvertCoco`` clamps such small overruns without comment.
+_BOX_OVERRUN_TOLERANCE = 1.0
 
 
 def _jpeg_draft_reduction(width: int, height: int, draft_size: int | None) -> int:
@@ -58,25 +89,45 @@ def _jpeg_draft_reduction(width: int, height: int, draft_size: int | None) -> in
     return next((factor for factor in (8, 4, 2) if scale >= factor), 1)
 
 
-def _check_decompression_bomb(width: int, height: int) -> None:
+def _pixel_limit(max_image_pixels: int | None) -> int | None:
+    """Return the decompression-bomb limit for one decode: Pillow's, raised to ``max_image_pixels`` when that is higher.
+
+    Args:
+        max_image_pixels: Per-decode limit, or ``None`` to use ``PIL.Image.MAX_IMAGE_PIXELS`` as is.
+
+    Returns:
+        The limit to enforce, or ``None`` when ``PIL.Image.MAX_IMAGE_PIXELS`` is ``None`` (guard disabled).
+
+    Examples:
+        >>> _pixel_limit(None) == _pixel_limit(1) == Image.MAX_IMAGE_PIXELS
+        True
+    """
+    limit: int | None = Image.MAX_IMAGE_PIXELS
+    if limit is None or max_image_pixels is None:
+        return limit
+    return max(limit, max_image_pixels)
+
+
+def _check_decompression_bomb(width: int, height: int, max_image_pixels: int | None = None) -> None:
     """Apply Pillow's decompression-bomb guard to a header size before any pixel buffer is allocated.
 
     Mirrors ``PIL.Image._decompression_bomb_check`` through public names only.  ``PIL.Image.MAX_IMAGE_PIXELS`` is
-    read at call time, so a process-wide override (``rfdetr.datasets.o365`` raises it) still applies and ``None``
+    read at call time, so a process-wide override still applies and ``None``
     disables the guard; more than twice the limit raises and more than the limit warns, with Pillow's own wording so
     callers filtering on the message see the same text from either decoder.
 
     Args:
         width: Full-size image width from the header.
         height: Full-size image height from the header.
+        max_image_pixels: Per-decode limit, see :func:`_pixel_limit`.
 
     Raises:
-        PIL.Image.DecompressionBombError: If ``width * height`` exceeds twice ``PIL.Image.MAX_IMAGE_PIXELS``.
+        PIL.Image.DecompressionBombError: If ``width * height`` exceeds twice the effective pixel limit.
 
     Examples:
         >>> _check_decompression_bomb(10, 10)
     """
-    limit = Image.MAX_IMAGE_PIXELS
+    limit = _pixel_limit(max_image_pixels)
     if limit is None:
         return
 
@@ -95,19 +146,147 @@ def _check_decompression_bomb(width: int, height: int) -> None:
         )
 
 
-def _decode_with_pillow(source: Path | IO[bytes], draft_size: int | None) -> tuple[Image.Image, tuple[float, float]]:
-    """Decode a file or an in-memory stream through Pillow into an RGB image with its decode scales.
+def _open_image(source: Path | IO[bytes], max_image_pixels: int | None) -> Image.Image:
+    """Open an image with Pillow, checking its size against ``max_image_pixels`` instead of Pillow's limit alone.
+
+    ``Image.open`` checks the size only against ``PIL.Image.MAX_IMAGE_PIXELS``, and changing that global, even
+    briefly, would raise the limit for every other thread.  With ``max_image_pixels`` set, the format plugins
+    ``Image.open`` would try are therefore called directly, which skips Pillow's check, and
+    :func:`_check_decompression_bomb` applies the per-decode limit to the header size.  Either way, a header the format
+    plugin rejects with ``ValueError`` is reported as unidentifiable, as
+    :func:`~rfdetr.datasets._pillow_worker.open_image` reports it.
+
+    Args:
+        source: Image file path, or a binary stream positioned at the start of the encoded bytes.
+        max_image_pixels: Per-decode limit, see :func:`_pixel_limit`.
+
+    Returns:
+        The opened image, with its pixels not yet decoded.
+
+    Raises:
+        PIL.UnidentifiedImageError: If no Pillow plugin recognises the image, or the one that does rejects its header.
+        PIL.Image.DecompressionBombError: If the image has more than twice the limit in force.
+
+    Examples:
+        >>> encoded = io.BytesIO()
+        >>> Image.new("RGB", (4, 2)).save(encoded, format="PNG")
+        >>> _open_image(io.BytesIO(encoded.getvalue()), max_image_pixels=10).size
+        (4, 2)
+    """
+    if max_image_pixels is None:
+        return open_image(source)
+    stream: IO[bytes]
+    if isinstance(source, Path):
+        stream = source.open("rb")
+        owns_stream = True
+    else:
+        stream = source
+        owns_stream = False
+    try:
+        prefix = stream.read(16)
+        Image.init()
+        for image_format in Image.ID:
+            factory, accept = Image.OPEN[image_format]
+            try:
+                accepted = accept is None or accept(prefix)
+                if not accepted or isinstance(accepted, str):
+                    continue
+                stream.seek(0)
+                image = factory(stream, "")
+            except (SyntaxError, IndexError, TypeError, struct.error):
+                continue  # the errors ``Image.open`` treats as "not this format"
+            except ValueError as exc:  # ``Image.open`` stops at this one too
+                raise UnidentifiedImageError(f"cannot identify image file {source!r}: {exc}") from exc
+            _check_decompression_bomb(*image.size, max_image_pixels)
+            image._exclusive_fp = owns_stream
+            return image
+    except BaseException:
+        if owns_stream:
+            stream.close()
+        raise
+    if owns_stream:
+        stream.close()
+    raise UnidentifiedImageError(f"cannot identify image file {source!r}")
+
+
+def _upright_decode(
+    image: Image.Image, scales: tuple[float, float], orientation: int
+) -> tuple[Image.Image, tuple[float, float]]:
+    """Turn a decoded image upright for its EXIF orientation, keeping each decode scale with the axis it measures.
+
+    Args:
+        image: Decoded RGB image in the order the file stores its pixels.
+        scales: Horizontal and vertical decode scales of ``image``, measured on the stored axes.
+        orientation: The file's EXIF orientation.
+
+    Returns:
+        The upright image and its horizontal/vertical decode scales; a quarter turn swaps the two.
+
+    Examples:
+        >>> image, scales = _upright_decode(Image.new("RGB", (6, 2)), (0.5, 0.25), orientation=6)
+        >>> image.size, scales
+        ((2, 6), (0.25, 0.5))
+    """
+    if swaps_axes(orientation):
+        scales = (scales[1], scales[0])
+    return upright_image(image, orientation), scales
+
+
+def _jpeg_orientation(data: bytes) -> int:
+    """Read the EXIF orientation of encoded JPEG bytes from their header, without decoding any pixels.
+
+    Args:
+        data: Encoded JPEG bytes.
+
+    Returns:
+        The orientation, or ``1`` when the header is one Pillow cannot parse.
+
+    Examples:
+        >>> encoded = io.BytesIO()
+        >>> Image.new("RGB", (4, 2)).save(encoded, format="JPEG")
+        >>> _jpeg_orientation(encoded.getvalue())
+        1
+    """
+    try:
+        # Constructing the plugin directly parses the markers without ``Image.open``'s decompression-bomb check, which
+        # the caller applies itself.
+        with JpegImagePlugin.JpegImageFile(io.BytesIO(data)) as header:
+            return exif_orientation(header)
+    except (SyntaxError, IndexError, TypeError, struct.error, OSError):
+        return 1  # simplejpeg then decodes the bytes, or rejects them for Pillow to report
+
+
+def _decode_with_pillow(
+    source: Path | IO[bytes], draft_size: int | None, max_image_pixels: int | None = None, num_channels: int = 3
+) -> tuple[Image.Image, tuple[float, float]]:
+    """Decode a file or an in-memory stream through Pillow into an upright image (RGB by default) and its decode scales.
 
     The Pillow half of the decoder policy every entry point shares: ``PIL.Image.draft`` applies the JPEG reduction when
-    ``draft_size`` is set (a no-op for other formats) and ``convert("RGB")`` loads the pixels into an image that
-    outlives the closed source.
+    ``draft_size`` is set (a no-op for other formats), ``convert("RGB")`` loads the pixels into an image that outlives
+    the closed source, and the image is turned upright for its EXIF orientation, as viewers and annotation tools show
+    it.
+
+    Pillow reports some corrupt files with a ``SyntaxError`` or a ``ValueError``: a ``ValueError`` while opening, for
+    example for a PNG ``pHYs`` chunk shorter than its 9 bytes, and either one while loading the pixels, for example for
+    a PNG whose chunk header between two image data chunks is cut short or damaged.  That error is raised here as an
+    ``OSError`` chained to it, the type Pillow uses for every other corrupt or truncated file, so callers catch one
+    type, in this process and in the decoder process alike.  The ``ValueError`` for a channel count the file cannot
+    supply is raised before any pixel is decoded and stays a ``ValueError``.
 
     Args:
         source: Image file path, or a binary stream positioned at the start of the encoded bytes.
         draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
+        max_image_pixels: Per-decode limit, see :func:`_pixel_limit`.
+        num_channels: Input channel count of the model: ``1`` decodes to ``L``, ``3`` to ``RGB`` and ``4`` to ``RGBA``.
 
     Returns:
-        Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
+        Decoded image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
+
+    Raises:
+        ValueError: If image files cannot supply *num_channels* channels, or ``num_channels=4`` and the image stores
+            no fourth channel.
+        OSError: If the file is missing, truncated, unidentifiable or corrupt.
+        PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
 
     Examples:
         >>> encoded = io.BytesIO()
@@ -116,31 +295,94 @@ def _decode_with_pillow(source: Path | IO[bytes], draft_size: int | None) -> tup
         >>> image.mode, image.size, scales
         ('RGB', (32, 16), (0.5, 0.5))
     """
-    with Image.open(source) as image:
+    mode = image_mode(num_channels)
+    process_limit = Image.MAX_IMAGE_PIXELS
+    if max_image_pixels is not None and process_limit is not None and max_image_pixels > process_limit:
+        # Pillow plugins may check the global limit while opening or loading; isolate those checks per decode.
+        command = [
+            sys.executable,
+            "-B",
+            str(Path(__file__).with_name("_pillow_worker.py")),
+            str(max_image_pixels),
+            str(draft_size or 0),
+            mode,
+        ]
+        command.append("strict")
+        data = None
+        if isinstance(source, Path):
+            command.append(str(source))
+        else:
+            data = source.read()
+        while True:
+            result = subprocess.run(command, input=data, capture_output=True, check=False)
+            if result.returncode:
+                raise RuntimeError(f"Pillow decoder process failed: {result.stderr.decode(errors='replace')}")
+            header_bytes, separator, pixels = result.stdout.partition(b"\n")
+            if not separator:
+                raise RuntimeError("Pillow decoder process returned an invalid response")
+            header = json.loads(header_bytes)
+            if "warning" not in header:
+                break
+            warnings.warn(header["warning"], Image.DecompressionBombWarning, stacklevel=2)
+            command[6] = "allow"
+        if "error" in header:
+            errors = {
+                "DecompressionBombError": Image.DecompressionBombError,
+                "UnidentifiedImageError": UnidentifiedImageError,
+                # The worker already reports a corrupt file Pillow rejects while opening or loading as an ``OSError``
+                # type; a ``SyntaxError`` from anywhere else is a corrupt file too.
+                "SyntaxError": OSError,
+                # Only the channel-count refusal of ``convert_image``, which must not pass for a corrupt file.
+                "ValueError": ValueError,
+            }
+            error_type = errors.get(header["error"])
+            if error_type is None:
+                # Built-in ``OSError`` subclasses keep their type, so callers that catch ``OSError`` see them.
+                builtin = getattr(builtins, header["error"], None)
+                error_type = builtin if isinstance(builtin, type) and issubclass(builtin, OSError) else RuntimeError
+            error = error_type(header["message"])
+            if isinstance(error, OSError):
+                # Kept so that callers can tell a process out of resources from an unreadable file.
+                error.errno = header.get("errno")
+            raise error
+        warning_categories = {
+            "DecompressionBombWarning": Image.DecompressionBombWarning,
+            "RuntimeWarning": RuntimeWarning,
+        }
+        for message, category in header["warnings"]:
+            warnings.warn(message, warning_categories.get(category, UserWarning), stacklevel=2)
+        image = Image.frombytes(mode, tuple(header["size"]), pixels)
+        return _upright_decode(image, tuple(header["scales"]), header["orientation"])
+
+    with _open_image(source, max_image_pixels) as image:
         full_width, full_height = image.size
         if draft_size is not None:
             image.draft("RGB", (draft_size, draft_size))
-        rgb_image = image.convert("RGB")
-    return rgb_image, (rgb_image.width / full_width, rgb_image.height / full_height)
+        orientation = exif_orientation(image)
+        rgb_image = convert_image(image, mode, str(source) if isinstance(source, Path) else "The image")
+    return _upright_decode(rgb_image, (rgb_image.width / full_width, rgb_image.height / full_height), orientation)
 
 
 def _decode_with_simplejpeg(
-    data: bytes, draft_size: int | None
+    data: bytes, draft_size: int | None, max_image_pixels: int | None = None
 ) -> tuple[NDArray[np.uint8], tuple[float, float]] | None:
     """Decode JPEG bytes with ``simplejpeg``, or return ``None`` to leave them to Pillow.
 
-    ``None`` when ``simplejpeg`` is not installed, when ``data`` does not start with a JPEG marker, or when
-    ``simplejpeg`` rejects it as corrupt or unsupported, so that Pillow decodes it or raises its usual error.
+    ``None`` when ``simplejpeg`` is not installed, when ``data`` does not start with a JPEG marker, when
+    ``simplejpeg`` rejects it as corrupt or unsupported, so that Pillow decodes it or raises its usual error, or when
+    the JPEG has an EXIF orientation other than 1: ``simplejpeg`` returns the pixels in stored order, and Pillow turns
+    them upright.
 
     Args:
         data: Encoded image bytes.
         draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
+        max_image_pixels: Per-decode limit, see :func:`_pixel_limit`.
 
     Returns:
         Decoded ``(H, W, 3)`` uint8 RGB pixels and their horizontal/vertical decode scales, or ``None``.
 
     Raises:
-        PIL.Image.DecompressionBombError: If the image has more than twice ``PIL.Image.MAX_IMAGE_PIXELS`` pixels.
+        PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
 
     Examples:
         >>> _decode_with_simplejpeg(b"not a jpeg", draft_size=None) is None
@@ -150,9 +392,11 @@ def _decode_with_simplejpeg(
         return None
     try:
         header = simplejpeg.decode_jpeg_header(data)
+        if _jpeg_orientation(data) != 1:
+            return None
         full_height, full_width = int(header[0]), int(header[1])
         # Pillow's guard on public names, so the limit and its warn/raise tiers stay those of ``Image.open``.
-        _check_decompression_bomb(full_width, full_height)
+        _check_decompression_bomb(full_width, full_height, max_image_pixels)
         reduction = _jpeg_draft_reduction(full_width, full_height, draft_size)
         pixels = simplejpeg.decode_jpeg(
             data,
@@ -194,7 +438,9 @@ def _read_simplejpeg_candidate(path: Path) -> bytes | None:
         return encoded.read()
 
 
-def decode_image(path: Path, draft_size: int | None = None) -> tuple[NDArray[np.uint8], tuple[float, float]]:
+def decode_image(
+    path: Path, draft_size: int | None = None, num_channels: int = 3
+) -> tuple[NDArray[np.uint8], tuple[float, float]]:
     """Decode an image file to RGB, optionally downscaling during the JPEG discrete cosine transform (DCT) decode.
 
     JPEG files go through ``simplejpeg`` (libjpeg-turbo straight into a NumPy buffer) when it is installed.  Its
@@ -212,6 +458,10 @@ def decode_image(path: Path, draft_size: int | None = None) -> tuple[NDArray[np.
     When ``draft_size`` is set, both decoders apply the same power-of-two reduction ``PIL.Image.draft`` would choose to
     keep the image at least ``draft_size`` on both axes; it is a no-op for non-JPEG files.
 
+    Pixels come back upright for the file's EXIF orientation, the way viewers and annotation tools show a photo and
+    therefore the frame its labels were drawn in. ``simplejpeg`` cannot turn a JPEG, so one whose orientation is not 1
+    goes to Pillow; the decode scales are reported for the upright axes.
+
     ``RFDETR.predict()`` does not use this function for local files: ``rfdetr.detr._decode_local_image`` decodes them
     with torchvision, a core dependency, straight into the CHW tensor inference consumes, because ``simplejpeg`` is
     only installed with the ``[train]`` extra and this function returns HWC NumPy arrays.
@@ -219,22 +469,28 @@ def decode_image(path: Path, draft_size: int | None = None) -> tuple[NDArray[np.
     Args:
         path: Image file to decode.
         draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
+        num_channels: Input channel count of the model.  ``3`` (the default) decodes to RGB, ``1`` to grayscale and
+            ``4`` to RGBA, which requires the image to store a fourth channel.
 
     Returns:
         Decoded ``(H, W, 3)`` uint8 RGB pixels and their horizontal/vertical decode scales, both ``1.0`` when the
-        decoder did not reduce.
+        decoder did not reduce.  ``(H, W)`` for ``num_channels=1`` and ``(H, W, 4)`` for ``num_channels=4``.
 
     Raises:
-        PIL.Image.DecompressionBombError: If the image has more than twice ``PIL.Image.MAX_IMAGE_PIXELS`` pixels.
+        PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
+        ValueError: If image files cannot supply *num_channels* channels, or this one stores no fourth channel.
     """
-    data = _read_simplejpeg_candidate(path)
+    # ``simplejpeg`` is the RGB fast path; other channel counts are Pillow's.
+    data = _read_simplejpeg_candidate(path) if num_channels == 3 else None
     if data is not None:
         return decode_image_bytes(data, draft_size)
-    image, scales = _decode_with_pillow(path, draft_size)
+    image, scales = _decode_with_pillow(path, draft_size, num_channels=num_channels)
     return np.array(image), scales
 
 
-def decode_image_bytes(data: bytes, draft_size: int | None = None) -> tuple[NDArray[np.uint8], tuple[float, float]]:
+def decode_image_bytes(
+    data: bytes, draft_size: int | None = None, num_channels: int = 3
+) -> tuple[NDArray[np.uint8], tuple[float, float]]:
     """Decode encoded image bytes to RGB, optionally downscaling during the JPEG DCT (discrete cosine transform) decode.
 
     Holds the decoder policy :func:`decode_image` applies to encoded bytes already in memory; :func:`decode_image`
@@ -243,22 +499,27 @@ def decode_image_bytes(data: bytes, draft_size: int | None = None) -> tuple[NDAr
     Args:
         data: Encoded image bytes.
         draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
+        num_channels: Input channel count of the model.  ``3`` (the default) decodes to RGB, ``1`` to grayscale and
+            ``4`` to RGBA, which requires the image to store a fourth channel.
 
     Returns:
         Decoded ``(H, W, 3)`` uint8 RGB pixels and their horizontal/vertical decode scales, both ``1.0`` when the
-        decoder did not reduce.
+        decoder did not reduce.  ``(H, W)`` for ``num_channels=1`` and ``(H, W, 4)`` for ``num_channels=4``.
 
     Raises:
-        PIL.Image.DecompressionBombError: If the image has more than twice ``PIL.Image.MAX_IMAGE_PIXELS`` pixels.
+        PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
+        ValueError: If image files cannot supply *num_channels* channels, or this one stores no fourth channel.
     """
-    decoded = _decode_with_simplejpeg(data, draft_size)
+    decoded = _decode_with_simplejpeg(data, draft_size) if num_channels == 3 else None
     if decoded is not None:
         return decoded
-    image, scales = _decode_with_pillow(io.BytesIO(data), draft_size)
+    image, scales = _decode_with_pillow(io.BytesIO(data), draft_size, num_channels=num_channels)
     return np.array(image), scales
 
 
-def decode_pil_image(path: Path, draft_size: int | None = None) -> tuple[Image.Image, tuple[float, float]]:
+def decode_pil_image(
+    path: Path, draft_size: int | None = None, max_image_pixels: int | None = None, num_channels: int = 3
+) -> tuple[Image.Image, tuple[float, float]]:
     """Decode an image file to an RGB PIL image under the same decoder policy as :func:`decode_image`.
 
     For readers whose transforms take a PIL image, such as ``CocoDetection``.  A JPEG that ``simplejpeg`` decodes is
@@ -273,20 +534,28 @@ def decode_pil_image(path: Path, draft_size: int | None = None) -> tuple[Image.I
     Args:
         path: Image file to decode.
         draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
+        max_image_pixels: Decompression-bomb limit for this image, used when it is higher than
+            ``PIL.Image.MAX_IMAGE_PIXELS``, which is left unchanged.  ``None`` (the default) applies Pillow's limit.
+        num_channels: Input channel count of the model.  ``3`` (the default) decodes to RGB, ``1`` to grayscale and
+            ``4`` to RGBA, which requires the image to store a fourth channel.
 
     Returns:
-        Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
+        Decoded image (RGB by default) and its horizontal/vertical decode scales, both ``1.0`` when the decoder did
+        not reduce.
 
     Raises:
-        PIL.Image.DecompressionBombError: If the image has more than twice ``PIL.Image.MAX_IMAGE_PIXELS`` pixels.
+        PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
+        ValueError: If image files cannot supply *num_channels* channels, or this one stores no fourth channel.
     """
-    data = _read_simplejpeg_candidate(path)
+    data = _read_simplejpeg_candidate(path) if num_channels == 3 else None
     if data is not None:
-        return decode_pil_image_bytes(data, draft_size)
-    return _decode_with_pillow(path, draft_size)
+        return decode_pil_image_bytes(data, draft_size, max_image_pixels)
+    return _decode_with_pillow(path, draft_size, max_image_pixels, num_channels)
 
 
-def decode_pil_image_bytes(data: bytes, draft_size: int | None = None) -> tuple[Image.Image, tuple[float, float]]:
+def decode_pil_image_bytes(
+    data: bytes, draft_size: int | None = None, max_image_pixels: int | None = None, num_channels: int = 3
+) -> tuple[Image.Image, tuple[float, float]]:
     """Decode encoded image bytes to an RGB PIL image under the same decoder policy as :func:`decode_image_bytes`.
 
     The in-memory counterpart of :func:`decode_pil_image`, for readers such as the WebDataset loader that hold a shard
@@ -297,15 +566,354 @@ def decode_pil_image_bytes(data: bytes, draft_size: int | None = None) -> tuple[
     Args:
         data: Encoded image bytes.
         draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
+        max_image_pixels: Decompression-bomb limit for this image, used when it is higher than
+            ``PIL.Image.MAX_IMAGE_PIXELS``, which is left unchanged.  ``None`` (the default) applies Pillow's limit.
+        num_channels: Input channel count of the model.  ``3`` (the default) decodes to RGB, ``1`` to grayscale and
+            ``4`` to RGBA, which requires the image to store a fourth channel.
 
     Returns:
-        Decoded RGB image and its horizontal/vertical decode scales, both ``1.0`` when the decoder did not reduce.
+        Decoded image (RGB by default) and its horizontal/vertical decode scales, both ``1.0`` when the decoder did
+        not reduce.
 
     Raises:
-        PIL.Image.DecompressionBombError: If the image has more than twice ``PIL.Image.MAX_IMAGE_PIXELS`` pixels.
+        PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
+        ValueError: If image files cannot supply *num_channels* channels, or this one stores no fourth channel.
     """
-    decoded = _decode_with_simplejpeg(data, draft_size)
+    decoded = _decode_with_simplejpeg(data, draft_size, max_image_pixels) if num_channels == 3 else None
     if decoded is not None:
         pixels, scales = decoded
         return Image.fromarray(pixels), scales
-    return _decode_with_pillow(io.BytesIO(data), draft_size)
+    return _decode_with_pillow(io.BytesIO(data), draft_size, max_image_pixels, num_channels)
+
+
+class _KnownUnreadableImageError(OSError):
+    """Raised by an image read that is known to fail on every attempt, such as a file found unreadable earlier.
+
+    :func:`read_image_with_retries` raises it at once, with no retry, pause or warning, because a retry could only fail
+    again.  It is still an ``OSError``, so :func:`read_image_or_substitute` replaces the sample as for any other
+    unreadable image.
+
+    Examples:
+        >>> isinstance(_KnownUnreadableImageError("image header was unreadable"), OSError)
+        True
+    """
+
+
+def _is_process_resource_error(error: OSError) -> bool:
+    """Return whether ``error`` reports this process out of a resource, which says nothing about the file being read.
+
+    Opening a file with no file descriptor left, or starting the decoder process with no memory or process slot left,
+    raises an ``OSError`` like an unreadable file does; only its ``errno`` tells them apart.
+
+    Args:
+        error: The error a read raised.
+
+    Returns:
+        ``True`` when its ``errno`` is one of ``_PROCESS_RESOURCE_ERRNOS``.
+
+    Examples:
+        >>> _is_process_resource_error(OSError(errno.EMFILE, "Too many open files"))
+        True
+        >>> _is_process_resource_error(OSError("image file is truncated"))
+        False
+    """
+    return error.errno in _PROCESS_RESOURCE_ERRNOS
+
+
+def read_image_with_retries(read: Callable[[], _T], path: str | Path) -> _T:
+    """Call ``read`` up to ``_IMAGE_READ_ATTEMPTS`` times, pausing longer after each ``OSError``.
+
+    Each failed attempt is logged as a warning naming ``path``.  Exceptions other than ``OSError`` propagate from the
+    first attempt, and so does a :class:`_KnownUnreadableImageError`, without a warning.
+
+    Args:
+        read: Reads an image, or its header, from ``path``.
+        path: The file ``read`` reads, for log messages.
+
+    Returns:
+        What ``read`` returned on its first successful attempt.
+
+    Raises:
+        OSError: The last attempt's error, if every attempt failed, or the first one if it is a
+            :class:`_KnownUnreadableImageError`.
+
+    Examples:
+        >>> read_image_with_retries(lambda: "pixels", "image.jpg")
+        'pixels'
+    """
+    attempt = 1
+    while True:
+        try:
+            return read()
+        except _KnownUnreadableImageError:
+            raise
+        except OSError as exc:
+            logger.warning("Could not read image %s (attempt %d of %d): %s", path, attempt, _IMAGE_READ_ATTEMPTS, exc)
+            if attempt == _IMAGE_READ_ATTEMPTS:
+                raise
+        time.sleep(_IMAGE_READ_BACKOFF_SECONDS * attempt)
+        attempt += 1
+
+
+def _first_readable(
+    read: Callable[[int], _T],
+    candidates: list[int],
+    path_of: Callable[[int], str | Path],
+    errors: dict[int, OSError],
+) -> tuple[int, _T] | None:
+    """Read each candidate sample once, in order, and return the first that reads.
+
+    Each failed read is logged at debug level, naming the file, and recorded in ``errors``.
+
+    Args:
+        read: Reads the image of the sample at a dataset index.
+        candidates: Dataset indices to try, in order.
+        path_of: Returns the image path of the sample at a dataset index, for log messages.
+        errors: Receives the error of each candidate whose read failed, keyed by its index.
+
+    Returns:
+        The first readable candidate and what ``read`` returned for it, or ``None`` when every candidate failed.
+
+    Raises:
+        OSError: A candidate's error that reports this process out of a resource (see
+            :func:`_is_process_resource_error`), at once: it does not make the candidate unreadable.
+
+    Examples:
+        >>> errors = {}
+        >>> _first_readable(lambda i: f"pixels-{i}", [4, 5], lambda i: f"{i}.jpg", errors), errors
+        ((4, 'pixels-4'), {})
+    """
+    for candidate in candidates:
+        try:
+            return candidate, read(candidate)
+        except OSError as exc:
+            if _is_process_resource_error(exc):
+                raise
+            logger.debug("Substitute image %s (sample %d) is unreadable too: %s", path_of(candidate), candidate, exc)
+            errors[candidate] = exc
+    return None
+
+
+def _describe_errors(errors: dict[int, OSError]) -> str:
+    """Return the distinct errors among ``errors``, each with its type, in the order they were first recorded.
+
+    Args:
+        errors: Errors keyed by the dataset index whose read raised them.
+
+    Returns:
+        The distinct ``"<type>: <message>"`` descriptions, joined with ``"; "``.
+
+    Examples:
+        >>> _describe_errors({4: OSError("image file is truncated"), 5: OSError("image file is truncated")})
+        'OSError: image file is truncated'
+        >>> _describe_errors({4: FileNotFoundError("gone"), 5: OSError("image file is truncated")})
+        'FileNotFoundError: gone; OSError: image file is truncated'
+    """
+    return "; ".join(dict.fromkeys(f"{type(error).__name__}: {error}" for error in errors.values()))
+
+
+def read_image_or_substitute(
+    read: Callable[[int], _T],
+    index: int,
+    num_samples: int,
+    path_of: Callable[[int], str | Path],
+) -> tuple[int, _T]:
+    """Read the image of one dataset sample, retrying a failed read and then falling back to a later sample.
+
+    Only ``OSError`` counts as a failed read: a missing file, an I/O error, and the truncated, unidentifiable or corrupt
+    file errors the decoders raise (``PIL.UnidentifiedImageError`` is an ``OSError``, and the decoders of this module
+    re-raise the ``SyntaxError`` or ``ValueError`` Pillow reports for some corrupt files as one).  A decoder process
+    that crashes raises ``RuntimeError``, which is not a failed read.  Every other exception propagates from
+    the first attempt.  A failed read is repeated up to ``_IMAGE_READ_ATTEMPTS`` times with a growing pause, each
+    failure logged as a warning naming the file.  If every attempt fails, the following samples, wrapping around the end
+    of the dataset, are read once each until one succeeds, and one error naming the unreadable file and the sample used
+    instead is logged.  If none succeeds, which a storage stall longer than the retries also causes, the process pauses
+    once more, as long as the last retry pause, and reads the requested sample once more: if it now reads, it is
+    returned and no error is logged; otherwise the same substitutes are read once more.  A read whose error is a
+    :class:`_KnownUnreadableImageError` is not repeated, and no pause is made when every read failed that way.  Each
+    failed read of a substitute is logged at debug level, and the error raised when none succeeds lists their distinct
+    errors.  The caller must load the annotations of the returned index, so the image and its targets stay consistent
+    and the dataset keeps its length.  At most ``_MAX_SUBSTITUTIONS`` samples are tried.
+
+    An ``OSError`` that reports this process out of file descriptors, memory or processes (see
+    :func:`_is_process_resource_error`) says nothing about the file: the requested sample is retried as for any failed
+    read, but no sample is substituted or reported unreadable for it, and the error itself is raised.
+
+    Args:
+        read: Reads the image of the sample at a dataset index.
+        index: Dataset index of the requested sample.
+        num_samples: Number of samples in the dataset.
+        path_of: Returns the image path of the sample at a dataset index, for log and error messages.
+
+    Returns:
+        The index of the sample that was read, equal to ``index`` unless a substitution happened, and what ``read``
+        returned for it.
+
+    Raises:
+        RuntimeError: If the requested image and every substitute tried are unreadable, which means the dataset or the
+            filesystem holding it is broken, not a single file, or that its storage stayed unavailable through every
+            retry.
+        OSError: The error of a read that ran out of a process resource, after the retries for the requested sample and
+            at once for a substitute.
+
+    Examples:
+        >>> read_image_or_substitute(lambda i: f"pixels-{i}", 3, 10, lambda i: f"{i}.jpg")
+        (3, 'pixels-3')
+    """
+    try:
+        return index, read_image_with_retries(lambda: read(index), path_of(index))
+    except OSError as exc:
+        if _is_process_resource_error(exc):
+            raise
+        failure = exc
+
+    candidates = [(index + step) % num_samples for step in range(1, min(_MAX_SUBSTITUTIONS, num_samples - 1) + 1)]
+    errors: dict[int, OSError] = {}
+    substitute = _first_readable(read, candidates, path_of, errors)
+    if substitute is None:
+        # Storage that stalls for longer than the retries above fails every candidate as well, so pause once more, for
+        # the longest retry pause, before judging the dataset broken.  The stall that failed the candidates failed the
+        # requested sample too, so it is read again first.  A known-unreadable read cannot recover.
+        requested_recoverable = not isinstance(failure, _KnownUnreadableImageError)
+        recoverable = [
+            candidate for candidate in candidates if not isinstance(errors[candidate], _KnownUnreadableImageError)
+        ]
+        if requested_recoverable or recoverable:
+            time.sleep(_IMAGE_READ_BACKOFF_SECONDS * (_IMAGE_READ_ATTEMPTS - 1))
+            if requested_recoverable:
+                try:
+                    return index, read(index)
+                except OSError as exc:
+                    if _is_process_resource_error(exc):
+                        raise
+                    # Kept out of ``errors``, which lists the samples tried in place of this one.
+                    logger.debug("Image %s (sample %d) is still unreadable: %s", path_of(index), index, exc)
+            substitute = _first_readable(read, recoverable, path_of, errors)
+    if substitute is None:
+        # Logged at debug level only, so the candidates' errors are kept here, where they cannot be recovered later.
+        tried = f" The samples tried in its place failed with: {_describe_errors(errors)}." if errors else ""
+        raise RuntimeError(
+            f"{len(candidates) + 1} consecutive samples were unreadable starting at sample {index} "
+            f"({path_of(index)}): {failure}.{tried} The dataset or the filesystem holding it is broken, not a single "
+            "file, or the storage holding it stayed unavailable through every retry, as in a sustained outage. Check "
+            "that the files are present and readable before training again."
+        ) from failure
+
+    candidate, result = substitute
+    logger.error(
+        "Image %s (sample %d) is unreadable: %s. Using sample %d (%s) in its place.",
+        path_of(index),
+        index,
+        failure,
+        candidate,
+        path_of(candidate),
+    )
+    return candidate, result
+
+
+def _boxes_fit_only_turned(annotations: Iterable[Mapping[str, Any]], size: tuple[float, float]) -> bool:
+    """Return whether COCO boxes run past an image of ``size`` but fit it with its width and height swapped.
+
+    Args:
+        annotations: COCO annotations whose ``bbox`` is ``[x, y, width, height]`` in the pixels of the image.
+        size: Width and height of the decoded image.
+
+    Returns:
+        ``True`` when some box runs more than ``_BOX_OVERRUN_TOLERANCE`` past the image and every box fits the image
+        turned a quarter; ``False`` otherwise, including when there are no boxes or a ``bbox`` is not four numbers.
+
+    Examples:
+        >>> _boxes_fit_only_turned([{"bbox": [90, 5, 50, 20]}], (100, 160))
+        True
+        >>> _boxes_fit_only_turned([{"bbox": [10, 5, 50, 20]}], (100, 160))
+        False
+        >>> _boxes_fit_only_turned([{"bbox": [90, 5, 50, 120]}], (100, 160))
+        False
+    """
+    width, height = size
+    right = bottom = 0.0
+    for annotation in annotations:
+        try:
+            x, y, box_width, box_height = (float(value) for value in annotation["bbox"])
+        except (KeyError, TypeError, ValueError):
+            return False  # a malformed box is ConvertCoco's to report
+        right = max(right, x + box_width)
+        bottom = max(bottom, y + box_height)
+    overruns = right > width + _BOX_OVERRUN_TOLERANCE or bottom > height + _BOX_OVERRUN_TOLERANCE
+    fits_turned = right <= height + _BOX_OVERRUN_TOLERANCE and bottom <= width + _BOX_OVERRUN_TOLERANCE
+    return overruns and fits_turned
+
+
+def _turned_a_quarter(source: Path | bytes, max_image_pixels: int | None) -> bool:
+    """Return whether the decoders turn this image a quarter for its EXIF orientation, reading only its header.
+
+    Args:
+        source: Image file path, or the encoded bytes.
+        max_image_pixels: Per-decode limit, see :func:`_pixel_limit`.
+
+    Returns:
+        ``True`` for orientations 5 to 8; ``False`` otherwise, and when the header cannot be read.
+
+    Examples:
+        >>> exif = Image.Exif()
+        >>> exif[0x0112] = 6
+        >>> encoded = io.BytesIO()
+        >>> Image.new("RGB", (4, 2)).save(encoded, format="JPEG", exif=exif.tobytes())
+        >>> _turned_a_quarter(encoded.getvalue(), max_image_pixels=None)
+        True
+        >>> _turned_a_quarter(b"not an image", max_image_pixels=None)
+        False
+    """
+    stream: Path | IO[bytes] = io.BytesIO(source) if isinstance(source, bytes) else source
+    try:
+        with _open_image(stream, max_image_pixels) as header:
+            return swaps_axes(exif_orientation(header))
+    except (OSError, ValueError, Image.DecompressionBombError):
+        return False  # the decode already read this file; a header that fails now gives no evidence either way
+
+
+def _warn_if_labels_follow_stored_pixels(
+    source: Path | bytes,
+    annotations: Iterable[Mapping[str, Any]],
+    size: tuple[int, int],
+    *,
+    label: str,
+    max_image_pixels: int | None = None,
+) -> bool:
+    """Warn when COCO boxes fit a quarter-turned photo only as its file stores the pixels, not upright.
+
+    The decoders return a photo upright for its EXIF orientation, the frame viewers and annotation tools show.  Labels
+    drawn on the stored pixels instead, by a tool that ignores the tag or as pseudo-labels from ``predict()`` of an
+    rfdetr release that did not turn photos, miss their objects.  A box that runs past the upright image but fits it
+    with the axes swapped is the visible sign; the header is read only then, so a sample without that sign costs one
+    pass over its boxes.  A square photo, and boxes that fit both frames, give no sign and are not reported.
+
+    Readers call this once per sample until it returns ``True``, so it warns once per dataset object: once per
+    DataLoader worker process, whose copy of the dataset keeps its own record.
+
+    Args:
+        source: Image file path, or the encoded bytes.
+        annotations: The sample's COCO annotations, in the pixels of the decoded image.
+        size: Width and height of the decoded, upright image.
+        label: How the warning names the image.
+        max_image_pixels: Per-decode limit, see :func:`_pixel_limit`.
+
+    Returns:
+        Whether it warned.
+
+    Examples:
+        >>> _warn_if_labels_follow_stored_pixels(b"", [{"bbox": [1, 2, 3, 4]}], (100, 160), label="photo.jpg")
+        False
+    """
+    if not _boxes_fit_only_turned(annotations, size) or not _turned_a_quarter(source, max_image_pixels):
+        return False
+    warnings.warn(
+        f"{label}: its EXIF orientation turns it a quarter, and its boxes fit the photo only as the file stores the "
+        "pixels, not upright. RF-DETR reads such photos upright, as viewers and annotation tools show them, so labels "
+        "drawn on the stored pixels (for example pseudo-labels from predict() of an earlier rfdetr release) miss "
+        "their objects. Regenerate or convert the labels on the upright photos, or remove the orientation metadata "
+        "from the image files so that they are read as stored.",
+        UserWarning,
+        stacklevel=2,
+    )
+    return True

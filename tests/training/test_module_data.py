@@ -10,6 +10,7 @@ import logging
 import random
 import warnings
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -20,8 +21,11 @@ from PIL import Image
 from torch.utils.data import DataLoader
 
 from rfdetr.config import AugmentationBackend, KeypointTrainConfig, RFDETRBaseConfig, TrainConfig
+from rfdetr.datasets import io_utils
 from rfdetr.datasets.aug_configs import AUG_CONFIG
+from rfdetr.datasets.coco import CocoDetection
 from rfdetr.datasets.kornia_transforms import IMAGENET_MEAN, IMAGENET_STD, build_kornia_pipeline, collate_boxes
+from rfdetr.datasets.multi_source import WeightedMultiSourceBatchSampler
 from rfdetr.datasets.yolo import YoloDetection, YoloSplitUnavailableError
 from rfdetr.training.module_data import _MIN_TRAIN_BATCHES, GradAccumAlignedDataset, RFDETRDataModule, _worker_init_fn
 from rfdetr.utilities.tensors import (
@@ -31,6 +35,7 @@ from rfdetr.utilities.tensors import (
     pack_targets,
 )
 from tests._markers import _cuda_marks, _requires_kornia
+from tests.datasets.helpers import _write_coco_dataset, _write_yolo_dataset
 
 _CUDA_DEVICE = pytest.param("cuda", marks=_cuda_marks)
 _EVAL_LOADERS = ["val_dataloader", "test_dataloader", "predict_dataloader"]
@@ -172,6 +177,28 @@ class _MaskedVisualDataset(torch.utils.data.Dataset):
                 "size": torch.tensor([16, 16], dtype=torch.int64),
             },
         )
+
+
+class _SubstitutedVisualDataset(_VisualDataset):
+    """Visual dataset whose sample 0 carries ``image_id`` 7, as a sample replaced by image 7 when unreadable does.
+
+    It has the ``root``, ``ids`` and COCO API of ``CocoDetection``, the API naming image ``i`` ``image<i>.jpg``.
+
+    Examples:
+        >>> dataset = _SubstitutedVisualDataset()
+        >>> int(dataset[0][1]["image_id"]), dataset.coco.loadImgs(7)[0]["file_name"]
+        (7, 'image7.jpg')
+    """
+
+    def __init__(self) -> None:
+        self.root = "/data/train"
+        self.ids = [0]
+        self.coco = SimpleNamespace(loadImgs=lambda image_id: [{"file_name": f"image{image_id}.jpg"}])
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+        """Return the sample of :class:`_VisualDataset` with the ``image_id`` of image 7."""
+        image, target = super().__getitem__(idx)
+        return image, {**target, "image_id": torch.tensor([7])}
 
 
 def _make_batch(batch_size: int = 2, channels: int = 3, h: int = 16, w: int = 16):
@@ -356,7 +383,7 @@ class TestPrivateShowSamples:
         from matplotlib import pyplot as plt
 
         monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
-        monkeypatch.setattr(dm, "_source_image_path", lambda dataset, idx: Path(f"{'very_long_name_' * 8}.jpg"))
+        monkeypatch.setattr(dm, "_source_image_path", lambda dataset, target: Path(f"{'very_long_name_' * 8}.jpg"))
 
         figure = dm._show_samples(1, split="train", columns=1, figure_size=(4.0, 3.0))
 
@@ -427,6 +454,56 @@ class TestPrivateShowSamples:
         assert mock_mask_ann.return_value.annotate.call_count == expected_annotator_calls
         plt.close(figure)
 
+    def test_title_names_the_image_the_sample_was_read_from(self, fixture_training_setup, monkeypatch):
+        """A substituted sample is titled with the file it was read from, not with the unreadable file requested."""
+        _, _, dm = fixture_training_setup
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
+        from matplotlib import pyplot as plt
+
+        monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _SubstitutedVisualDataset())
+
+        figure = dm._show_samples(1, split="train", columns=1)
+
+        assert figure.axes[0].get_title() == "image7.jpg"
+        plt.close(figure)
+
+    def test_title_falls_back_to_split_and_index_without_a_coco_api(self, fixture_training_setup, monkeypatch):
+        """A dataset without ``root`` and a COCO API, such as a multi-source one, is titled by split and index."""
+        _, _, dm = fixture_training_setup
+        import matplotlib
+
+        matplotlib.use("Agg", force=True)
+        from matplotlib import pyplot as plt
+
+        monkeypatch.setattr(dm, "_get_dataset_for_visualization", lambda split: _VisualDataset())
+
+        figure = dm._show_samples(1, split="train", columns=1)
+
+        assert figure.axes[0].get_title() == "train[0]"
+        plt.close(figure)
+
+    def test_source_image_path_names_the_substitute_of_an_unreadable_coco_image(self, tmp_path, mocker):
+        """The path comes from the id ``CocoDetection`` returns, which names the substitute of an unreadable file."""
+        mocker.patch.object(io_utils.time, "sleep")
+        annotation_file = _write_coco_dataset(tmp_path, "png")
+        (tmp_path / "image1.png").write_bytes(b"not an image")
+        dataset = CocoDetection(tmp_path, annotation_file, transforms=None, skip_unreadable=True)
+        _, target = dataset[1]
+
+        assert RFDETRDataModule._source_image_path(dataset, target) == tmp_path / "image2.png"
+
+    def test_source_image_path_names_the_substitute_of_an_unreadable_yolo_image(self, tmp_path, mocker):
+        """``YoloDetection`` is no ``CocoDetection``, yet its ``root`` and COCO API resolve the substitute's path."""
+        mocker.patch.object(io_utils.time, "sleep")
+        image_dir, label_dir, data_file = _write_yolo_dataset(tmp_path)
+        (image_dir / "image1.png").write_bytes(b"not an image")
+        dataset = YoloDetection(str(image_dir), str(label_dir), str(data_file), transforms=None, skip_unreadable=True)
+        _, target = dataset[1]
+
+        assert RFDETRDataModule._source_image_path(dataset, target).name == "image2.png"
+
 
 class TestSetup:
     """Setup(stage) builds the correct dataset(s) for each PTL stage."""
@@ -461,6 +538,26 @@ class TestSetup:
         assert dm._dataset_train is None
         assert dm._dataset_val is fake_val
         assert dm._dataset_test is None
+
+    @pytest.mark.parametrize("enabled", [True, False])
+    @pytest.mark.parametrize(
+        ("stage", "splits"),
+        [("fit", ["train", "val"]), ("validate", ["val"]), ("test", ["test"]), ("predict", ["val"])],
+    )
+    def test_skip_unreadable_images_reaches_the_builder_of_every_split(self, mocker, tmp_path, stage, splits, enabled):
+        """``setup(stage)`` hands every split builder a namespace that carries ``skip_unreadable_images``."""
+        train_config = _base_train_config(tmp_path, dataset_file="yolo", skip_unreadable_images=enabled)
+        dm = _build_datamodule(train_config=train_config)
+        build = mocker.patch(
+            "rfdetr.training.module_data.build_dataset",
+            side_effect=lambda image_set, args, resolution: _fake_dataset(10),
+        )
+
+        dm.setup(stage)
+
+        assert [(call.args[0], call.args[1].skip_unreadable_images) for call in build.call_args_list] == [
+            (split, enabled) for split in splits
+        ]
 
     @pytest.mark.parametrize("dataset_file", ["roboflow", "yolo"])
     def test_test_stage_uses_test_split(self, tmp_path, dataset_file):
@@ -857,6 +954,226 @@ class TestTrainDataloader:
 
         assert len(loader.dataset) % (2 * 4 * 3) == 0
         assert len(loader.dataset) == 120
+
+    def test_build_train_sampler_default_returns_none(self, tmp_path):
+        """The base build_train_sampler() hook returns None, leaving default sampling untouched."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200)
+        assert dm.build_train_sampler(dm._dataset_train) is None
+
+    def test_custom_batch_sampler_is_used_as_is(self, tmp_path):
+        """A non-None build_train_sampler() override is passed straight through as batch_sampler."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200, num_workers=0)
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+        dm.build_train_sampler = MagicMock(return_value=custom_sampler)
+
+        loader = dm.train_dataloader()
+
+        assert loader.batch_sampler is custom_sampler
+        dm.build_train_sampler.assert_called_once_with(dm._dataset_train)
+
+    def test_custom_batch_sampler_preserves_loader_kwargs(self, tmp_path):
+        """The custom-sampler branch keeps collate_fn/num_workers/pin_memory from the base config."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200, num_workers=0)
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+        dm.build_train_sampler = MagicMock(return_value=custom_sampler)
+
+        loader = dm.train_dataloader()
+
+        assert loader.collate_fn is dm._collate_fn
+        assert loader.num_workers == dm._num_workers
+        assert loader.pin_memory == dm._pin_memory
+
+    def test_custom_batch_sampler_skips_grad_accum_alignment(self, tmp_path):
+        """The custom-sampler branch does not wrap the dataset in GradAccumAlignedDataset."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=101, batch_size=2, grad_accum_steps=4)
+        original_dataset = dm._dataset_train
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(original_dataset), batch_size=4, drop_last=False
+        )
+        dm.build_train_sampler = MagicMock(return_value=custom_sampler)
+
+        loader = dm.train_dataloader()
+
+        assert loader.dataset is original_dataset
+
+    def test_warns_when_custom_sampler_leaves_a_short_accumulation_window(self, tmp_path, caplog, monkeypatch):
+        """A batch-sampler epoch that is not a multiple of grad_accum_steps under-scales the last optimizer step."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=101, batch_size=2, grad_accum_steps=4)
+        # 101 samples in batches of 4 is 26 batches, and 26 % 4 == 2.
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+        dm.build_train_sampler = MagicMock(return_value=custom_sampler)
+        # get_logger() sets propagate=False on the "rf-detr" logger, so caplog's handler only sees its
+        # records while propagation is re-enabled.
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            dm.train_dataloader()
+
+        assert "not a multiple of grad_accum_steps" in caplog.text
+
+    def test_no_warning_when_custom_sampler_epoch_is_already_aligned(self, tmp_path, caplog, monkeypatch):
+        """An aligned epoch must stay quiet, so the warning keeps its signal."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=96, batch_size=2, grad_accum_steps=4)
+        # 96 samples in batches of 4 is exactly 24 batches, and 24 % 4 == 0.
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+        dm.build_train_sampler = MagicMock(return_value=custom_sampler)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            dm.train_dataloader()
+
+        assert "not a multiple of grad_accum_steps" not in caplog.text
+
+    def test_no_warning_without_gradient_accumulation(self, tmp_path, caplog, monkeypatch):
+        """With grad_accum_steps=1 every window is one micro-batch, so no epoch length can be short."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=101, batch_size=2, grad_accum_steps=1)
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+        dm.build_train_sampler = MagicMock(return_value=custom_sampler)
+        monkeypatch.setattr(logging.getLogger("rf-detr"), "propagate", True)
+
+        with caplog.at_level(logging.WARNING, logger="rf-detr"):
+            dm.train_dataloader()
+
+        assert "not a multiple of grad_accum_steps" not in caplog.text
+
+    def test_sampler_without_len_is_not_checked(self, tmp_path):
+        """A sampler declaring no epoch length must not break loader construction."""
+
+        class _UnsizedBatchSampler(torch.utils.data.Sampler):
+            def __iter__(self):
+                yield [0, 1]
+
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=101, batch_size=2, grad_accum_steps=4)
+        # No constructor argument: torch dropped Sampler's deprecated `data_source` parameter, so on newer
+        # versions this subclass inherits object.__init__ and any argument raises TypeError.
+        dm.build_train_sampler = MagicMock(return_value=_UnsizedBatchSampler())
+
+        assert dm.train_dataloader().batch_sampler is not None
+
+    def test_batch_multiple_gives_the_loader_whole_accumulation_windows(self, tmp_path):
+        """The documented fix: batch_multiple=grad_accum_steps makes len(loader) an exact number of windows."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=101, batch_size=2, grad_accum_steps=4)
+        sampler = WeightedMultiSourceBatchSampler(
+            [len(dm._dataset_train)], [1.0], batch_size=2, num_replicas=1, rank=0, batch_multiple=4
+        )
+        dm.build_train_sampler = MagicMock(return_value=sampler)
+
+        loader = dm.train_dataloader()
+
+        assert len(loader) % 4 == 0
+
+    def test_check_custom_sampler_owns_ddp_noop_when_trainer_is_unset(self, tmp_path):
+        """No Trainer attached (e.g. the guard called standalone) never raises."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200)
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+        dm._check_custom_sampler_owns_ddp(custom_sampler)
+
+    def test_check_custom_sampler_owns_ddp_noop_for_single_device(self, tmp_path):
+        """A non-distributed Trainer (distributed_sampler_kwargs is None) never raises."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200)
+        dm.trainer = MagicMock(distributed_sampler_kwargs=None)
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+        dm._check_custom_sampler_owns_ddp(custom_sampler)
+
+    def test_check_custom_sampler_owns_ddp_noop_when_use_distributed_sampler_is_false(self, tmp_path):
+        """The correct configuration (use_distributed_sampler=False) never raises."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200)
+        trainer = MagicMock()
+        trainer.distributed_sampler_kwargs = {"num_replicas": 2, "rank": 0}
+        trainer._accelerator_connector.use_distributed_sampler = False
+        dm.trainer = trainer
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+        dm._check_custom_sampler_owns_ddp(custom_sampler)
+
+    def test_check_custom_sampler_owns_ddp_raises_when_lightning_would_rewrap_the_sampler(self, tmp_path):
+        """A distributed Trainer still set to use_distributed_sampler=True raises before Lightning's TypeError."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200)
+        trainer = MagicMock()
+        trainer.distributed_sampler_kwargs = {"num_replicas": 2, "rank": 0}
+        trainer._accelerator_connector.use_distributed_sampler = True
+        trainer._accelerator_connector.is_distributed = True
+        dm.trainer = trainer
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+
+        with pytest.raises(RuntimeError, match="use_distributed_sampler=False"):
+            dm._check_custom_sampler_owns_ddp(custom_sampler)
+
+    def test_train_dataloader_raises_for_custom_sampler_under_misconfigured_ddp(self, tmp_path):
+        """train_dataloader() surfaces the DDP guard's RuntimeError before constructing the DataLoader."""
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200)
+        trainer = MagicMock()
+        trainer.distributed_sampler_kwargs = {"num_replicas": 2, "rank": 0}
+        trainer._accelerator_connector.use_distributed_sampler = True
+        trainer._accelerator_connector.is_distributed = True
+        dm.trainer = trainer
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+        dm.build_train_sampler = MagicMock(return_value=custom_sampler)
+
+        with pytest.raises(RuntimeError, match="use_distributed_sampler=False"):
+            dm.train_dataloader()
+
+    def test_check_custom_sampler_owns_ddp_pins_ptl_private_attributes_on_a_real_trainer(self, tmp_path):
+        """The guard's private PyTorch Lightning attributes still exist on a real (non-mocked) Trainer.
+
+        Every other test in this group attaches a ``MagicMock`` trainer, which auto-vivifies any attribute name — so
+        `getattr(x, attr, None)` never reaches its `None` default the way it would for a genuinely renamed or removed
+        attribute. A real single-device Trainer pins the actual surface, so a PyTorch Lightning upgrade that renames it
+        fails this test loudly instead of silently turning the guard into a no-op.
+        """
+        from pytorch_lightning import Trainer
+
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200)
+        trainer = Trainer(accelerator="cpu", devices=1, logger=False, enable_checkpointing=False)
+        dm.trainer = trainer
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+
+        assert hasattr(trainer._accelerator_connector, "use_distributed_sampler")
+        assert hasattr(trainer._accelerator_connector, "is_distributed")
+        dm._check_custom_sampler_owns_ddp(custom_sampler)  # single device: never raises
+
+    def test_check_custom_sampler_owns_ddp_noop_when_flag_attribute_is_genuinely_absent(self, tmp_path):
+        """A truly missing attribute (not a ``MagicMock`` auto-vivified one) still falls back safely.
+
+        ``MagicMock`` returns a truthy sub-mock for any attribute name, so a MagicMock trainer can never exercise the
+        ``getattr(..., None)`` fallback the way a real missing attribute would.
+        """
+        dm = self._setup_dm_with_train(tmp_path, dataset_length=200)
+
+        class _AccelConnectorMissingUseDistributedSampler:
+            is_distributed = True
+
+        class _TrainerWithIncompleteConnector:
+            distributed_sampler_kwargs = {"num_replicas": 2, "rank": 0}
+            _accelerator_connector = _AccelConnectorMissingUseDistributedSampler()
+
+        dm.trainer = _TrainerWithIncompleteConnector()
+        custom_sampler = torch.utils.data.BatchSampler(
+            torch.utils.data.SequentialSampler(dm._dataset_train), batch_size=4, drop_last=False
+        )
+
+        dm._check_custom_sampler_owns_ddp(custom_sampler)  # missing use_distributed_sampler -> no raise
 
     @pytest.mark.parametrize(
         ("dataset_length", "grad_accum_steps", "trainer_grad_accum_steps", "expected_samples"),
@@ -1683,6 +2000,20 @@ class TestBackendResolution:
             _setup_fit_with_fake_datasets(dm)
 
         assert "rfdetr[augment]" in str(exc_info.value)
+
+    def test_gpu_normalizer_cycles_statistics_over_model_channels(self, mocker, tmp_path):
+        """A 4-channel model gets four means and stds on the GPU path, as the CPU ``Normalize`` gives it (#1727)."""
+        model_config = _base_model_config(num_channels=4)
+        train_config = _base_train_config(tmp_path, augmentation_backend="auto")
+        dm = RFDETRDataModule(model_config, train_config)
+        mocker.patch("rfdetr.training.module_data._has_cuda_device", return_value=True)
+        mocker.patch.object(AugmentationBackend, "_is_available", lambda self: True)
+        mocker.patch("rfdetr.datasets.kornia_transforms.build_kornia_pipeline", return_value=MagicMock())
+        build_normalize = mocker.patch("rfdetr.datasets.kornia_transforms.build_normalize", return_value=MagicMock())
+
+        _setup_fit_with_fake_datasets(dm)
+
+        build_normalize.assert_called_once_with(mean=(0.485, 0.456, 0.406, 0.485), std=(0.229, 0.224, 0.225, 0.229))
 
     def test_cpu_backend_builds_no_pipeline(self, tmp_path):
         """Default cpu backend: _kornia_pipeline stays None."""

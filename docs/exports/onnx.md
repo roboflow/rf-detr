@@ -17,6 +17,8 @@ detections = model.predict("image.jpg", threshold=0.5)
 
 This returns `supervision.Detections` for detection and segmentation models, or `supervision.KeyPoints` for keypoint models. See [Predict with RFDETRInference](basics.md#predict-with-rfdetrinference) for checkpoint inputs, metadata, batch behavior, and runtime settings.
 
+On the CPU provider `RFDETRInference` runs ONNX Runtime on every logical core the process may use, where ONNX Runtime alone would use only the physical cores; pass `runtime_options={"num_threads": N}` to choose another pool size.
+
 ## Advanced: Run ONNX Runtime directly
 
 The exported graph returns **raw** tensors — `dets` (`pred_boxes`, normalized `cxcywh`) and `labels` (`pred_logits`, un-activated). The code below shows direct ONNX Runtime execution and NumPy decoding for low-level inspection. The private `_run_inference` helper remains a dependency-light numerical reference and shares raw execution with the `RFDETRInference` adapter; use `RFDETRInference` for normal image prediction.
@@ -116,19 +118,27 @@ model.export(format="onnx", quantization="int8", calibration_data="calibration_i
 
 `calibration_data` is **required** and must be representative of your deployment domain. Static quantization reads activation ranges from that data; out-of-domain or synthetic images produce a model that loads, runs, and is quietly wrong. Accepted forms are a directory of images (preprocessed exactly as `predict()` does, capped by `max_images`), a `.npy` file of shape `(N, C, H, W)` already normalized, or an equivalent array. A few dozen to a few hundred images from your validation split is the normal choice.
 
+Pass `int8_keep_mlp_float=True` to also keep GELU-fed weighted projections in float. This includes the second layer of backbone MLPs and can include projections in segmentation heads. GELU outputs can have outlier channels that determine the 8-bit step for the entire tensor. The option defaults to `False` and requires `quantization="int8"` for ONNX.
+
+The default favors speed, and the option favors accuracy. It keeps more multiplies in float, so its export runs slower than the default one. Use it when the default INT8 export loses too much accuracy on your data. The larger models are the most likely to need it. The [CPU cookbook](../../cookbooks/export-cpu/) exports, times and scores both placements for one model.
+
+```python
+model.export(format="onnx", quantization="int8", calibration_data="calibration_images/", int8_keep_mlp_float=True)
+```
+
 !!! warning "What gets quantized, and why it is not everything"
 
-    Only `MatMul` and `Gemm` run in 8-bit. Attention-score multiplies, the detection heads, normalization, softmax and the surrounding elementwise math stay in float, and those ops' *outputs* are not quantized either.
+    Only `MatMul` and `Gemm` run in 8-bit. Attention-score and attention-value multiplies, the detection heads, normalization, softmax and the surrounding elementwise math stay in float, and those ops' *outputs* are not quantized either.
 
-    This is not conservatism. Measured on a 500-image COCO val2017 subset, ONNX Runtime's default op coverage — which quantizes `LayerNormalization`, `Mul`, `Div`, `Reshape` and every shape op as well — costs **9.65 mAP on Nano and 12.14 on Small**. Restricting to the matrix multiplies brings that back to **2.65 and 2.67**. It is also *faster*: the Q/DQ conversions around non-matmul ops cost more than the 8-bit kernels save, so quantizing less wins on both axes.
+    This is not conservatism. Measured on a 500-image COCO val2017 subset, ONNX Runtime's default op coverage — which quantizes `LayerNormalization`, `Mul`, `Div`, `Reshape` and every shape op as well — costs **9.65 mAP on Nano and 12.14 on Small**. Restricting to the matrix multiplies brings most of that back (the current cost on Small is in the note below). It is also *faster*: the Q/DQ conversions around non-matmul ops cost more than the 8-bit kernels save, so quantizing less wins on both axes.
 
 !!! note "Expect a measurable accuracy cost"
 
-    On the same subset, INT8 cost 2.65 mAP (Nano) and 2.67 (Small) against each model's own FP32 baseline, for roughly 3x smaller files and ~1.4x faster CPU inference at batch 1. That is a real trade, not a rounding error — **measure on your own data and task before deploying**. Published INT8 RF-DETR models built with other tooling land closer to 0.5 mAP, so this gap is a property of the current configuration rather than of the architecture.
+    In the [x86 CPU run](#on-an-x86-cpu) of the CPU cookbook, the default INT8 export of `RFDETRSmall` cost 0.8 mAP against its FP32 baseline (55.7 against 56.5 on a 500-image val2017 subset) and `int8_keep_mlp_float=True` cost 0.4 (56.1), for files 3.3 and 2.1 times smaller and 1.37 and 1.15 times faster inference at batch 1. That is a real trade, not a rounding error — **measure on your own data and task before deploying**.
 
 Quantization runs on CPU via ONNX Runtime, which the `rfdetr[onnx]` extra already installs.
 
-The x86 CPU timing of the INT8 model against the fp32 model is in [On an x86 CPU](#on-an-x86-cpu) below. The accuracy comparison on x86 is pending a rerun of the [CPU cookbook](../../cookbooks/export-cpu/).
+The latency and accuracy of both INT8 placements against the fp32 model on an x86 CPU are in [On an x86 CPU](#on-an-x86-cpu) below.
 
 ## Measured Latency
 
@@ -148,10 +158,46 @@ ONNX Runtime on CUDA scales little with batch: batch 8 is slower per image than 
 
 ### On an x86 CPU
 
+Colab x86-64 host, AMD EPYC 7B12 with 4 physical cores (8 logical), Linux 6.6, `RFDETRSmall`, `rfdetr` 1.13.0.dev0 from the `develop` archive (commit not recorded), PyTorch version not recorded, ONNX Runtime 1.22.1, run on 2026-11-24, 15 warmup + 50 timed runs per row, from the [CPU cookbook](../../cookbooks/export-cpu/). ONNX Runtime is pinned to the 4 physical cores. The INT8 models were calibrated on 100 val2017 images held out of the scored subset and are batch 1 only.
+
+| Runtime | Precision | Quantization          | Batch | end2end [ms]   | FPS [img/s] | mAP@50:95 [%] | Size [MB] |
+| ------- | --------- | --------------------- | ----- | -------------- | ----------- | ------------- | --------- |
+| CPU EP  | fp32      | —                     | 1     | 335.9 ± 26.5   | 3.0         | 56.5          | 127.5     |
+| CPU EP  | fp32      | —                     | 4     | 1059.7 ± 106.8 | 3.8         | —             | 127.5     |
+| CPU EP  | INT8      | static QDQ            | 1     | 245.9 ± 21.5   | 4.1         | 55.7          | 39.1      |
+| CPU EP  | INT8      | static QDQ, MLP float | 1     | 292.7 ± 21.6   | 3.4         | 56.1          | 60.3      |
+
+`static QDQ` is the default INT8 export and `static QDQ, MLP float` is `int8_keep_mlp_float=True`. In this run:
+
+- The default INT8 export takes 73% of the fp32 time and costs 0.8 mAP. The precise placement takes 87% of it and costs 0.4 mAP, so on `RFDETRSmall` it gives back half of the accuracy loss for a 19% slower call than the default.
+- The default INT8 export runs at the speed of the [OpenVINO fp32 IR](openvino.md#measured-latency-on-an-x86-cpu) (246.8 ms) on the same host, which keeps the full accuracy.
+- `RFDETRInference`'s ONNX path took 335.9 ms against 314.8 ± 62.4 ms for the same model through `inference-models` on the same ONNX Runtime, a 7% gap inside that package's noise. An earlier run had measured a 39% gap that was never explained.
+
 The [latency cookbook](../../cookbooks/measure-latency/) times ONNX Runtime FP32 and INT8 on a Colab x86 CPU (AMD EPYC 7B12, 8 logical cores, ONNX Runtime 1.32.0, `rfdetr` 1.13.0.dev0) for every pretrained size, as the median of 200 images at batch 1, with the thread count set to the 8 logical cores through the `num_threads` runtime option. The tables are on the Run pages for [detection](../learn/run/detection.md#fastest-configuration-on-an-x86-cpu), [segmentation](../learn/run/segmentation.md#fastest-configuration-on-an-x86-cpu) and [keypoints](../learn/run/keypoints.md#fastest-configuration-on-an-x86-cpu), next to PyTorch TorchScript and OpenVINO. In them:
 
-- ONNX INT8 takes 64% to 83% of the ONNX FP32 time at every size it was timed for.
-- ONNX INT8 is among the fastest of the six configurations for 13 of the 16 models. ONNX FP32 is never among them: it is slower than PyTorch TorchScript FP32 at every size.
-- No accuracy was scored for these CPU rows, and the INT8 accuracy cost above (2.65 mAP on Nano, 2.67 on Small) was measured separately.
+- ONNX INT8 takes 64% to 80% of the ONNX FP32 time at every size it was timed for.
+- ONNX INT8 is among the fastest of the six configurations for 10 of the 16 models (the three PE sizes have no INT8 configuration, and Nano, Seg Nano and Seg Small are faster in another configuration). ONNX FP32 is never among them: it is slower than PyTorch TorchScript FP32 at every size.
+- ONNX compact, timed for Atto, Femto and Pico only, takes 70% to 73% of the ONNX FP32 time, tied with PyTorch TorchScript FP32 on all three and with OpenVINO FP32 on Femto and Pico.
+- No accuracy was scored for the latency cookbook's rows; the INT8 accuracy cost on `RFDETRSmall` is in the table above.
 
-No earlier x86 CPU table remains here: the earlier run had `RFDETRInference`'s ONNX loader 39% slower than the same model through another package on the same ONNX Runtime, a gap that was never explained, so its rows were removed. The new run does not compare the loader against another package, so that gap stays unexplained. On Intel CPUs, [OpenVINO](openvino.md#measured-latency-on-an-x86-cpu) is also a measured route.
+On Intel CPUs, [OpenVINO](openvino.md#measured-latency-on-an-x86-cpu) is also a measured route.
+
+### Compact PE models on CPU
+
+Install `pip install "rfdetr-plus[onnx]"` to export Atto, Femto or Pico with ONNX Runtime's CPU operators. Export a released detector or reload a fine-tuned checkpoint to retain its trained weights, class head and resolution.
+
+```python
+from rfdetr import RFDETRInference, from_checkpoint
+from rfdetr_plus import RFDETRFemto
+
+pretrained = RFDETRFemto(device="cpu")
+pretrained.export_cpu_onnx("output/pretrained")
+
+trained = from_checkpoint("checkpoint_best_total.pth", device="cpu")
+artifact = trained.export_cpu_onnx("output/finetuned")
+predictions = RFDETRInference(artifact, device="cpu").predict("image.jpg")
+```
+
+The compact ONNX file takes one normalized NCHW float image and returns normalized center-format boxes (`dets`) and class logits (`labels`). The prediction API handles preprocessing and postprocessing. Compare AP on your held-out images and latency on the deployment CPU against the standard FP32 export before choosing a format.
+
+To enforce an 8 MB storage budget, pass `size_limit_bytes=8_000_000` to `export_cpu_onnx`. The complete uncompressed artifact must be strictly smaller. The released COCO checkpoints produced 7.13 MB for Atto, 11.77 MB for Femto and 13.10 MB for Pico in the [CPU export qualification](https://github.com/roboflow/rf-detr_plus/pull/83). A fine-tuned model can have a different artifact size.

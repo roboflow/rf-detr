@@ -94,9 +94,8 @@ jobs:
 
   export-parity:
     # Unifies executorch/coreml/coreai/executorch-coreml/openvino/litert/onnx, which previously
-    # differed only in: os, python-version, an optional extra dependency-group
-    # (ci-executorch-pin), an optional extra to bolt on (`,coreml`, for the one delegate combo
-    # row), and (onnx alone) whether to collect coverage — now every row does, tagged by its own
+    # differed only in: os, python-version, an optional extra to bolt on (`,coreml`, for the one
+    # delegate combo row), and (onnx alone) whether to collect coverage — now every row does, tagged by its own
     # Codecov flag. `format` drives both the pytest marker
     # (`-m e2e_<format>`) and the pip extra (`.[<format><extra_plus>,...]`) — every row installs
     # and selects tests by that same name; MUST match a marker registered in pyproject.toml.
@@ -122,16 +121,17 @@ jobs:
         # extra_plus — a plain cross product. (onnx's pip extra and marker are both `onnx`,
         # renamed from the old `e2e_onnxruntime` marker so it needs no special-casing here — see
         # .github/CONTRIBUTING.md.) Every other format needs its own os/python-version bracket
-        # (or, for executorch, extra_group/extra_plus), so stays a fully-specified `include` row;
+        # (or, for executorch, extra_plus), so stays a fully-specified `include` row;
         # none of their `format` values overlap this list, so each becomes its own standalone
         # matrix combination rather than merging into one of these 6.
         format: ["openvino", "litert", "onnx"]
         python-version: ["3.10", "3.13"]
         include:
-          # executorch: XNNPACK is plain-CPU, ubuntu-latest is sufficient. 3.10/3.13 bracket
-          # executorch 1.3.1's manylinux_2_28 cp310-cp313 wheel range.
-          - { format: "executorch", extra_group: "ci-executorch-pin", os: "ubuntu-latest", python-version: "3.10" }
-          - { format: "executorch", extra_group: "ci-executorch-pin", os: "ubuntu-latest", python-version: "3.13" }
+          # executorch: XNNPACK is plain-CPU, ubuntu-latest is sufficient. The extra carries the matching torch
+          # range itself (see pyproject.toml): 3.10 resolves torch 2.14, the build version of executorch 1.5, and
+          # 3.13 resolves torch 2.15.
+          - { format: "executorch", os: "ubuntu-latest", python-version: "3.10" }
+          - { format: "executorch", os: "ubuntu-latest", python-version: "3.13" }
           # coreml: coremltools + the CoreML runtime are macOS-only. 3.10/3.13 bracket the
           # coremltools 9.0 wheel range.
           - { format: "coreml", os: "macos-latest", python-version: "3.10" }
@@ -142,14 +142,13 @@ jobs:
           - { format: "coreai", os: "xcode-27", python-version: "3.11" }
           - { format: "coreai", os: "xcode-27", python-version: "3.13" }
           # executorch+coreml delegate: needs macOS (CoreML delegate lowers through coremltools),
-          # single interpreter (3.13, executorch 1.3.1's wheel ceiling) — the plain executorch row
+          # single interpreter (3.13) — the plain executorch row
           # above already brackets the Python range for the runtime itself. Both shards select the
           # same e2e_executorch marker, with complementary filters to keep fixture families together:
           # the serial macOS job reached 95–97% at its 30-minute deadline on consecutive attempts.
           - {
               format: "executorch",
               extra_plus: ",coreml",
-              extra_group: "ci-executorch-pin",
               os: "macos-latest",
               python-version: "3.13",
               shard: "exports",
@@ -158,7 +157,6 @@ jobs:
           - {
               format: "executorch",
               extra_plus: ",coreml",
-              extra_group: "ci-executorch-pin",
               os: "macos-latest",
               python-version: "3.13",
               shard: "parity",
@@ -182,17 +180,8 @@ jobs:
           activate-environment: true
 
       - name: 🚀 Install Packages (${{ matrix.format }}${{ matrix.extra_plus }} extra)
-        if: ${{ !matrix.extra_group }}
         timeout-minutes: 10
         run: uv pip install -e ".[${{ matrix.format }}${{ matrix.extra_plus }},train,augment,cli,visual]" --group tests
-
-      - name: 🚀 Install Packages (${{ matrix.format }}${{ matrix.extra_plus }} extra, pinned)
-        if: matrix.extra_group
-        timeout-minutes: 10
-        # --group ci-executorch-pin (executorch rows only) locks torch and executorch to a pair
-        # whose C10 ABI matches (torch 2.12.x + executorch 1.3.1; see pyproject.toml for the
-        # empirically validated range and removal condition).
-        run: uv pip install -e ".[${{ matrix.format }}${{ matrix.extra_plus }},train,augment,cli,visual]" --group tests --group ${{ matrix.extra_group }}
 
       # Guard against a silently-skipped parity test: each format's test class is gated by a
       # skipif/importorskip on its runtime's availability, so a broken/missing wheel would skip
@@ -308,7 +297,9 @@ jobs:
     # integration jobs this runs on the GPU runner (same as ci-tests-gpu.yml).
     runs-on: Roboflow-GPU-VM-Runner
     # The INT8 end-to-end tests build eight more engines: the job took about 9 minutes before them, 18.5 with them.
-    timeout-minutes: 35
+    # The tests alone took 24.5 minutes on TensorRT 11.4.0.106 (2026-11-15), and 11.5.0.63 ran slower still and hit the
+    # old 35-minute limit, so the limit is 40 to leave room for run-to-run variation on the pinned 11.4.
+    timeout-minutes: 40
     concurrency:
       group: pytest-tensorrt-${{ github.ref }}
       cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -435,7 +426,7 @@ jobs:
       - name: 🧪 Run TensorRT end-to-end parity tests
         # Real ONNX->engine build + GPU inference is heavy; single-worker, opt-in marker (see pyproject.toml
         # `e2e_tensorrt`) — excluded from the ci-tests-gpu.yml default filter (`and not e2e_tensorrt`) so it
-        # only runs here. Selected by marker over tests/, so TestInt8EndToEnd (test_tensorrt_int8.py) runs too.
+        # only runs here. Selected by marker over tests/, so TestInt8EndToEnd (test_tensorrt_end_to_end.py) runs too.
         run: |
           uv run --no-sync pytest tests/ \
             -m e2e_tensorrt -n 1 \
@@ -466,6 +457,110 @@ jobs:
                   if not message.startswith(allowed_prefixes):
                       unexpected.append(f"{case.get('classname')}::{case.get('name')}: {message}")
           assert not unexpected, "non-whitelisted skips in the TensorRT job:\n" + "\n".join(unexpected)
+          print("no unexpected skips")
+        shell: python
+
+      - name: Minimize uv cache
+        continue-on-error: true
+        run: uv cache prune --ci
+
+  executorch-tensorrt-parity:
+    name: ExecuTorch TensorRT parity
+    # format="executorch", backend="tensorrt": Torch-TensorRT builds the engine on a real GPU and the .pte is run through
+    # ExecuTorch's runtime with the TensorRT delegate, so like tensorrt-parity this needs the GPU runner. It is a job of
+    # its own, never a row of tensorrt-parity or of the executorch matrix above: [executorch-tensorrt] pins torch 2.15
+    # and executorch 1.6, so it conflicts with [executorch] (see [tool.uv]
+    # conflicts in pyproject.toml), and each job installs into its own fresh environment.
+    # UNVERIFIED: whether Roboflow-GPU-VM-Runner's driver supports the CUDA 13 torch 2.15 wheels that Torch-TensorRT 2.15
+    # needs, and whether the runner can install them within the install timeout, has not been confirmed here. The
+    # verify steps below fail red on a broken install instead of letting the suite skip, so a runner that cannot host
+    # the stack shows up as a failing job; if it does, move the job to a runner that can or remove it and document that
+    # this backend is validated manually only (see .github/CONTRIBUTING.md).
+    runs-on: Roboflow-GPU-VM-Runner
+    timeout-minutes: 35
+    concurrency:
+      group: pytest-executorch-tensorrt-${{ github.ref }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+    steps:
+      - name: 🖥️ Print GPU information
+        run: nvidia-smi
+      - name: 📥 Checkout the repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: 🐍 Install uv and set Python version
+        uses: astral-sh/setup-uv@61cb8a9741eeb8a550a1b8544337180c0fc8476b # v7.2.0
+        with:
+          version: "0.9.26"
+          # The extra needs Python 3.11 or newer (it is empty on 3.10).
+          python-version: "3.12"
+          activate-environment: true
+
+      - name: 🚀 Install Packages (executorch-tensorrt extra)
+        timeout-minutes: 10
+        # Only this extra, never executorch, tflite, xla or litert: they conflict with it.
+        # train/augment/cli/visual are what the segmentation and keypoint prediction round trips build their models from.
+        # UV_TORCH_BACKEND is unset here, not "auto": any backend routes torch-tensorrt to the PyTorch index, whose newest
+        # build is 2.14.0+cu130, so the extra's torch-tensorrt>=2.15 cannot resolve there. PyPI carries torch 2.15 and
+        # Torch-TensorRT 2.15, both built for CUDA 13, which is what this job needs; the workflow-level "cpu" default
+        # is wrong for it as well.
+        run: env -u UV_TORCH_BACKEND uv pip install -e ".[executorch-tensorrt,train,augment,cli,visual]" --group tests
+
+      - name: 🔎 Verify the Torch-TensorRT and ExecuTorch imports
+        # The test module's skip gate only checks that torch_tensorrt is installed, so a missing exporter or delegate
+        # package would skip (false green) or fail late. Import every package the export and the run need, here.
+        run: |
+          import torch
+          import torch_tensorrt
+          import torch_tensorrt.executorch
+          import torch_tensorrt_executorch_runtime  # noqa: F401  # registers the TensorRT delegate with ExecuTorch
+
+          from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
+          from rfdetr.export.imports import _IS_TORCH_TENSORRT_INSTALLED
+
+          assert torch.cuda.is_available(), "no CUDA device visible to torch"
+          assert _IS_EXECUTORCH_AVAILABLE, "executorch installed but not detected as available"
+          assert _IS_TORCH_TENSORRT_INSTALLED, "torch_tensorrt installed but not detected as available"
+          print(f"torch {torch.__version__} / torch_tensorrt {torch_tensorrt.__version__} import OK")
+        shell: python
+
+      - name: 📦 Restore shared model weights
+        uses: ./.github/actions/cache-model-weights
+        with:
+          save: "false"
+
+      - name: 🧪 Run ExecuTorch TensorRT end-to-end parity tests
+        # Real torch.export + Torch-TensorRT engine build + ExecuTorch runtime inference is heavy; single-worker, opt-in
+        # marker (see pyproject.toml `e2e_executorch_tensorrt`) — excluded from the ci-tests-gpu.yml default filter
+        # (`and not e2e_executorch_tensorrt`) so it only runs here.
+        run: |
+          uv run --no-sync pytest tests/ \
+            -m e2e_executorch_tensorrt -n 1 \
+            --timeout=600 \
+            --durations=20 \
+            -rs \
+            --junitxml="${RUNNER_TEMP}/executorch-tensorrt-e2e.xml"
+
+      - name: 🔎 Fail on unexpected skips
+        # A skipped parity test is a false green. The only skip this runner may produce is the pre-Ampere one: the T4
+        # runner is compute capability 7.5, below the 8.0 that TensorRT 11.4's attention layer needs, so on it every
+        # test skips and the job proves only that the extra installs and imports. A missing extra, a missing delegate or
+        # no CUDA device mean coverage silently vanished, so fail red. The suite runs for real only on an Ampere or
+        # newer runner.
+        run: |
+          import os
+          import xml.etree.ElementTree as ET
+
+          allowed_prefixes = ("TensorRT 11 attention needs compute capability 8.0 or newer",)
+          tree = ET.parse(os.path.join(os.environ["RUNNER_TEMP"], "executorch-tensorrt-e2e.xml"))
+          cases = list(tree.iter("testcase"))
+          assert cases, "no ExecuTorch TensorRT test was collected"
+          unexpected = [
+              f"{case.get('classname')}::{case.get('name')}: {skipped.get('message') or ''}"
+              for case in cases
+              for skipped in case.iter("skipped")
+              if not (skipped.get("message") or "").startswith(allowed_prefixes)
+          ]
+          assert not unexpected, "unexpected skips in the ExecuTorch TensorRT job:\n" + "\n".join(unexpected)
           print("no unexpected skips")
         shell: python
 

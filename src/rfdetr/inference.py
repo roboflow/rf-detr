@@ -20,12 +20,11 @@ from rfdetr._prediction.core import PredictionContext, predict
 from rfdetr._prediction.types import _PredictionInput, _ThresholdInput
 from rfdetr.config import TrainConfig
 from rfdetr.models import PostProcess, build_model
-from rfdetr.models.backbone.backbone import Backbone
-from rfdetr.models.backbone.dinov2 import DinoV2
 from rfdetr.models.lwdetr import LWDETR
-from rfdetr.models.weights import apply_lora, load_pretrain_weights
+from rfdetr.models.weights import adapt_input_channels, apply_lora, load_pretrain_weights
 
 if TYPE_CHECKING:
+    from rfdetr._prediction.tta import TTAConfig
     from rfdetr._prediction.types import _PredictionOutput, _PredictionResult
     from rfdetr.config import ModelConfig
     from rfdetr.detr import RFDETR
@@ -70,9 +69,12 @@ class RFDETRInference:
         | TFLite, LiteRT | ``auto``, ``cpu`` |
         | CoreML | ``auto`` (all compute units), ``cpu`` (CPU only), ``cpu_and_gpu``, ``cpu_and_ne`` (preferences) |
         | Core AI | ``auto``, ``cpu``; ``gpu`` and ``ane`` are refused as mere preferences |
-        | ExecuTorch | By delegate: XNNPACK ``auto``/``cpu``, CoreML ``auto``, QNN ``auto``/``qnn`` |
+        | ExecuTorch | XNNPACK ``auto``/``cpu``, CoreML ``auto``, QNN ``auto``/``qnn``, TensorRT ``auto``/``cuda`` |
 
         The CoreML ``cpu_and_gpu`` and ``cpu_and_ne`` values are preferences; Core ML may still run on the CPU.
+
+        The ExecuTorch TensorRT delegate runs on the current CUDA device: ``auto`` and ``cuda`` mean that device, and
+        ``cuda:N`` is accepted only when ``N`` is the current CUDA device; any other index is refused.
 
         A live model owns its device policy. Omit ``device`` for that source;
         configure the native model itself to select its device.
@@ -222,6 +224,7 @@ class RFDETRInference:
         batch: int | None = None,
         vid_stride: int = 1,
         stream_buffer: bool = False,
+        tta: TTAConfig | None = None,
     ) -> _PredictionOutput | Generator[_PredictionResult, None, None]:
         """Predict images, video, and live sources through the shared prediction pipeline.
 
@@ -256,6 +259,14 @@ class RFDETRInference:
                 runtimes for individual live sources.
             vid_stride: Read every Nth video frame.
             stream_buffer: Queue live frames instead of keeping the latest frame.
+            tta: Test-time augmentation views to fuse, a :class:`~rfdetr._prediction.tta.TTAConfig` with sub-patch
+                ``shift`` views and ``zoom`` views. ``None``, the default, runs the plain
+                prediction, and ``TTAConfig()`` runs the plain image and three zoomed copies. Each view is one more
+                forward pass, on a canvas at least as large as the image, so the cost grows with the number of views
+                and, for zoom, with the canvas area; the views are batched on CUDA and run one at a time elsewhere. Only
+                a predictor built from a live model or a checkpoint path accepts it: a snapshot from ``inference()`` and
+                an exported runtime fix their resolution or batch size and refuse it before any image is read. Keypoint
+                models are refused.
 
         Returns:
             A generator with stream enabled, otherwise a scalar image result or a list.
@@ -289,6 +300,7 @@ class RFDETRInference:
             vid_stride=vid_stride,
             stream_buffer=stream_buffer,
             prepare_ahead=self._owns_source,
+            tta=tta,
         )
 
 
@@ -349,32 +361,6 @@ class ModelContext:
 _ModelContext = ModelContext  # backward-compat alias
 
 
-def _adapt_input_conv(num_channels: int, conv_weight: torch.Tensor) -> torch.Tensor:
-    """Adapt a 3-channel pretrained conv weight tensor to *num_channels* input channels.
-
-    When ``num_channels == 3``: returns the weight unchanged. When ``num_channels == 1``: averages weights across the
-    original 3 channels.
-    Otherwise (``num_channels != 1`` and ``num_channels != 3``): tiles the 3-channel
-    pattern and scales by ``3 / num_channels`` to preserve activation magnitude.
-
-    Args:
-        num_channels: Target number of input channels.
-        conv_weight: Original weight tensor of shape ``[out_ch, 3, H, W]``.
-
-    Returns:
-        Adapted weight tensor of shape ``[out_ch, num_channels, H, W]``.
-    """
-    if num_channels == 3:
-        return conv_weight
-    if num_channels == 1:
-        return conv_weight.mean(dim=1, keepdim=True)
-    # General case: tile and scale
-    repeats = (num_channels + 2) // 3
-    weight_out = torch.cat([conv_weight] * repeats, dim=1)[:, :num_channels]
-    weight_out = weight_out * (3.0 / num_channels)
-    return weight_out
-
-
 def _build_model_context(model_config: ModelConfig, *, trust_checkpoint: bool = False) -> ModelContext:
     """Build a ModelContext from ModelConfig without using legacy main.py:Model.
 
@@ -431,27 +417,7 @@ def _build_model_context(model_config: ModelConfig, *, trust_checkpoint: bool = 
         apply_lora(nn_model)
 
     # Adapt patch-embedding projection for non-RGB channel counts
-    if model_config.num_channels != 3:
-        import copy
-
-        # Channel adaptation rewrites DINOv2's patch embedding. Dispatch on the encoder name, as
-        # Backbone._build_encoder does: with backbone_lora the encoder is a PEFT wrapper, not a DinoV2 instance.
-        if model_config.encoder.split("_")[0] != "dinov2":
-            raise ValueError(
-                f"num_channels={model_config.num_channels} is supported for DINOv2 encoders only, "
-                f"not encoder={model_config.encoder!r}."
-            )
-        backbone = cast(Backbone, nn_model.backbone[0])
-        # A PEFT wrapper forwards attribute access to the wrapped DinoV2.
-        encoder = cast(DinoV2, backbone.encoder)
-        proj = encoder.encoder.embeddings.patch_embeddings.projection
-        new_proj = copy.deepcopy(proj)
-        new_proj.in_channels = model_config.num_channels
-        new_weight = _adapt_input_conv(model_config.num_channels, proj.weight)
-        new_proj.weight = torch.nn.Parameter(new_weight)
-        new_proj.weight.requires_grad = proj.weight.requires_grad
-        encoder.encoder.embeddings.patch_embeddings.projection = new_proj
-        encoder.encoder.embeddings.patch_embeddings.num_channels = model_config.num_channels
+    adapt_input_channels(nn_model, model_config.num_channels, model_config.encoder)
 
     device = torch.device(args.device)
     # Keep the model on CPU here; predict() / export() move it lazily, while inference() moves only its snapshot.

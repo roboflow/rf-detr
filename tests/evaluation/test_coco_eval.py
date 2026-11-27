@@ -473,3 +473,111 @@ def test_patched_pycocotools_summarize_raises_on_unknown_iou_type(mocker) -> Non
 
     with pytest.raises(ValueError, match="Unknown iou type custom"):
         coco_eval_module.patched_pycocotools_summarize(mock_eval)
+
+
+def _make_bbox_gt(annotation_ids: list, coco_cls: type = COCO) -> COCO:
+    """Build an in-memory ground truth with one 40x40 box per image, numbering images from 1.
+
+    Args:
+        annotation_ids: Annotation id of each box, in image order.
+        coco_cls: COCO API class that indexes the ground truth.
+
+    Returns:
+        Indexed ground truth with ``len(annotation_ids)`` images and annotations.
+
+    Examples:
+        >>> coco_gt = _make_bbox_gt([0, 5])
+        >>> sorted(coco_gt.anns)
+        [0, 5]
+    """
+    coco_gt = coco_cls()
+    coco_gt.dataset = {
+        "images": [{"id": index + 1, "width": 100, "height": 100} for index in range(len(annotation_ids))],
+        "categories": [{"id": 1, "name": "object"}],
+        "annotations": [
+            {
+                "id": annotation_id,
+                "image_id": index + 1,
+                "category_id": 1,
+                "bbox": [10.0, 10.0, 40.0, 40.0],
+                "area": 1600.0,
+                "iscrowd": 0,
+            }
+            for index, annotation_id in enumerate(annotation_ids)
+        ],
+    }
+    coco_gt.createIndex()
+    return coco_gt
+
+
+def _perfect_bbox_predictions(num_images: int) -> dict:
+    """Return one perfect detection per image for a ground truth made by ``_make_bbox_gt``.
+
+    Args:
+        num_images: Number of images, numbered from 1.
+
+    Returns:
+        Evaluator predictions keyed by image id.
+
+    Examples:
+        >>> sorted(_perfect_bbox_predictions(2))
+        [1, 2]
+    """
+    return {
+        image_id: {
+            "boxes": torch.tensor([[10.0, 10.0, 50.0, 50.0]]),
+            "scores": torch.tensor([0.99]),
+            "labels": torch.tensor([1]),
+        }
+        for image_id in range(1, num_images + 1)
+    }
+
+
+class TestZeroAnnotationId:
+    """Ground-truth annotation id 0 is scored by every iou type instead of counting as a false positive."""
+
+    @pytest.mark.parametrize("coco_cls", [COCO, pycoco.COCO], ids=["faster-coco-eval", "pycocotools"])
+    def test_bbox_perfect_prediction_for_annotation_id_zero_scores_full_ap(self, coco_cls: type) -> None:
+        """A perfect box for annotation 0 scores AP 1.0, as for a YOLO-built pycocotools ground truth."""
+        coco_gt = _make_bbox_gt([0, 1, 2, 3], coco_cls)
+        evaluator = CocoEvaluator(coco_gt, ["bbox"], log_summary=False)
+
+        evaluator.update(_perfect_bbox_predictions(4))
+        evaluator.synchronize_between_processes()
+        evaluator.accumulate()
+
+        assert evaluator.coco_eval["bbox"].stats[0] == pytest.approx(1.0, abs=1e-3)
+
+    def test_ids_without_zero_stay_unchanged(self) -> None:
+        """A ground truth with no id 0 reaches the evaluator with its ids untouched."""
+        coco_gt = _make_bbox_gt([1, 2, 3])
+
+        evaluator = CocoEvaluator(coco_gt, ["bbox"], log_summary=False)
+
+        assert sorted(evaluator.coco_gt.anns) == [1, 2, 3]
+
+    def test_id_zero_gets_one_above_the_largest_id(self) -> None:
+        """With gaps in the numbering the fresh id is the largest id plus one, and no other id moves."""
+        coco_gt = _make_bbox_gt([0, 5, 9])
+
+        evaluator = CocoEvaluator(coco_gt, ["bbox"], log_summary=False)
+
+        assert sorted(evaluator.coco_gt.anns) == [5, 9, 10]
+
+    def test_numpy_integer_ids_are_renumbered_like_python_integers(self) -> None:
+        """NumPy ids count both as zero and as the largest id, so no annotation collapses into another."""
+        coco_gt = _make_bbox_gt([0, 1])
+        coco_gt.dataset["annotations"][0]["id"] = np.int64(0)
+        coco_gt.dataset["annotations"][1]["id"] = np.int64(1)
+
+        evaluator = CocoEvaluator(coco_gt, ["bbox"], log_summary=False)
+
+        assert sorted(evaluator.coco_gt.anns) == [1, 2]
+
+    def test_callers_ground_truth_keeps_id_zero(self) -> None:
+        """Renumbering touches the evaluator's own copy; the caller's ground truth keeps id 0."""
+        coco_gt = _make_bbox_gt([0, 1])
+
+        CocoEvaluator(coco_gt, ["bbox"], log_summary=False)
+
+        assert sorted(coco_gt.anns) == [0, 1]

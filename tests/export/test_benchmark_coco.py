@@ -27,9 +27,11 @@ from rfdetr.export._benchmark import (
     _download,
     evaluate_coco_ap,
     evaluate_coco_map,
+    evaluate_coco_predictions,
     fetch_coco_val2017,
     select_coco_val_ids,
 )
+from tests._oriented_photo import upright_reference, write_oriented_photo
 
 #: Ground truth per image: one box in pixel ``xywh`` and its sparse COCO category ID.
 _GT_BOXES = {1: ([8.0, 8.0, 32.0, 24.0], 18), 2: ([20.0, 4.0, 16.0, 40.0], 90), 3: ([0.0, 0.0, 30.0, 30.0], 1)}
@@ -468,6 +470,59 @@ class TestDownload:
         assert urlopen.call_args.kwargs["timeout"] > 0
 
 
+class TestEvaluateCocoPredictions:
+    """Score stored predictions on the whole subset or on parts of it, without a model or an image decode."""
+
+    @staticmethod
+    def _perfect_predictions() -> dict[int, sv.Detections]:
+        """Return the ground-truth detections of every synthetic image, keyed by image ID.
+
+        Examples:
+            >>> sorted(TestEvaluateCocoPredictions._perfect_predictions())
+            [1, 2, 3]
+        """
+        return {image_id: _gt_detections(Image.new("RGB", size)) for image_id, size in _IMAGE_SIZES.items()}
+
+    def test_stored_predictions_score_as_the_run_did(self, tmp_path: Path) -> None:
+        """Scoring what a run returned gives the AP :func:`evaluate_coco_ap` gives the run itself."""
+        subset = _write_coco(tmp_path)
+        stored = evaluate_coco_predictions(self._perfect_predictions(), subset, "detect")
+        live = evaluate_coco_ap(_gt_detections, subset, "detect", progress=False)
+        assert stored == live
+
+    def test_scores_only_the_requested_images(self, tmp_path: Path) -> None:
+        """A part of the subset is scored on its own: a miss outside it does not count, one inside it does."""
+        subset = _write_coco(tmp_path)
+        predictions = self._perfect_predictions() | {3: sv.Detections.empty()}
+        whole = evaluate_coco_predictions(predictions, subset, "detect")
+        part = evaluate_coco_predictions(predictions, subset, "detect", image_ids=[1, 2])
+        assert (part.n_images, part.box_ap) == (2, pytest.approx(1.0))
+        assert (whole.n_images, whole.box_ap) == (3, pytest.approx(2 / 3))
+
+    def test_all_empty_predictions_score_zero_without_an_evaluator(self, tmp_path: Path, mocker: MockerFixture) -> None:
+        evaluator = mocker.patch("rfdetr.evaluation.coco_eval.CocoEvaluator", autospec=True)
+        empty = {image_id: sv.Detections.empty() for image_id in _IMAGE_SIZES}
+        result = evaluate_coco_predictions(empty, _write_coco(tmp_path), "detect")
+        assert (result.box_ap, result.box_ap50, result.task_ap, result.n_images) == (0.0, 0.0, None, 3)
+        evaluator.assert_not_called()
+
+    def test_missing_prediction_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(KeyError):
+            evaluate_coco_predictions({1: sv.Detections.empty()}, _write_coco(tmp_path), "detect")
+
+    @pytest.mark.parametrize("empty", [False, True])
+    def test_duplicate_image_ids_are_refused(self, tmp_path: Path, empty: bool) -> None:
+        """Reject repeated IDs before scoring so the reported count reflects the evaluated set."""
+        subset = _write_coco(tmp_path)
+        predictions = {1: sv.Detections.empty()} if empty else self._perfect_predictions()
+        with pytest.raises(ValueError, match="image_ids must be unique"):
+            evaluate_coco_predictions(predictions, subset, "detect", image_ids=[1, 1])
+
+    def test_unknown_task_is_refused(self, tmp_path: Path) -> None:
+        with pytest.raises(ValueError, match="Unknown COCO task"):
+            evaluate_coco_predictions(self._perfect_predictions(), _write_coco(tmp_path), "pose")  # type: ignore[arg-type]
+
+
 class TestEvaluateCocoAp:
     """Score public prediction results with the real COCO evaluator, without downloads."""
 
@@ -685,3 +740,31 @@ class TestEvaluateCocoMap:
 
         assert (result.map50_95, result.n_images) == (0.0, 0)
         logger.warning.assert_not_called()
+
+
+class TestCocoImagesAreUpright:
+    """The scoring helpers hand the runtime each photo upright, as ``predict(path)`` and the training readers read
+    it."""
+
+    @pytest.mark.parametrize(
+        "evaluate",
+        [
+            pytest.param(lambda run, subset: evaluate_coco_ap(run, subset, "detect", progress=False), id="ap"),
+            pytest.param(lambda run, subset: evaluate_coco_map(run, subset, progress=False), id="map"),
+        ],
+    )
+    def test_runtime_receives_a_tagged_photo_upright(
+        self, tmp_path: Path, mocker: MockerFixture, evaluate: Callable[[Mock, CocoValSubset], object]
+    ) -> None:
+        """A photo stored 80 x 64 with EXIF orientation 6 reaches the runtime as ``ImageOps.exif_transpose`` shows it.
+
+        The annotation file records it 64 x 80, the upright size its boxes are drawn on.
+        """
+        subset = _write_coco(tmp_path)
+        photo = subset.images_dir / "000000000002.jpg"
+        write_oriented_photo(photo, 6, width=80, height=64)
+        run = mocker.Mock(return_value=sv.Detections.empty())
+
+        evaluate(run, subset)
+
+        np.testing.assert_array_equal(np.asarray(run.call_args_list[1].args[0]), upright_reference(photo))

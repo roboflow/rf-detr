@@ -23,6 +23,7 @@ guarantee across versions. Formerly duplicated per export format (see the remove
 from __future__ import annotations
 
 import gc
+import itertools
 import json
 import os
 import platform
@@ -30,7 +31,7 @@ import shutil
 import subprocess
 import threading
 import time
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
@@ -47,6 +48,7 @@ from tqdm.auto import tqdm
 
 from rfdetr.assets.coco_classes import COCO_CLASSES
 from rfdetr.export._runtime.decode import decode_detections
+from rfdetr.utilities.exif import exif_orientation, upright_image
 from rfdetr.utilities.logger import get_logger
 
 if TYPE_CHECKING:
@@ -623,6 +625,60 @@ def time_folder(predictor: Any, folder: Path, n_images: int, repeats: int, **pre
     return n_images / sorted(seconds)[len(seconds) // 2]
 
 
+def time_predict_call(
+    predictor: Any,
+    images: Sequence[Any],
+    batch_size: int,
+    *,
+    label: str,
+    device: str | torch.device,
+    warmup: int,
+    runs: int,
+    **predict_kwargs: Any,
+) -> dict[str, float]:
+    """Time one ``predictor.predict`` call of ``batch_size`` distinct images and return its median and 95th percentile.
+
+    The images are cut into consecutive full batches and the calls cycle through them, so every timed call sees images
+    the previous call did not and a decode or preprocessing cache cannot flatter the result. A trailing partial batch is
+    never used.
+
+    Args:
+        predictor: Anything with a ``predict`` method that takes a list of images.
+        images: Pool of images to cycle through, at least *batch_size* long.
+        batch_size: Images in every call.
+        label: Name for the timing row, passed to :func:`measure_latency`.
+        device: Device the predictor runs on, passed to :func:`measure_latency` to pick the timer.
+        warmup: Untimed warm-up calls.
+        runs: Timed calls.
+        **predict_kwargs: Keywords passed to every ``predict`` call.
+
+    Returns:
+        ``{"call_ms": median, "call_p95_ms": 95th percentile}`` of the time of one call, in milliseconds.
+
+    Raises:
+        ValueError: If *batch_size* is not positive or *images* holds less than one full batch.
+
+    Examples:
+        >>> class _Predictor:
+        ...     def predict(self, images, **kwargs):
+        ...         return [None] * len(images)
+        >>> timing = time_predict_call(
+        ...     _Predictor(), list(range(6)), 2, label="fake", device="cpu", warmup=1, runs=3, threshold=0.5
+        ... )
+        >>> sorted(timing)
+        ['call_ms', 'call_p95_ms']
+    """
+    if not 1 <= batch_size <= len(images):
+        raise ValueError(f"The image pool holds {len(images)} images, which is not a full batch of {batch_size}.")
+    batches = itertools.cycle([images[i : i + batch_size] for i in range(0, len(images) - batch_size + 1, batch_size)])
+
+    def call() -> object:
+        return predictor.predict(list(next(batches)), **predict_kwargs)
+
+    timing = measure_latency(call, label=label, device=device, warmup=warmup, runs=runs)
+    return {"call_ms": timing.median_ms, "call_p95_ms": timing.p95_ms}
+
+
 def export_cached(model: Any, output_dir: Path, pattern: str, **export_kwargs: Any) -> Path:
     """Reuse the artifact already exported into *output_dir*, or export it with ``model.export``.
 
@@ -1160,7 +1216,8 @@ def evaluate_coco_ap(
     for image_id in tqdm(subset.image_ids, desc="COCO AP", disable=not progress):
         file_name = coco_gt.loadImgs([image_id])[0]["file_name"]
         with Image.open(_coco_image_path(subset.images_dir, file_name)) as image:
-            rgb = image.convert("RGB")
+            # Upright, as predict(path) and the training readers decode it, so the scores match.
+            rgb = upright_image(image, exif_orientation(image)).convert("RGB")
         prediction = _coco_ap_prediction(run(rgb), task)
         if evaluator is None:
             if not prediction:
@@ -1178,6 +1235,20 @@ def evaluate_coco_ap(
             )
         task_zero = None if task == "detect" else 0.0
         return CocoApResult(0.0, 0.0, task_zero, task_zero, len(subset.image_ids))
+    return _accumulate_ap(evaluator, task_iou, len(subset.image_ids))
+
+
+def _accumulate_ap(evaluator: Any, task_iou: str | None, n_images: int) -> CocoApResult:
+    """Accumulate a filled COCO evaluator into a :class:`CocoApResult`.
+
+    Args:
+        evaluator: A ``CocoEvaluator`` that has seen every image.
+        task_iou: ``"segm"`` or ``"keypoints"`` for a task AP, ``None`` for detection.
+        n_images: Number of images the evaluator saw.
+
+    Returns:
+        Box AP and AP50, plus the task's, each clamped at 0 (COCO reports -1 for an undefined AP).
+    """
     evaluator.synchronize_between_processes()
     evaluator.accumulate()
     stats = evaluator.coco_eval["bbox"].stats
@@ -1187,8 +1258,62 @@ def evaluate_coco_ap(
         box_ap50=max(0.0, float(stats[1])),
         task_ap=max(0.0, float(task_stats[0])) if task_stats is not None else None,
         task_ap50=max(0.0, float(task_stats[1])) if task_stats is not None else None,
-        n_images=len(subset.image_ids),
+        n_images=n_images,
     )
+
+
+def evaluate_coco_predictions(
+    predictions: Mapping[int, sv.Detections | sv.KeyPoints],
+    subset: CocoValSubset,
+    task: Literal["detect", "segment", "keypoints"],
+    *,
+    image_ids: Sequence[int] | None = None,
+) -> CocoApResult:
+    """Score stored public predictions, without running a model or decoding an image.
+
+    :func:`evaluate_coco_ap` scores a run as it goes. This scores predictions kept from an earlier run, so one run can
+    be scored on the whole subset and on parts of it, for example to see how far AP moves between disjoint folds.
+
+    Args:
+        predictions: One prediction per image ID, as ``predict`` returned it.
+        subset: Annotations from :func:`fetch_coco_val2017`; its ``image_ids`` are the default images to score.
+        task: The predictor's ``runtime_info["task"]``: detect, segment or keypoints.
+        image_ids: The unique images to score, each with an entry in ``predictions``. Defaults to ``subset.image_ids``.
+
+    Returns:
+        The same fields as :func:`evaluate_coco_ap` for those images. An all-empty set scores zero.
+
+    Raises:
+        ImportError: If the optional ``train`` extra's COCO evaluation dependencies are unavailable.
+        KeyError: If an image to score has no entry in ``predictions``.
+        ValueError: If the task or a result type is invalid, or if image IDs repeat.
+
+    Examples:
+        Skipped because it needs a fetched COCO subset and stored predictions.
+
+        >>> evaluate_coco_predictions(stored, subset, "detect", image_ids=subset.image_ids[:1000])  # doctest: +SKIP
+        CocoApResult(box_ap=0.41, box_ap50=0.58, task_ap=None, task_ap50=None, n_images=1000)
+    """
+    from faster_coco_eval import COCO
+
+    from rfdetr.evaluation.coco_eval import CocoEvaluator
+
+    if task not in ("detect", "segment", "keypoints"):
+        raise ValueError(f"Unknown COCO task {task!r}.")
+    task_iou = {"segment": "segm", "keypoints": "keypoints"}.get(task)
+    annotations_path = subset.keypoints_annotations_path if task == "keypoints" else subset.annotations_path
+    ids = list(subset.image_ids if image_ids is None else image_ids)
+    if len(ids) != len(set(ids)):
+        raise ValueError("image_ids must be unique.")
+    converted = {image_id: _coco_ap_prediction(predictions[image_id], task) for image_id in ids}
+    if not any(converted.values()):
+        task_zero = None if task == "detect" else 0.0
+        return CocoApResult(0.0, 0.0, task_zero, task_zero, len(ids))
+    evaluator = CocoEvaluator(
+        COCO(str(annotations_path)), ["bbox"] if task_iou is None else ["bbox", task_iou], log_summary=False
+    )
+    evaluator.update(converted)
+    return _accumulate_ap(evaluator, task_iou, len(ids))
 
 
 def evaluate_coco_map(
@@ -1201,9 +1326,10 @@ def evaluate_coco_map(
 ) -> CocoMapResult:
     """Score one runtime's box mAP on a COCO val2017 subset, one image at a time (batch 1).
 
-    *run* receives each image as an RGB PIL image and returns either the raw ``(dets, labels)`` arrays (normalized
-    ``cxcywh`` boxes and class logits, with or without a leading batch axis of one) or already-decoded
-    :class:`supervision.Detections` in pixel ``xyxy`` (the ``RFDETR.predict()`` path). Raw outputs are decoded with
+    *run* receives each image as an RGB PIL image, upright for its EXIF orientation, and returns either the raw
+    ``(dets, labels)`` arrays (normalized ``cxcywh`` boxes and class logits, with or without a leading batch axis of
+    one) or already-decoded :class:`supervision.Detections` in pixel ``xyxy``
+    (the ``RFDETR.predict()`` path). Raw outputs are decoded with
     :func:`~rfdetr.export._runtime.decode.decode_detections` at a 0.001 score floor.
 
     Args:
@@ -1238,7 +1364,8 @@ def evaluate_coco_map(
     for image_id in tqdm(subset.image_ids, desc="COCO mAP", disable=not progress):
         file_name = coco_gt.loadImgs([image_id])[0]["file_name"]
         with Image.open(_coco_image_path(subset.images_dir, file_name)) as image:
-            rgb = image.convert("RGB")
+            # Upright, as predict(path) and the training readers decode it, so the scores match.
+            rgb = upright_image(image, exif_orientation(image)).convert("RGB")
         records += _coco_records(run(rgb), image_id, rgb.size, num_select, background_class_id)
     if not records:
         if subset.image_ids:
