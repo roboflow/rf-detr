@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-13T09:23:01">
+  <meta property="article:modified_time" content="2026-11-27T18:44:17">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-13T09:23:01",
+    "dateModified": "2026-11-27T18:44:17",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -1284,6 +1284,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-ellipsis">
       
         Where each number comes from
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-ap-is-computed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How AP is computed
       
     </span>
   </a>
@@ -3375,6 +3386,17 @@ APIs described here may change or may never ship in a release, so use the <a hre
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#how-ap-is-computed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How AP is computed
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -3501,6 +3523,9 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p class="admonition-title">Metric definitions</p>
 <p><strong>AP50</strong>: Detection accuracy at IoU threshold &gt;= 0.50. <strong>AP50:95</strong>: Mean accuracy averaged over IoU thresholds 0.50 to 0.95 (step 0.05) — the primary COCO metric. <strong>Params (M)</strong>: Deployment (fused) <code>nn.Module</code> parameter count (<code>model.parameters()</code>) in millions, excluding training-only branches and folded normalization layers, and counting model parameters rather than the raw tensor count of the saved checkpoint. Rows marked † use the authors' reported counts rather than SAB-measured values. Latency measured on NVIDIA T4, TensorRT 10.4, CUDA 12.4, FP16, batch size 1, with 200 ms thermal buffer between passes to reduce GPU thermal variance.</p>
 </div>
+<h3 id="how-ap-is-computed">How AP is computed<a class="headerlink" href="#how-ap-is-computed" title="Permanent link">&para;</a></h3>
+<p>A prediction counts as a hit when its box overlaps an unmatched ground-truth box of the same class in the same image by at least the IoU threshold. Detections are processed in descending score order, and each ground-truth object can be matched only once; duplicate detections count as misses. For one class, detections are ranked by score and precision is plotted against recall after each one; the area under the interpolated precision-recall curve illustrates average precision (AP) at the threshold. AP50 uses a threshold of 0.50, AP50:95 averages ten thresholds from 0.50 to 0.95, and mAP averages the result over classes.</p>
+<p><img alt="Animated, three panels. Panel 1: three sample images, A with two objects and three detections, B with one object and two detections, C with one object and no detections, with ground-truth and scored predicted boxes. Panel 2: the five detections are taken in score order at IoU 0.50; each gets an IoU, a hit or miss verdict, and a precision and recall that add one point to the precision-recall curve (a duplicate box and a box in the wrong place are misses). The area under the smoothed curve is an AP of about 0.69, and the dog in image C is never found, so recall stops at 0.75. Panel 3: the same computation at ten IoU thresholds from 0.50 to 0.95 gives ten bars that fall as the threshold rises, their mean is AP50:95, and averaging over classes gives mAP." loading="lazy" src="../../assets/how-map-works.svg" /></p>
 <div class="admonition note">
 <p class="admonition-title">License note</p>
 <p>YOLOv8, YOLO11 and YOLO26 are released under AGPL-3.0. In practice, using them in a commercial product or service, including one users reach over a network, means open-sourcing your application code under AGPL-3.0 or buying a commercial license. Deploying on Roboflow includes a commercial license for these models for every user; commercial self-hosting is an Enterprise add-on (<a href="https://roboflow.com/ultralytics">details</a>). Need a permissive license? RF-DETR Nano to Large detection, every RF-DETR-Seg size and RF-DETR Keypoint are Apache 2.0.</p>
@@ -4249,7 +4274,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 13, 2026 09:23:01 UTC">2026-11-13 09:23:01</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 27, 2026 18:44:17 UTC">2026-11-27 18:44:17</span>
   </span>
 
     

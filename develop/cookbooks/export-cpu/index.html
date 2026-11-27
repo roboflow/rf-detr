@@ -101,7 +101,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-25T10:28:58">
+  <meta property="article:modified_time" content="2026-11-27T18:43:47">
   
   <script type="application/ld+json">
   {
@@ -116,7 +116,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-25T10:28:58",
+    "dateModified": "2026-11-27T18:43:47",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -4323,11 +4323,9 @@ provider, and OpenVINO IR.</p>
 <a href="https://github.com/roboflow/rf-detr/blob/develop/src/rfdetr/export/registry.py"><code>src/rfdetr/export/registry.py</code></a>
 for which formats can hold one artifact across batch sizes and which cannot: ONNX bakes a
 <em>dynamic</em> batch axis (<code>supports_dynamic_batch=True</code>), so one <code>.onnx</code> file serves both rows below;
-OpenVINO's converted IR already has a dynamic input shape (<code>[?,?,?,?]</code>) — a batch-1 IR runs batch
-4 with identical outputs — so it needs no separate dynamic-batch mode either. This notebook still
-exports one OpenVINO IR per batch size only to mirror the per-batch artifacts the other cookbooks'
-fixed-shape formats need. PyTorch needs no export step and trivially takes either batch as a
-<code>(N, C, H, W)</code> tensor.</p>
+OpenVINO's default IR also supports variable batches at its traced spatial resolution. This notebook
+exports an OpenVINO IR per batch to match the other cookbooks. PyTorch needs no export step and
+trivially takes either batch as a <code>(N, C, H, W)</code> tensor.</p>
 <blockquote>
 <p><strong>Not covered here</strong>: NVIDIA GPU deployment (see the <a href="../export-cuda/">CUDA cookbook</a>),
 mobile/edge formats — TFLite, LiteRT, ExecuTorch's XNNPACK backend (see the
@@ -5180,9 +5178,9 @@ exported IR, which matters if the deployment box has no NVIDIA GPU at all. See t
 <a href="https://rfdetr.roboflow.com/exports/openvino/">OpenVINO export docs</a>.</p>
 <h3 id="openvino-fp32-ir">OpenVINO (fp32 IR)<a class="anchor-link" href="#openvino-fp32-ir">¶</a></h3><p><code>openvino_precision="float32"</code> overrides OpenVINO's default FP16 weight compression — this
 keeps the IR at full precision for tight parity with the fp32 ONNX/PyTorch baseline above; the fp16 section below drops it
-for a smaller file. The converted IR has a dynamic input shape (<code>[?,?,?,?]</code>), so one export would serve both batches;
-this loop still exports one IR per batch size (<code>batch_size=b</code> only sets the dummy input it is traced with) so every
-batch row loads an artifact built for it, as the fixed-shape formats in the other cookbooks must.</p>
+for a smaller file. The IR accepts variable batches at the traced spatial resolution, including overrides set
+with <code>shape</code>. Set <code>openvino_static_shape=True</code> to export a fixed batch. This loop exports
+one IR per batch size for the corresponding benchmark row.</p>
 <p><code>runtime_options={"config": {"INFERENCE_NUM_THREADS": CPU_THREADS}}</code> pins OpenVINO's thread pool to the same count as
 every other runtime here. <code>RFDETRInference</code> computes OpenVINO in f32 by default (<code>inference_precision</code>), because earlier
 <code>rfdetr</code> versions compiled at the device's default precision instead — f16 on ARM, likely bf16 on x86 CPUs with AMX —
@@ -6411,7 +6409,7 @@ option.</li>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 25, 2026 10:28:58 UTC">2026-11-25 10:28:58</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 27, 2026 18:43:47 UTC">2026-11-27 18:43:47</span>
   </span>
 
     

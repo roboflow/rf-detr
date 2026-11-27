@@ -3,24 +3,24 @@
   <title id="title">One trained network, many model sizes</title>
   <desc id="desc">Five architecture knobs (patch size, resolution, number of attention windows, decoder layers and queries) are sampled at random during a single training run. Afterwards, every setting can be evaluated without retraining; in the RF-DETR paper, the Nano, Small, Medium and Large sizes are points on the resulting accuracy-latency curve. The grey dots are illustrative, not measured.</desc>
   <style>
-    text { font-family: "CMU Serif", "Latin Modern Roman", Georgia, "Times New Roman", serif; fill: #ECECEC; }
+    text { font-family: "CMU Serif", "Latin Modern Roman", Georgia, "Times New Roman", serif; fill: #F5F0FF; }
     .h { font-size: 24px; }
-    .s { font-size: 15px; fill: #B8B8B8; }
+    .s { font-size: 15px; fill: #BDB3CF; }
     .lbl { font-size: 15px; }
     @media (prefers-reduced-motion: reduce) { * { animation: none !important; } }
 
-    .track { stroke: #4A4F5A; stroke-width: 4; stroke-linecap: round; }
-    .knob { fill: #F4D345; stroke: #16181D; stroke-width: 2; }
-    .fixed { fill: #888888; stroke: #16181D; stroke-width: 2; }
+    .track { stroke: #5A4D73; stroke-width: 4; stroke-linecap: round; }
+    .knob { fill: #E8D2FF; stroke: #1A1224; stroke-width: 2; }
+    .fixed { fill: #8E86A3; stroke: #1A1224; stroke-width: 2; }
     .kres { animation: kres 12s infinite; }
     .kdec { animation: kdec 12s infinite; }
-    .axis { stroke: #6A6F79; stroke-width: 1.2; }
-    .gl { stroke: #2C313A; stroke-width: 1; }
-    .tick { font-size: 13px; fill: #9A9FA9; }
-    .front { fill: none; stroke: #2F96B5; stroke-width: 2; }
-    .dot { fill: #2F96B5; stroke: #16181D; stroke-width: 2; }
-    .cloud { fill: #6A6F79; opacity: .55; }
-    .ring { fill: none; stroke: #F4D345; stroke-width: 2.5; }
+    .axis { stroke: #6E6487; stroke-width: 1.2; }
+    .gl { stroke: #2D2140; stroke-width: 1; }
+    .tick { font-size: 13px; fill: #A59DB8; }
+    .front { fill: none; stroke: #A5F9EA; stroke-width: 2; }
+    .dot { fill: #A5F9EA; stroke: #1A1224; stroke-width: 2; }
+    .cloud { fill: #6E6487; opacity: .55; }
+    .ring { fill: none; stroke: #E8D2FF; stroke-width: 2.5; }
     .ro { opacity: 0; }
     .rS { opacity: 1; }
     .aN { animation: showN 12s infinite; } .aS { animation: showS 12s infinite; }
@@ -32,7 +32,7 @@
     @keyframes showM { 0%, 47% { opacity: 0; } 50%, 72% { opacity: 1; } 75%, 100% { opacity: 0; } }
     @keyframes showL { 0%, 72% { opacity: 0; } 75%, 97% { opacity: 1; } 100%, 100% { opacity: 0; } }
   </style>
-  <rect width="1000" height="440" rx="16" fill="#16181D"/>
+  <rect width="1000" height="440" rx="16" fill="#1A1224"/>
   <text class="h" x="40" y="46">Five knobs, one set of weights</text>
   <text class="s" x="40" y="70">every training step samples a random setting</text>
   <text class="s" x="70" y="106">patch size</text>

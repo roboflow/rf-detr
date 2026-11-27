@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-19T10:24:20">
+  <meta property="article:modified_time" content="2026-11-27T18:44:17">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-19T10:24:20",
+    "dateModified": "2026-11-27T18:44:17",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -3579,7 +3579,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tr>
 <td><code>dynamic_batch</code></td>
 <td><code>False</code></td>
-<td>If <code>True</code>, export with a dynamic batch dimension so the model accepts variable batch sizes at runtime. Supported for <code>format="onnx"</code> and <code>format="tensorrt"</code> (which then needs <code>max_batch_size</code>) — TFLite, ExecuTorch, CoreML, Core AI and LiteRT bake a fixed batch size (TFLite because <code>onnx2tf</code> fails on the dynamic-batch graph). OpenVINO refuses <code>dynamic_batch=True</code>, but its IR already accepts any batch size, so omit the flag.</td>
+<td>If <code>True</code>, export with a dynamic batch dimension so the model accepts variable batch sizes at runtime. Supported for <code>format="onnx"</code> and <code>format="tensorrt"</code> (which then needs <code>max_batch_size</code>). OpenVINO has a dynamic batch by default. Pass <code>openvino_static_shape=True</code> for a fixed input. TFLite, ExecuTorch, CoreML, Core AI and LiteRT use fixed batches.</td>
 </tr>
 <tr>
 <td><code>patch_size</code></td>
@@ -3652,6 +3652,11 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <td>IR <em>storage</em> weight precision for <code>format="openvino"</code>: <code>None</code>/<code>"float16"</code> (OpenVINO's default FP16 weight compression) or <code>"float32"</code> (disables compression). Execution precision still depends on the compiled device — not guaranteed to match eager PyTorch on non-CPU devices. Ignored for every other format. Does not change the output filename.</td>
 </tr>
 <tr>
+<td><code>openvino_static_shape</code></td>
+<td><code>False</code></td>
+<td>For <code>format="openvino"</code>, fix all IR input dimensions to the export batch size and spatial resolution. The default allows variable batches at the traced resolution.</td>
+</tr>
+<tr>
 <td><code>output_name</code></td>
 <td><code>None</code></td>
 <td>Full filename override (without extension). Takes precedence over the model's variant name and suppresses the detail suffix (precision, backend, TensorRT portability) — see <a href="../basics/#output-files">Output Files</a>.</td>
@@ -3695,7 +3700,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tr>
 <td><code>openvino</code></td>
 <td><code>rfdetr[openvino]</code></td>
-<td>no (IR accepts any batch)</td>
+<td>no (default IR is dynamic)</td>
 <td>no</td>
 <td>no</td>
 </tr>
@@ -3729,7 +3734,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tr>
 </tbody>
 </table>
-<p>For a format without dynamic batch, export one artifact per batch size.</p>
+<p>For a format with a fixed batch, export one artifact per batch size.</p>
 <h2 id="precision-by-format">Precision by Format<a class="headerlink" href="#precision-by-format" title="Permanent link">&para;</a></h2>
 <p>Each format exposes precision through its own parameter; <a href="#export-parameters">Export Parameters</a> above has the details.</p>
 <table>
@@ -3845,6 +3850,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <p>The backbone export contains the encoder and its feature projector, without the detection decoder or prediction heads. ONNX outputs are feature maps in NCHW layout, ordered by <code>projector_scale</code>: <code>features</code> for the first level, followed by <code>features_1</code>, <code>features_2</code>, and so on when more levels are configured. Backbones with a second projector also return its levels as <code>cross_attn_features</code>, <code>cross_attn_features_1</code>, and so on, after the primary levels. These outputs are feature maps, not decoded boxes, masks, or keypoint coordinates.</p>
 <h2 id="how-export-works">How Export Works<a class="headerlink" href="#how-export-works" title="Permanent link">&para;</a></h2>
 <p>Every format is written by an <code>Exporter</code> class built from that format's own configuration, and <code>model.export()</code> is a facade over them: it resolves the format to an exporter, narrows this method's union-of-every-format signature down to the settings that format actually reads, prepares one format-independent <code>ExportGraph</code>, and hands the graph to the exporter. <code>RFDETR.export()</code>'s signature and return value are the supported surface; the classes behind it are internal.</p>
+<p><img alt="Schematic. A trained model goes through export() into one artifact in a chosen format (ONNX, TensorRT, OpenVINO, TFLite, CoreML and more) plus its metadata. Below, standard predict with the native model, which needs no export, sits beside predict with the exported artifact. Loading and the forward pass differ, PyTorch versus a format runtime and its adapter. Preprocess, postprocess and the Detections result are shared." loading="lazy" src="../../assets/export-pipeline.svg" /></p>
 <p>If you want to add a format, or you are reading the export code, see <a href="../blueprint/">Exporter Blueprint</a> for the contract each format implements and the steps a new one takes.</p>
 
 
@@ -3866,7 +3872,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 19, 2026 10:24:20 UTC">2026-11-19 10:24:20</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 27, 2026 18:44:17 UTC">2026-11-27 18:44:17</span>
   </span>
 
     
