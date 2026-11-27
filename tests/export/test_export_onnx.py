@@ -221,9 +221,9 @@ def test_export_accepts_rectangular_shape_differing_from_resolution(tmp_path: Pa
 @pytest.mark.e2e_onnx
 class TestExportedGraphAvoidsCoreMLRejectedOps:
     """A real whole-model export must avoid the ops ONNX Runtime's CoreML provider rejects — the unit tests in
-    ``test_transformer_onnx_two_stage.py`` and ``test_segmentation_head.py`` only check the ``Transformer`` and
-    ``SegmentationHead`` submodules in isolation, never a full detection or segmentation graph as ``RFDETR.export()``
-    actually produces it.
+    ``tests/models/transformer/test_onnx_two_stage.py`` and ``test_segmentation_head.py`` only check the ``Transformer``
+    and ``SegmentationHead`` submodules in isolation, never a full detection or segmentation graph as
+    ``RFDETR.export()`` actually produces it.
 
     ``pretrain_weights=None`` builds each model without downloading or loading a checkpoint, keeping this CPU-runnable
     and fast.
@@ -256,7 +256,7 @@ class TestExportedGraphAvoidsCoreMLRejectedOps:
         self, tmp_path: Path, model_class: type[RFDETRNano] | type[RFDETRSegNano]
     ) -> None:
         """A whole-model detection or segmentation graph holds no ``Einsum`` and no degenerate ``Concat`` node."""
-        from tests.models.test_transformer_onnx_two_stage import (
+        from tests.models.transformer.test_onnx_two_stage import (
             find_single_input_concat_nodes,
             find_zero_dim_float_concat_nodes,
         )

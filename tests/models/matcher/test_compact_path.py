@@ -16,7 +16,7 @@ import torch
 from rfdetr.models import matcher as matcher_module
 from rfdetr.models.matcher import HungarianMatcher, _TargetSideSafety
 from tests._markers import _requires_cpu_inductor, _requires_cuda
-from tests.models._matcher_support import (
+from tests.models.matcher.helpers import (
     _assert_assignment_lengths,
     _assert_same_indices,
     _detection_batch_with_labels,

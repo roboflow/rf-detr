@@ -26,7 +26,7 @@ from rfdetr.models.transformer import (
     _module_call_is_plain,
 )
 from tests._markers import _cuda_marks, _requires_cuda
-from tests.models._transformer_support import decoder_layer, record_apply_calls
+from tests.models.transformer.helpers import decoder_layer, record_apply_calls
 
 
 @pytest.fixture(autouse=True)

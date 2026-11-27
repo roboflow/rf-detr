@@ -33,7 +33,7 @@ from rfdetr.models.weights import (
 from rfdetr.training.module_model import RFDETRModelModule
 from rfdetr.utilities.reproducibility import seed_all
 from tests._markers import _requires_peft
-from tests.models.test_lwdetr_keypoints import _HIDDEN_DIM, _DummyKeypointTransformer
+from tests.models.lwdetr.test_keypoints import _HIDDEN_DIM, _DummyKeypointTransformer
 
 #: ``num_classes`` default of ``RFDETRBaseConfig``; an explicit value equal to it must still count as explicit.
 _DEFAULT_NUM_CLASSES = RFDETRBaseConfig.model_fields["num_classes"].default

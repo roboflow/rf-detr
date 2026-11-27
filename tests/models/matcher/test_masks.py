@@ -17,7 +17,7 @@ from rfdetr.models import matcher as matcher_module
 from rfdetr.models.heads.segmentation import SegmentationHead
 from rfdetr.models.matcher import HungarianMatcher
 from tests._markers import _cuda_marks, _requires_cpu_inductor, _requires_cuda
-from tests.models._matcher_support import (
+from tests.models.matcher.helpers import (
     _assert_assignment_lengths,
     _assert_same_indices,
     _random_detection_batch,

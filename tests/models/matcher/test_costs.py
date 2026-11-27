@@ -15,7 +15,7 @@ import torch
 from rfdetr.models import matcher as matcher_module
 from rfdetr.models.heads.segmentation import SegmentationHead
 from rfdetr.models.matcher import HungarianMatcher
-from tests.models._matcher_support import (
+from tests.models.matcher.helpers import (
     _assert_same_indices,
     _detection_batch_with_labels,
     _full_path_indices,
@@ -532,11 +532,11 @@ def _spy_on_full_path(monkeypatch: pytest.MonkeyPatch) -> list[int]:
 class TestDetectionInputsAreSafeDirectly:
     """Direct, isolated coverage of ``HungarianMatcher._detection_inputs_are_safe``.
 
-    ``TestCompactPathRouting`` in ``test_matcher_compact_path.py`` already exercises this method indirectly, through the
-    routing behaviour it controls. These tests call it directly instead, so a future change to *how* it computes its
-    answer (e.g. vectorizing the per-image loops into a single concatenated check) has a fast, precise regression guard
-    that pins down the exact boolean it must keep returning for each case, independent of the compact-path machinery
-    around it.
+    ``TestCompactPathRouting`` in ``test_compact_path.py`` already exercises this method indirectly, through the routing
+    behaviour it controls. These tests call it directly instead, so a future change to *how* it computes its answer
+    (e.g. vectorizing the per-image loops into a single concatenated check) has a fast, precise regression guard that
+    pins down the exact boolean it must keep returning for each case, independent of the compact-path machinery around
+    it.
     """
 
     @pytest.mark.parametrize(

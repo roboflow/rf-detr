@@ -1727,7 +1727,7 @@ class TestTFLiteRank5Regression:
 
     The TFLite export fix relies on ``_export=True`` activating the rank-5 sampling-offset layout that avoids CoreML
     MIL's rank-6 tensor rejection.  This focused test links the executorch test file to that fix so regressions are
-    caught here as well as in test_transformer.py.
+    caught here as well as in ``tests/models/transformer/test_ms_deform_attn.py``.
     """
 
     def test_tflite_export_uses_rank5_path(self) -> None:

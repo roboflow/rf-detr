@@ -357,10 +357,10 @@ This ensures your changes work across all supported platforms and Python version
 uv run --no-sync pytest src/ tests/ scripts/ -n 2 -m "not gpu" --ignore=tests/run_smoke_all_models.py --ignore=tests/legacy/test_checkpoint_compat.py --timeout=240 --durations=50
 
 # Run a specific test file
-uv run --no-sync pytest tests/models/test_model.py
+uv run --no-sync pytest tests/models/lwdetr/test_model.py
 
 # Run a specific test
-uv run --no-sync pytest tests/models/test_model.py::test_model_loading
+uv run --no-sync pytest tests/models/lwdetr/test_model.py::test_patch_embed_in_channels_match_num_channels
 ```
 
 ## Code Quality and Linting

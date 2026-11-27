@@ -22,7 +22,7 @@ from rfdetr.models.transformer import (
     gen_sineembed_for_position,
 )
 from tests._markers import _cuda_marks, _requires_cuda, _requires_onnx_and_onnxruntime
-from tests.models._transformer_support import record_apply_calls, single_level_two_stage_transformer
+from tests.models.transformer.helpers import record_apply_calls, single_level_two_stage_transformer
 
 # Mirrors the production exporter: the dynamo exporter needs onnxscript, so pin the legacy path when torch offers one.
 _DYNAMO_KWARG = {"dynamo": False} if "dynamo" in inspect.signature(torch.onnx.export).parameters else {}

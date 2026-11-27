@@ -25,7 +25,7 @@ from rfdetr.models.transformer import (
 )
 from rfdetr.utilities.tensors import NestedTensor
 from tests._markers import _requires_cuda
-from tests.models._transformer_support import single_level_two_stage_transformer
+from tests.models.transformer.helpers import single_level_two_stage_transformer
 
 
 @pytest.fixture(autouse=True)

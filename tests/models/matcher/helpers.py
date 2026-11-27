@@ -5,7 +5,7 @@
 # ------------------------------------------------------------------------
 """Batch builders, path spies and index assertions shared by the ``HungarianMatcher`` test modules.
 
-Import them by name, e.g. ``from tests.models._matcher_support import _assert_same_indices, _random_detection_batch``;
+Import them by name, e.g. ``from tests.models.matcher.helpers import _assert_same_indices, _random_detection_batch``;
 the shared ``matcher`` fixture lives in ``tests/models/conftest.py``.
 """
 

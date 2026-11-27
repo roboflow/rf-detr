@@ -17,7 +17,7 @@ separates a real regression from a broken host or toolchain.
 These tests report on the machine they run on. Where no Neural Engine is available (a virtualized CI runner, for
 instance) Core ML never invokes its compiler, so the load test passes regardless and the compute-plan tests skip:
 the plan would then describe the host, not the exported graph. The hardware-free guard for the fix itself is
-``tests/models/test_transformer.py::test_two_stage_topk_gather_reads_pre_norm_memory``.
+``tests/models/transformer/test_two_stage.py::test_two_stage_topk_gather_reads_pre_norm_memory``.
 """
 
 from __future__ import annotations

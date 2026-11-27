@@ -3,7 +3,7 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Helpers shared by the transformer test modules (``test_transformer_*.py``), e.g. the decoder-rewrite tests."""
+"""Helpers shared by the transformer test modules in this package, such as the decoder-rewrite tests."""
 
 from __future__ import annotations
 

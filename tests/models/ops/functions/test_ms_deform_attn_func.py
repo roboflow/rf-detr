@@ -15,7 +15,7 @@ from rfdetr.models.ops.functions.ms_deform_attn_func import ms_deform_attn_core_
 class TestMsDeformAttnCorePytorch:
     """Ground-truth numerical and gradient checks for the CPU deformable-attention core.
 
-    ``tests/models/test_transformer.py::TestMSDeformAttnCorePytorch`` already exercises this
+    ``tests/models/transformer/test_ms_deform_attn.py::TestMSDeformAttnCorePytorch`` already exercises this
     function's shape contracts, the Python-int-pair vs. tensor ``spatial_shapes`` paths, and the
     single-level sample-packing skip, driving it to 100% line coverage. Those tests compare code
     paths against each other rather than against an independently derived expectation, so they add

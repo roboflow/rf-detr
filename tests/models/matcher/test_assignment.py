@@ -21,7 +21,7 @@ from scipy.optimize import linear_sum_assignment
 from rfdetr.models import _assignment
 from rfdetr.models.matcher import HungarianMatcher
 from tests._markers import _requires_cuda
-from tests.models._matcher_support import _assert_same_indices, _full_path_indices, _random_detection_batch
+from tests.models.matcher.helpers import _assert_same_indices, _full_path_indices, _random_detection_batch
 
 
 def _reference_indices(cost_matrix: torch.Tensor, sizes: list[int]) -> list[tuple[torch.Tensor, torch.Tensor]]:

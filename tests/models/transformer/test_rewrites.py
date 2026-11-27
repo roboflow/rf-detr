@@ -39,7 +39,7 @@ from rfdetr.models.transformer import (
 from rfdetr.training.cuda_graph_step import CudaGraphTrainingRunner
 from rfdetr.utilities.tensors import NestedTensor
 from tests._markers import _requires_cuda
-from tests.models._transformer_support import (
+from tests.models.transformer.helpers import (
     EAGER_CUDA,
     decoder_layer,
     gate_open,
