@@ -105,7 +105,7 @@
   
   
   
-  <meta property="article:modified_time" content="2026-11-24T09:51:28">
+  <meta property="article:modified_time" content="2026-11-27T18:43:00">
   
   <script type="application/ld+json">
   {
@@ -120,7 +120,7 @@
     "inLanguage": "en",
     "keywords": "RF-DETR, rfdetr, object detection, instance segmentation, computer vision, Roboflow",
     "datePublished": "2025-03-01",
-    "dateModified": "2026-11-24T09:51:28",
+    "dateModified": "2026-11-27T18:43:00",
     "image": "https://storage.googleapis.com/com-roboflow-marketing/rf-detr/rf_detr_1-4_latency_accuracy_object_detection.png",
     "author": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
     "publisher": {"@type": "Organization", "name": "Roboflow", "url": "https://roboflow.com"},
@@ -4577,7 +4577,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
 <tr>
 <td><code>1</code></td>
 <td>Grayscale</td>
-<td>Any 8-bit image. Color images are converted to luminance.</td>
+<td>An 8-bit image or a supported 16-bit grayscale image. Color images are converted to luminance.</td>
 </tr>
 <tr>
 <td><code>3</code> (default)</td>
@@ -4591,7 +4591,8 @@ APIs described here may change or may never ship in a release, so use the <a hre
 </tr>
 </tbody>
 </table>
-<p>With <code>num_channels=4</code> the alpha channel is treated as data, such as depth, infrared or optical flow stored next to RGB. A file without a fourth channel stops training with an error that names the file. No channel is invented: a transparency colour key counts as a fourth channel only for palette images. An associated-alpha TIFF (<code>ExtraSamples=1</code>) is un-premultiplied on read, so tag data planes <code>ExtraSamples=2</code>. 16-bit grayscale (<code>I;16</code>, <code>I</code>, <code>F</code>) is refused for the 1-channel target. Other channel counts are not supported by the dataset loaders and are refused when the dataset is built. A <code>num_channels</code> other than 3 works only with DINOv2 encoders, so the PE-based Plus models Atto, Femto and Pico raise a <code>ValueError</code>.</p>
+<p>With <code>num_channels=4</code> the alpha channel is treated as data, such as depth, infrared or optical flow stored next to RGB. A file without a fourth channel stops training with an error that names the file. No channel is invented: a transparency colour key counts as a fourth channel only for palette images. An associated-alpha TIFF (<code>ExtraSamples=1</code>) is un-premultiplied on read, so tag data planes <code>ExtraSamples=2</code>. Other channel counts are not supported by the dataset loaders and are refused when the dataset is built. A <code>num_channels</code> other than 3 works only with DINOv2 encoders, so the PE-based Plus models Atto, Femto and Pico raise a <code>ValueError</code>.</p>
+<p>Unsigned 16-bit grayscale images in Pillow modes <code>I;16</code>, <code>I;16L</code>, and <code>I;16B</code>, including 16-bit grayscale PNGs, are reduced to 8 bits by integer division by 257 before grayscale or RGB conversion. Single-channel datasets still reject 32-bit integer (<code>I</code>) and floating-point (<code>F</code>) images.</p>
 <p>The pretrained RGB filters are reused for the extra channel, and the fourth channel is normalized with the red mean and standard deviation, the same values <code>predict()</code> uses. A checkpoint saved from a four-channel model loads only into a model built with <code>num_channels=4</code>. With <code>freeze_encoder=True</code> or <code>backbone_lora=True</code> the patch embedding is frozen, so the filters of the extra channel keep that initialization and are not trained; a warning says so. Without either option the patch embedding still trains slowly: layer-wise decay puts it at the lowest rate, about 2% of <code>lr_encoder</code> with the default <code>lr_vit_layer_decay=0.8</code> and <code>lr_component_decay=0.7</code>.</p>
 <p>Color augmentations that need RGB input, such as <code>HueSaturationValue</code>, <code>ColorJitter</code> and <code>ToGray</code>, do not accept four-channel images. Geometric augmentations work. Pixel augmentations that accept any channel count, such as <code>RandomBrightnessContrast</code>, change the fourth channel as well. An Albumentations transform that changes the channel count now raises an error instead of silently continuing. <code>predict()</code> reads grayscale and RGB from files; pass four-channel input as an array or tensor.</p>
 <hr />
@@ -4718,7 +4719,7 @@ APIs described here may change or may never ship in a release, so use the <a hre
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 24, 2026 09:51:28 UTC">2026-11-24 09:51:28</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_datetime" title="November 27, 2026 18:43:00 UTC">2026-11-27 18:43:00</span>
   </span>
 
     
