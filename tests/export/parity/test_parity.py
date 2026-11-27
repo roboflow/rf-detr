@@ -35,23 +35,27 @@ residual versus predict()'s ``to_tensor`` chain is 1 ULP from v2's uint8->float 
 """
 
 from __future__ import annotations
+
 from collections.abc import Callable
+from pathlib import Path
 from unittest import mock
+
 import numpy as np
 import pytest
 import torch
+import torchvision.transforms.functional as F  # noqa: N812
+from PIL import Image as PILImage
+
 from rfdetr.export._topk import _select_topk_multiclass
+from rfdetr.export.benchmark import infer_transforms
+from rfdetr.export.prepare import make_infer_image
 from rfdetr.models.postprocess import PostProcess
-from pathlib import Path
 from tests.export.conftest import (
     _parity_input_from_image,
     eager_reference_tensors,
     max_abs_output_diffs,
 )
-import torchvision.transforms.functional as F  # noqa: N812
-from PIL import Image as PILImage
-from rfdetr.export.benchmark import infer_transforms
-from rfdetr.export.prepare import make_infer_image
+
 
 def _reference_select_topk(
     logits_with_bg: torch.Tensor, num_select: int

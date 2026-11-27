@@ -12,10 +12,19 @@ Tests for private RF-DETR keypoint visualization helpers.
 """
 
 from __future__ import annotations
+
 from pathlib import Path
+
 import numpy as np
 import pytest
+import supervision as sv
+from PIL import Image
+from pytest_mock import MockerFixture
+
 from rfdetr.utilities.imports import _IS_MATPLOTLIB_INSTALLED, _IS_PANDAS_INSTALLED, _IS_SEABORN_INSTALLED
+from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
+from rfdetr.visualize.data import save_gt_predictions_visualization
+from rfdetr.visualize.keypoints import _key_points_for_display, _keypoint_prediction_records
 from rfdetr.visualize.training import (
     _build_metric_groups,
     _plot_map_columns,
@@ -25,12 +34,6 @@ from rfdetr.visualize.training import (
     plot_map_metrics,
     plot_metrics,
 )
-from PIL import Image
-from pytest_mock import MockerFixture
-from rfdetr.visualize.data import save_gt_predictions_visualization
-import supervision as sv
-from rfdetr.utilities.keypoints import precision_cholesky_to_pixel_covariance
-from rfdetr.visualize.keypoints import _key_points_for_display, _keypoint_prediction_records
 
 _requires_pandas = pytest.mark.skipif(
     not _IS_PANDAS_INSTALLED, reason="pandas not installed; skip metrics DataFrame tests"

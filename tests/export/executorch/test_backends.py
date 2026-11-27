@@ -23,19 +23,22 @@ extra (see the ``executorch-coreml-parity`` job in ``.github/workflows/ci-integr
 """
 
 from __future__ import annotations
+
 import sys
+from pathlib import Path
 from unittest import mock
+
+import numpy as np
 import pytest
 import torch
 import torch.nn.functional as F  # noqa: N812
 from pytest_mock import MockerFixture
 from torch import nn
-from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
-from rfdetr.export._executorch.xnnpack import decompose_attention, fold_constants, unmasked_attention
-from pathlib import Path
-import numpy as np
+
 from rfdetr import RFDETRNano
 from rfdetr.export._coreml import _IS_COREMLTOOLS_AVAILABLE
+from rfdetr.export._executorch import _IS_EXECUTORCH_AVAILABLE
+from rfdetr.export._executorch.xnnpack import decompose_attention, fold_constants, unmasked_attention
 from rfdetr.utilities.reproducibility import seed_all
 from tests.export.conftest import _structured_parity_input, eager_reference_tensors
 from tests.export.executorch.test_export import _portable_kernel_call_names
