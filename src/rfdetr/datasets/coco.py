@@ -44,7 +44,11 @@ from rfdetr.datasets._torchvision import (
     Resize,
 )
 from rfdetr.datasets.aug_configs import AUG_CONFIG
-from rfdetr.datasets.io_utils import _warn_if_labels_follow_stored_pixels, decode_pil_image
+from rfdetr.datasets.io_utils import (
+    _warn_if_labels_follow_stored_pixels,
+    decode_pil_image,
+    read_image_or_substitute,
+)
 from rfdetr.datasets.kornia_transforms import (
     KorniaPreResize,
     _pixel_affine_requires_albumentations,
@@ -713,6 +717,11 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
             ``PIL.Image.MAX_IMAGE_PIXELS``, which is left unchanged.  ``None`` (the default) applies Pillow's limit.
         num_channels: Input channel count of the model the dataset feeds (``ModelConfig.num_channels``).  ``3`` (the
             default) loads RGB, ``1`` grayscale and ``4`` RGBA, for which every image must store a fourth channel.
+        skip_unreadable: If ``True``, a failed image read is retried, and an image that stays unreadable is replaced
+            by the next readable sample, image and annotations together, with an error naming the file logged (see
+            :func:`~rfdetr.datasets.io_utils.read_image_or_substitute`).  ``False`` (the default) raises the decoder's
+            ``OSError`` on the first failed read.  Meant for training splits only: a substituted sample is a
+            duplicate, which would distort evaluation.
     """
 
     def __init__(
@@ -728,6 +737,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         draft_size: int | None = None,
         max_image_pixels: int | None = None,
         num_channels: int = 3,
+        skip_unreadable: bool = False,
     ) -> None:
         image_mode(num_channels)  # refuse a channel count image files cannot supply before reading annotations
         super().__init__(img_folder, ann_file)
@@ -737,6 +747,7 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         self._num_channels = num_channels
         # Set once a sample's boxes fit its quarter-turned photo only as stored; later samples are then not checked.
         self._warned_stored_frame_labels = False
+        self._skip_unreadable = skip_unreadable
         self.include_masks = include_masks
         self.include_keypoints = include_keypoints
         if cat2label is not None and not remap_category_ids:
@@ -806,8 +817,18 @@ class CocoDetection(torchvision.datasets.CocoDetection):  # type: ignore[misc]
         return Path(self.root) / file_name
 
     def __getitem__(self, idx: int) -> tuple[Any, Any]:
-        image_id = self.ids[idx]
-        img, (x_scale, y_scale) = self._decode_image(image_id)
+        if self._skip_unreadable:
+            # Only the image read is retried and substituted; annotation and transform errors below still raise.
+            idx, (img, (x_scale, y_scale)) = read_image_or_substitute(
+                lambda index: self._decode_image(self.ids[index]),
+                idx,
+                len(self.ids),
+                lambda index: self._image_path(self.ids[index]),
+            )
+            image_id = self.ids[idx]
+        else:
+            image_id = self.ids[idx]
+            img, (x_scale, y_scale) = self._decode_image(image_id)
         annotations = self._load_target(image_id)
         if (x_scale, y_scale) != (1.0, 1.0):
             annotations = [scale_coco_annotation(annotation, x_scale, y_scale) for annotation in annotations]
@@ -1647,6 +1668,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             "unavailable; disabling GPU postprocess transforms and retaining CPU normalization."
         )
     gpu_postprocess = is_gpu_postprocess(resolved_augmentation_backend)
+    skip_unreadable = image_set == "train" and bool(getattr(args, "skip_unreadable_images", False))
     draft_size = draft_size_for_transforms(
         image_set,
         resolution,
@@ -1685,6 +1707,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             remap_category_ids=include_keypoints,
             draft_size=draft_size,
             num_channels=getattr(args, "num_channels", 3),
+            skip_unreadable=skip_unreadable,
         )
     else:
         logger.info(f"Building COCO {image_set} dataset at resolution {resolution}")
@@ -1713,6 +1736,7 @@ def build_coco(image_set: str, args: Any, resolution: int) -> CocoDetection:
             remap_category_ids=include_keypoints,
             draft_size=draft_size,
             num_channels=getattr(args, "num_channels", 3),
+            skip_unreadable=skip_unreadable,
         )
     return dataset
 
@@ -1778,6 +1802,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
     # train but not in valid shift every later label index of that split. The keypoint path maps categories onto
     # schema slots instead of annotation coverage, so it keeps its own derivation.
     cat2label = None if split == "train" or include_keypoints else _train_split_cat2label(root)
+    skip_unreadable = image_set == "train" and bool(getattr(args, "skip_unreadable_images", False))
     draft_size = draft_size_for_transforms(
         image_set,
         resolution,
@@ -1814,6 +1839,7 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             cat2label=cat2label,
             draft_size=draft_size,
             num_channels=getattr(args, "num_channels", 3),
+            skip_unreadable=skip_unreadable,
         )
     else:
         logger.info(f"Building Roboflow {image_set} dataset at resolution {resolution}")
@@ -1840,5 +1866,6 @@ def build_roboflow_from_coco(image_set: str, args: Any, resolution: int) -> Coco
             cat2label=cat2label,
             draft_size=draft_size,
             num_channels=getattr(args, "num_channels", 3),
+            skip_unreadable=skip_unreadable,
         )
     return dataset

@@ -32,6 +32,7 @@ from rfdetr.utilities.imports import (
     _IS_PEFT_INSTALLED,
     _IS_PYCOCOTOOLS_INSTALLED,
     _IS_SAFETENSORS_INSTALLED,
+    _IS_SIMPLEJPEG_INSTALLED,
     _IS_TORCH_XLA_INSTALLED,
     _IS_UFCOCO_INSTALLED,
     _IS_VERNIER_INSTALLED,
@@ -122,6 +123,9 @@ _requires_albumentations = pytest.mark.skipif(not _IS_ALBUMENTATIONS_INSTALLED, 
 
 #: Skip a test node that needs ``kornia`` (the ``augment`` extra).
 _requires_kornia = pytest.mark.skipif(not _IS_KORNIA_INSTALLED, reason="kornia not installed")
+
+#: Skip a test node that decodes JPEG files through ``simplejpeg`` (the ``train`` extra); Pillow decodes without it.
+_requires_simplejpeg = pytest.mark.skipif(not _IS_SIMPLEJPEG_INSTALLED, reason="simplejpeg is not installed")
 
 #: Skip a test node that needs a COCO evaluation backend; each gates one ``TrainConfig.eval_backend`` choice.
 _requires_pycocotools = pytest.mark.skipif(not _IS_PYCOCOTOOLS_INSTALLED, reason="pycocotools not installed")

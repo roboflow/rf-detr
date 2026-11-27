@@ -1038,22 +1038,28 @@ class TestBestModelCallback:
 
         assert (tmp_path / "checkpoint_best_ema.pth").exists()
 
-    def test_zero_ema_score_promotes_ema_checkpoint_for_ema_only_runs(self, tmp_path: Path) -> None:
-        """A valid zero EMA score still produces and promotes the total checkpoint when no base model was evaluated."""
+    def test_zero_ema_score_promotes_fresh_weights_in_existing_output_dir(self, tmp_path: Path) -> None:
+        """A zero EMA score backfills current weights when an older checkpoint has no restored score."""
+        previous = BestModelCallback(output_dir=str(tmp_path), monitor_ema="val/ema_mAP_50_95", run_test=False)
+        previous.on_validation_end(_make_trainer({"val/ema_mAP_50_95": 0.75}), _make_pl_module())
+        assert (tmp_path / "checkpoint_best_ema.pth").exists()
         callback = BestModelCallback(
             output_dir=str(tmp_path),
             monitor_ema="val/ema_mAP_50_95",
             evaluates_base_model=False,
             run_test=False,
         )
-        trainer = _make_trainer({"val/ema_mAP_50_95": 0.0})
+        trainer = _make_trainer({"val/ema_mAP_50_95": 0.0}, current_epoch=2)
+        module = _make_pl_module()
+        module.model.state_dict.return_value = {"w": torch.ones(1)}
 
-        callback.on_validation_end(trainer, _make_pl_module())
-        callback.on_fit_end(trainer, _make_pl_module())
+        callback.on_validation_end(trainer, module)
+        callback.on_fit_end(trainer, module)
 
         assert (tmp_path / "checkpoint_best_ema.pth").exists()
         total = torch.load(tmp_path / "checkpoint_best_total.pth", map_location="cpu", weights_only=False)
         assert total["best_total_source"] == "ema"
+        assert torch.equal(total["model"]["w"], torch.ones(1))
 
     def test_best_ema_not_overwritten_when_metric_improved(self, tmp_path: Path) -> None:
         """on_fit_end must not rewrite checkpoint_best_ema.pth when a true best was saved during training."""
@@ -1177,6 +1183,18 @@ class TestBestModelCallback:
 
         assert not (tmp_path / "checkpoint_best_total.pth").exists()
         trainer.test.assert_not_called()
+
+    def test_run_test_skips_total_checkpoint_from_an_earlier_fit(self, tmp_path: Path) -> None:
+        """Test evaluation requires a checkpoint selected by the current callback state."""
+        total_path = tmp_path / "checkpoint_best_total.pth"
+        total_path.touch()
+        cb = BestModelCallback(output_dir=str(tmp_path), run_test=True)
+        trainer = _make_trainer({})
+
+        cb.on_fit_end(trainer, _make_test_step_module())
+
+        trainer.test.assert_not_called()
+        assert total_path.exists()
 
     def test_run_test_loads_best_weights_before_test(self, tmp_path: Path) -> None:
         """on_fit_end loads checkpoint_best_total.pth weights before trainer.test().

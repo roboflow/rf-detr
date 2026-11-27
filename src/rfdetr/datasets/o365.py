@@ -67,6 +67,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
     resolved_backend = resolve_backend_for_build(augmentation_backend)
     gpu_postprocess = is_gpu_postprocess(resolved_backend)
     aug_config = getattr(args, "aug_config", None)
+    skip_unreadable = image_set == "train" and bool(getattr(args, "skip_unreadable_images", False))
 
     if gpu_postprocess and aug_config not in (None, {}):
         logger.warning(
@@ -94,6 +95,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
             ),
             max_image_pixels=O365_MAX_IMAGE_PIXELS,
             num_channels=getattr(args, "num_channels", 3),
+            skip_unreadable=skip_unreadable,
         )
     else:
         dataset = CocoDetection(
@@ -113,6 +115,7 @@ def build_o365_raw(image_set: str, args: Any, resolution: int) -> CocoDetection:
             ),
             max_image_pixels=O365_MAX_IMAGE_PIXELS,
             num_channels=getattr(args, "num_channels", 3),
+            skip_unreadable=skip_unreadable,
         )
     return dataset
 

@@ -84,7 +84,8 @@ class TestTensorRTEndToEnd:
         assert_prediction_roundtrip("tensorrt", task, tmp_path)
 
     @pytest.fixture(scope="class")
-    def trt_engine(self, tmp_path_factory: pytest.TempPathFactory) -> tuple[torch.nn.Module, torch.Tensor, Path]:
+    @staticmethod
+    def trt_engine(tmp_path_factory: pytest.TempPathFactory) -> tuple[torch.nn.Module, torch.Tensor, Path]:
         """Export RFDETRNano to ONNX, build a FP32 ``.trt`` engine, and reuse it across the parity checks."""
         from rfdetr import RFDETRNano
 
@@ -139,7 +140,8 @@ class TestTensorRTEndToEnd:
             pytest.param((True, True), id="dynamic-fp16"),
         ],
     )
-    def trt_sidecar_engine(self, request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory) -> Any:
+    @staticmethod
+    def trt_sidecar_engine(request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory) -> Any:
         """Export RFDETRNano to a TensorRT engine with ``trt_metadata=True`` and deserialize the engine it wrote.
 
         Returns:
@@ -254,7 +256,8 @@ class TestTensorRTEndToEnd:
         assert build["gpu"] == {"name": properties.name, "compute_capability": f"{properties.major}.{properties.minor}"}
 
     @pytest.fixture(scope="class")
-    def trt_fp16_engine(self, tmp_path_factory: pytest.TempPathFactory) -> tuple[torch.nn.Module, torch.Tensor, Path]:
+    @staticmethod
+    def trt_fp16_engine(tmp_path_factory: pytest.TempPathFactory) -> tuple[torch.nn.Module, torch.Tensor, Path]:
         """Export RFDETRNano to ONNX, build an FP16 ``.trt`` engine, and reuse it across the parity checks.
 
         Mirrors ``trt_engine`` with ``fp16=True``: on a strongly typed TensorRT that routes through the whole-graph FP16
@@ -318,7 +321,8 @@ class TestTensorRTEndToEnd:
         )
 
     @pytest.fixture(scope="class")
-    def trt_dynamic_engine(self, tmp_path_factory: pytest.TempPathFactory) -> tuple[torch.nn.Module, int, Path]:
+    @staticmethod
+    def trt_dynamic_engine(tmp_path_factory: pytest.TempPathFactory) -> tuple[torch.nn.Module, int, Path]:
         """Export RFDETRNano with a dynamic batch axis and build one FP32 engine spanning batch 1 through 4.
 
         Built through ``RFDETR.export(format="tensorrt", ...)`` rather than ``build_engine`` directly, so the
@@ -482,7 +486,8 @@ class TestTensorRTEndToEnd:
         )
 
     @pytest.fixture(scope="class")
-    def trt_version_compatible_engine(self, trt_engine: tuple[torch.nn.Module, torch.Tensor, Path]) -> Path:
+    @staticmethod
+    def trt_version_compatible_engine(trt_engine: tuple[torch.nn.Module, torch.Tensor, Path]) -> Path:
         """Build a version-compatible engine from the FP32 engine's ONNX, or skip when TensorRT has no lean runtime.
 
         The lean runtime is a separate package (``tensorrt-lean-cu*-libs``) that the ``rfdetr[tensorrt]`` extra does not
@@ -825,8 +830,9 @@ class TestTensorRTEndToEnd:
         assert max(diffs.values()) < 1e-4, f"the warm-cache engine differs from the cold build's: {diffs}"
 
     @pytest.fixture(scope="class")
+    @staticmethod
     def populated_timing_cache(
-        self, trt_engine: tuple[torch.nn.Module, torch.Tensor, Path], tmp_path_factory: pytest.TempPathFactory
+        trt_engine: tuple[torch.nn.Module, torch.Tensor, Path], tmp_path_factory: pytest.TempPathFactory
     ) -> bytes:
         """The timing cache a real build writes, built once for the tests that damage it."""
         _, _, engine_path = trt_engine
@@ -1041,7 +1047,8 @@ class TestInt8EndToEnd:
     """Real FP16 and INT8 engines of the pretrained RFDETRNano agree on a photo's confident detections."""
 
     @pytest.fixture(scope="class")
-    def photo(self, tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, np.ndarray]:
+    @staticmethod
+    def photo(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, np.ndarray]:
         """Crops and flips of supervision's PEOPLE_WALKING photo for calibration, and the photo as a model input.
 
         Examples:
@@ -1055,8 +1062,9 @@ class TestInt8EndToEnd:
         return calibration, _photo_input(image, int(RFDETRNano().model.resolution))
 
     @pytest.fixture(scope="class")
+    @staticmethod
     def engines(
-        self, photo: tuple[Path, np.ndarray], tmp_path_factory: pytest.TempPathFactory
+        photo: tuple[Path, np.ndarray], tmp_path_factory: pytest.TempPathFactory
     ) -> tuple[Path, Path, np.ndarray]:
         """Export FP16 and INT8 engines at batch 1, calibrating on the photo's crops and flips.
 
@@ -1155,8 +1163,9 @@ class TestSegmentationAndKeypointInt8EndToEnd:
     """Real FP16 and INT8 engines of the pretrained segmentation and keypoint models agree on a photo."""
 
     @pytest.fixture(scope="class", params=["RFDETRSegNano", "RFDETRKeypointPreview"])
+    @staticmethod
     def engines(
-        self, request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
+        request: pytest.FixtureRequest, tmp_path_factory: pytest.TempPathFactory
     ) -> tuple[Path, Path, np.ndarray, str]:
         """Export FP16 and INT8 engines of the model at batch 1, calibrating on the photo's crops and flips.
 

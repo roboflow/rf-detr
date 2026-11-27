@@ -20,15 +20,18 @@ that :func:`decode_pil_image` avoids for its own callers, a scope call deferred 
 
 from __future__ import annotations
 
+import builtins
+import errno
 import io
 import json
 import struct
 import subprocess
 import sys
+import time
 import warnings
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
-from typing import IO, Any
+from typing import IO, Any, TypeVar
 
 import numpy as np
 from numpy.typing import NDArray
@@ -39,10 +42,26 @@ except ImportError:  # optional (``rfdetr[train]``); JPEG decoding falls back to
     simplejpeg = None
 from PIL import Image, JpegImagePlugin, UnidentifiedImageError
 
-from rfdetr.datasets._pillow_worker import convert_image, image_mode
+from rfdetr.datasets._pillow_worker import convert_image, image_mode, open_image
 from rfdetr.utilities.exif import exif_orientation, swaps_axes, upright_image
+from rfdetr.utilities.logger import get_logger
+
+logger = get_logger()
+
+_T = TypeVar("_T")
 
 _JPEG_SOI = b"\xff\xd8"
+
+# Reads of one image before it is judged unreadable: a short read off network storage raises the same ``OSError``
+# Pillow raises for a file that is truncated on disk, and only a second read tells the two apart.
+_IMAGE_READ_ATTEMPTS = 3
+_IMAGE_READ_BACKOFF_SECONDS = 0.5
+# Following samples tried in place of an unreadable one; bounded so that a broken dataset or filesystem still raises.
+_MAX_SUBSTITUTIONS = 10
+# ``errno`` values of an ``OSError`` raised because this process ran out of file descriptors (``EMFILE``, ``ENFILE``),
+# memory (``ENOMEM``) or processes to start the decoder in (``EAGAIN``): the read may succeed later, but the file it
+# reads is no less healthy, so it is retried and never substituted.
+_PROCESS_RESOURCE_ERRNOS = frozenset({errno.EMFILE, errno.ENFILE, errno.ENOMEM, errno.EAGAIN})
 
 #: Pixels a COCO box may run past the decoded image before it counts as drawn in another frame.  Annotation tools round
 #: box corners, and ``ConvertCoco`` clamps such small overruns without comment.
@@ -133,7 +152,9 @@ def _open_image(source: Path | IO[bytes], max_image_pixels: int | None) -> Image
     ``Image.open`` checks the size only against ``PIL.Image.MAX_IMAGE_PIXELS``, and changing that global, even
     briefly, would raise the limit for every other thread.  With ``max_image_pixels`` set, the format plugins
     ``Image.open`` would try are therefore called directly, which skips Pillow's check, and
-    :func:`_check_decompression_bomb` applies the per-decode limit to the header size.
+    :func:`_check_decompression_bomb` applies the per-decode limit to the header size.  Either way, a header the format
+    plugin rejects with ``ValueError`` is reported as unidentifiable, as
+    :func:`~rfdetr.datasets._pillow_worker.open_image` reports it.
 
     Args:
         source: Image file path, or a binary stream positioned at the start of the encoded bytes.
@@ -143,7 +164,7 @@ def _open_image(source: Path | IO[bytes], max_image_pixels: int | None) -> Image
         The opened image, with its pixels not yet decoded.
 
     Raises:
-        PIL.UnidentifiedImageError: If no Pillow plugin recognises the image.
+        PIL.UnidentifiedImageError: If no Pillow plugin recognises the image, or the one that does rejects its header.
         PIL.Image.DecompressionBombError: If the image has more than twice the limit in force.
 
     Examples:
@@ -153,7 +174,7 @@ def _open_image(source: Path | IO[bytes], max_image_pixels: int | None) -> Image
         (4, 2)
     """
     if max_image_pixels is None:
-        return Image.open(source)
+        return open_image(source)
     stream: IO[bytes]
     if isinstance(source, Path):
         stream = source.open("rb")
@@ -174,6 +195,8 @@ def _open_image(source: Path | IO[bytes], max_image_pixels: int | None) -> Image
                 image = factory(stream, "")
             except (SyntaxError, IndexError, TypeError, struct.error):
                 continue  # the errors ``Image.open`` treats as "not this format"
+            except ValueError as exc:  # ``Image.open`` stops at this one too
+                raise UnidentifiedImageError(f"cannot identify image file {source!r}: {exc}") from exc
             _check_decompression_bomb(*image.size, max_image_pixels)
             image._exclusive_fp = owns_stream
             return image
@@ -243,6 +266,13 @@ def _decode_with_pillow(
     the closed source, and the image is turned upright for its EXIF orientation, as viewers and annotation tools show
     it.
 
+    Pillow reports some corrupt files with a ``SyntaxError`` or a ``ValueError``: a ``ValueError`` while opening, for
+    example for a PNG ``pHYs`` chunk shorter than its 9 bytes, and either one while loading the pixels, for example for
+    a PNG whose chunk header between two image data chunks is cut short or damaged.  That error is raised here as an
+    ``OSError`` chained to it, the type Pillow uses for every other corrupt or truncated file, so callers catch one
+    type, in this process and in the decoder process alike.  The ``ValueError`` for a channel count the file cannot
+    supply is raised before any pixel is decoded and stays a ``ValueError``.
+
     Args:
         source: Image file path, or a binary stream positioned at the start of the encoded bytes.
         draft_size: Smallest extent the caller can consume without upscaling, or ``None`` for full resolution.
@@ -255,6 +285,8 @@ def _decode_with_pillow(
     Raises:
         ValueError: If image files cannot supply *num_channels* channels, or ``num_channels=4`` and the image stores
             no fourth channel.
+        OSError: If the file is missing, truncated, unidentifiable or corrupt.
+        PIL.Image.DecompressionBombError: If the image has more than twice the effective pixel limit.
 
     Examples:
         >>> encoded = io.BytesIO()
@@ -297,10 +329,22 @@ def _decode_with_pillow(
             errors = {
                 "DecompressionBombError": Image.DecompressionBombError,
                 "UnidentifiedImageError": UnidentifiedImageError,
-                "OSError": OSError,
+                # The worker already reports a corrupt file Pillow rejects while opening or loading as an ``OSError``
+                # type; a ``SyntaxError`` from anywhere else is a corrupt file too.
+                "SyntaxError": OSError,
+                # Only the channel-count refusal of ``convert_image``, which must not pass for a corrupt file.
                 "ValueError": ValueError,
             }
-            raise errors.get(header["error"], RuntimeError)(header["message"])
+            error_type = errors.get(header["error"])
+            if error_type is None:
+                # Built-in ``OSError`` subclasses keep their type, so callers that catch ``OSError`` see them.
+                builtin = getattr(builtins, header["error"], None)
+                error_type = builtin if isinstance(builtin, type) and issubclass(builtin, OSError) else RuntimeError
+            error = error_type(header["message"])
+            if isinstance(error, OSError):
+                # Kept so that callers can tell a process out of resources from an unreadable file.
+                error.errno = header.get("errno")
+            raise error
         warning_categories = {
             "DecompressionBombWarning": Image.DecompressionBombWarning,
             "RuntimeWarning": RuntimeWarning,
@@ -540,6 +584,231 @@ def decode_pil_image_bytes(
         pixels, scales = decoded
         return Image.fromarray(pixels), scales
     return _decode_with_pillow(io.BytesIO(data), draft_size, max_image_pixels, num_channels)
+
+
+class _KnownUnreadableImageError(OSError):
+    """Raised by an image read that is known to fail on every attempt, such as a file found unreadable earlier.
+
+    :func:`read_image_with_retries` raises it at once, with no retry, pause or warning, because a retry could only fail
+    again.  It is still an ``OSError``, so :func:`read_image_or_substitute` replaces the sample as for any other
+    unreadable image.
+
+    Examples:
+        >>> isinstance(_KnownUnreadableImageError("image header was unreadable"), OSError)
+        True
+    """
+
+
+def _is_process_resource_error(error: OSError) -> bool:
+    """Return whether ``error`` reports this process out of a resource, which says nothing about the file being read.
+
+    Opening a file with no file descriptor left, or starting the decoder process with no memory or process slot left,
+    raises an ``OSError`` like an unreadable file does; only its ``errno`` tells them apart.
+
+    Args:
+        error: The error a read raised.
+
+    Returns:
+        ``True`` when its ``errno`` is one of ``_PROCESS_RESOURCE_ERRNOS``.
+
+    Examples:
+        >>> _is_process_resource_error(OSError(errno.EMFILE, "Too many open files"))
+        True
+        >>> _is_process_resource_error(OSError("image file is truncated"))
+        False
+    """
+    return error.errno in _PROCESS_RESOURCE_ERRNOS
+
+
+def read_image_with_retries(read: Callable[[], _T], path: str | Path) -> _T:
+    """Call ``read`` up to ``_IMAGE_READ_ATTEMPTS`` times, pausing longer after each ``OSError``.
+
+    Each failed attempt is logged as a warning naming ``path``.  Exceptions other than ``OSError`` propagate from the
+    first attempt, and so does a :class:`_KnownUnreadableImageError`, without a warning.
+
+    Args:
+        read: Reads an image, or its header, from ``path``.
+        path: The file ``read`` reads, for log messages.
+
+    Returns:
+        What ``read`` returned on its first successful attempt.
+
+    Raises:
+        OSError: The last attempt's error, if every attempt failed, or the first one if it is a
+            :class:`_KnownUnreadableImageError`.
+
+    Examples:
+        >>> read_image_with_retries(lambda: "pixels", "image.jpg")
+        'pixels'
+    """
+    attempt = 1
+    while True:
+        try:
+            return read()
+        except _KnownUnreadableImageError:
+            raise
+        except OSError as exc:
+            logger.warning("Could not read image %s (attempt %d of %d): %s", path, attempt, _IMAGE_READ_ATTEMPTS, exc)
+            if attempt == _IMAGE_READ_ATTEMPTS:
+                raise
+        time.sleep(_IMAGE_READ_BACKOFF_SECONDS * attempt)
+        attempt += 1
+
+
+def _first_readable(
+    read: Callable[[int], _T],
+    candidates: list[int],
+    path_of: Callable[[int], str | Path],
+    errors: dict[int, OSError],
+) -> tuple[int, _T] | None:
+    """Read each candidate sample once, in order, and return the first that reads.
+
+    Each failed read is logged at debug level, naming the file, and recorded in ``errors``.
+
+    Args:
+        read: Reads the image of the sample at a dataset index.
+        candidates: Dataset indices to try, in order.
+        path_of: Returns the image path of the sample at a dataset index, for log messages.
+        errors: Receives the error of each candidate whose read failed, keyed by its index.
+
+    Returns:
+        The first readable candidate and what ``read`` returned for it, or ``None`` when every candidate failed.
+
+    Raises:
+        OSError: A candidate's error that reports this process out of a resource (see
+            :func:`_is_process_resource_error`), at once: it does not make the candidate unreadable.
+
+    Examples:
+        >>> errors = {}
+        >>> _first_readable(lambda i: f"pixels-{i}", [4, 5], lambda i: f"{i}.jpg", errors), errors
+        ((4, 'pixels-4'), {})
+    """
+    for candidate in candidates:
+        try:
+            return candidate, read(candidate)
+        except OSError as exc:
+            if _is_process_resource_error(exc):
+                raise
+            logger.debug("Substitute image %s (sample %d) is unreadable too: %s", path_of(candidate), candidate, exc)
+            errors[candidate] = exc
+    return None
+
+
+def _describe_errors(errors: dict[int, OSError]) -> str:
+    """Return the distinct errors among ``errors``, each with its type, in the order they were first recorded.
+
+    Args:
+        errors: Errors keyed by the dataset index whose read raised them.
+
+    Returns:
+        The distinct ``"<type>: <message>"`` descriptions, joined with ``"; "``.
+
+    Examples:
+        >>> _describe_errors({4: OSError("image file is truncated"), 5: OSError("image file is truncated")})
+        'OSError: image file is truncated'
+        >>> _describe_errors({4: FileNotFoundError("gone"), 5: OSError("image file is truncated")})
+        'FileNotFoundError: gone; OSError: image file is truncated'
+    """
+    return "; ".join(dict.fromkeys(f"{type(error).__name__}: {error}" for error in errors.values()))
+
+
+def read_image_or_substitute(
+    read: Callable[[int], _T],
+    index: int,
+    num_samples: int,
+    path_of: Callable[[int], str | Path],
+) -> tuple[int, _T]:
+    """Read the image of one dataset sample, retrying a failed read and then falling back to a later sample.
+
+    Only ``OSError`` counts as a failed read: a missing file, an I/O error, and the truncated, unidentifiable or corrupt
+    file errors the decoders raise (``PIL.UnidentifiedImageError`` is an ``OSError``, and the decoders of this module
+    re-raise the ``SyntaxError`` or ``ValueError`` Pillow reports for some corrupt files as one).  A decoder process
+    that crashes raises ``RuntimeError``, which is not a failed read.  Every other exception propagates from
+    the first attempt.  A failed read is repeated up to ``_IMAGE_READ_ATTEMPTS`` times with a growing pause, each
+    failure logged as a warning naming the file.  If every attempt fails, the following samples, wrapping around the end
+    of the dataset, are read once each until one succeeds, and one error naming the unreadable file and the sample used
+    instead is logged.  If none succeeds, which a storage stall longer than the retries also causes, the process pauses
+    once more, as long as the last retry pause, and reads the requested sample once more: if it now reads, it is
+    returned and no error is logged; otherwise the same substitutes are read once more.  A read whose error is a
+    :class:`_KnownUnreadableImageError` is not repeated, and no pause is made when every read failed that way.  Each
+    failed read of a substitute is logged at debug level, and the error raised when none succeeds lists their distinct
+    errors.  The caller must load the annotations of the returned index, so the image and its targets stay consistent
+    and the dataset keeps its length.  At most ``_MAX_SUBSTITUTIONS`` samples are tried.
+
+    An ``OSError`` that reports this process out of file descriptors, memory or processes (see
+    :func:`_is_process_resource_error`) says nothing about the file: the requested sample is retried as for any failed
+    read, but no sample is substituted or reported unreadable for it, and the error itself is raised.
+
+    Args:
+        read: Reads the image of the sample at a dataset index.
+        index: Dataset index of the requested sample.
+        num_samples: Number of samples in the dataset.
+        path_of: Returns the image path of the sample at a dataset index, for log and error messages.
+
+    Returns:
+        The index of the sample that was read, equal to ``index`` unless a substitution happened, and what ``read``
+        returned for it.
+
+    Raises:
+        RuntimeError: If the requested image and every substitute tried are unreadable, which means the dataset or the
+            filesystem holding it is broken, not a single file, or that its storage stayed unavailable through every
+            retry.
+        OSError: The error of a read that ran out of a process resource, after the retries for the requested sample and
+            at once for a substitute.
+
+    Examples:
+        >>> read_image_or_substitute(lambda i: f"pixels-{i}", 3, 10, lambda i: f"{i}.jpg")
+        (3, 'pixels-3')
+    """
+    try:
+        return index, read_image_with_retries(lambda: read(index), path_of(index))
+    except OSError as exc:
+        if _is_process_resource_error(exc):
+            raise
+        failure = exc
+
+    candidates = [(index + step) % num_samples for step in range(1, min(_MAX_SUBSTITUTIONS, num_samples - 1) + 1)]
+    errors: dict[int, OSError] = {}
+    substitute = _first_readable(read, candidates, path_of, errors)
+    if substitute is None:
+        # Storage that stalls for longer than the retries above fails every candidate as well, so pause once more, for
+        # the longest retry pause, before judging the dataset broken.  The stall that failed the candidates failed the
+        # requested sample too, so it is read again first.  A known-unreadable read cannot recover.
+        requested_recoverable = not isinstance(failure, _KnownUnreadableImageError)
+        recoverable = [
+            candidate for candidate in candidates if not isinstance(errors[candidate], _KnownUnreadableImageError)
+        ]
+        if requested_recoverable or recoverable:
+            time.sleep(_IMAGE_READ_BACKOFF_SECONDS * (_IMAGE_READ_ATTEMPTS - 1))
+            if requested_recoverable:
+                try:
+                    return index, read(index)
+                except OSError as exc:
+                    if _is_process_resource_error(exc):
+                        raise
+                    # Kept out of ``errors``, which lists the samples tried in place of this one.
+                    logger.debug("Image %s (sample %d) is still unreadable: %s", path_of(index), index, exc)
+            substitute = _first_readable(read, recoverable, path_of, errors)
+    if substitute is None:
+        # Logged at debug level only, so the candidates' errors are kept here, where they cannot be recovered later.
+        tried = f" The samples tried in its place failed with: {_describe_errors(errors)}." if errors else ""
+        raise RuntimeError(
+            f"{len(candidates) + 1} consecutive samples were unreadable starting at sample {index} "
+            f"({path_of(index)}): {failure}.{tried} The dataset or the filesystem holding it is broken, not a single "
+            "file, or the storage holding it stayed unavailable through every retry, as in a sustained outage. Check "
+            "that the files are present and readable before training again."
+        ) from failure
+
+    candidate, result = substitute
+    logger.error(
+        "Image %s (sample %d) is unreadable: %s. Using sample %d (%s) in its place.",
+        path_of(index),
+        index,
+        failure,
+        candidate,
+        path_of(candidate),
+    )
+    return candidate, result
 
 
 def _boxes_fit_only_turned(annotations: Iterable[Mapping[str, Any]], size: tuple[float, float]) -> bool:

@@ -74,7 +74,7 @@ def _has_progress_bar(trainer: Any) -> bool:
     return any(callback.__class__.__name__.endswith("ProgressBar") for callback in callbacks)
 
 
-def _render_overall_merged(title_pfx: str, overall: dict[str, float], max_dets: int) -> str:
+def _render_overall_merged(title_pfx: str, overall: dict[str, float], max_dets: int, min_class_support: int = 0) -> str:
     """Render the overall metrics table with merged group-header cells.
 
     Uses only plain Unicode box-drawing characters (no ANSI colour codes) so the output renders correctly in both
@@ -82,11 +82,22 @@ def _render_overall_merged(title_pfx: str, overall: dict[str, float], max_dets: 
 
     Args:
         title_pfx: Capitalised split name used in the title (e.g. ``"Val"``).
-        overall: Ordered mapping of metric label → scalar value.
+        overall: Ordered mapping of metric label → scalar value. The optional keys ``"gated mAP 50:95"`` (with
+            ``"gated segm mAP 50:95"``) and ``"agnostic mAP 50:95"`` / ``"agnostic mAP 50"`` each add a column group.
+            ``"gated applied"`` set to ``0.0`` relabels the gated group as the all-class fallback; absent means the
+            gate applied.
         max_dets: Maximum detection count used for the mAR column label.
+        min_class_support: Ground-truth instance floor shown in the header of the gated group.
 
     Returns:
         Multi-line plain-text string ready to pass to ``console.print()``.
+
+    Examples:
+        >>> overall = {"mAP 50:95": 0.4, "mAP 50": 0.6, "mAP 75": 0.3, "mAR @500": 0.5}
+        >>> overall.update({"F1": 0.5, "Precision": 0.6, "Recall": 0.4, "gated mAP 50:95": 0.45})
+        >>> rendered = _render_overall_merged("Val", overall, 500, min_class_support=10)
+        >>> "mAP N≥10" in rendered and "0.4500" in rendered
+        True
     """
 
     def _fmt(v: float) -> str:
@@ -123,6 +134,26 @@ def _render_overall_merged(title_pfx: str, overall: dict[str, float], max_dets: 
                 [
                     ("50:95", _fmt(overall["segm mAP 50:95"])),
                     ("50", _fmt(overall["segm mAP 50"])),
+                ],
+            )
+        )
+
+    if "gated mAP 50:95" in overall:
+        gated_cols = [("50:95", _fmt(overall["gated mAP 50:95"]))]
+        if "gated segm mAP 50:95" in overall:
+            gated_cols.append(("segm 50:95", _fmt(overall["gated segm mAP 50:95"])))
+        # Absent key = gate applied; 0.0 = the gated value is the all-class fallback, so N≥k would mislabel it.
+        gate_applied = overall.get("gated applied", 1.0) != 0.0
+        groups.append(
+            (f"mAP N≥{min_class_support}" if gate_applied else f"mAP all (N≥{min_class_support} unmet)", gated_cols)
+        )
+    if "agnostic mAP 50:95" in overall:
+        groups.append(
+            (
+                "agnostic mAP",
+                [
+                    ("50:95", _fmt(overall["agnostic mAP 50:95"])),
+                    ("50", _fmt(overall["agnostic mAP 50"])),
                 ],
             )
         )
@@ -218,7 +249,8 @@ def _build_summary_renderable(
         title_pfx: Split label (e.g. ``"Val"`` or ``"Test"``).
         overall_rendered: Pre-rendered overall table string.
         per_class: Per-class dicts with keys ``name``, ``ap``, ``ar``,
-            ``f1``, ``precision``, ``recall``; skipped when empty.
+            ``f1``, ``precision``, ``recall``; skipped when empty. Rows that also carry ``support`` (the class's
+            ground-truth instance count) add a ``Support`` column.
 
     Returns:
         Rich ``Group`` renderable containing the overall table and, when present,
@@ -242,6 +274,9 @@ def _build_summary_renderable(
             header_style="bold cyan",
         )
         table.add_column("Class", style="dim", no_wrap=True)
+        show_support = any("support" in row for row in per_class)
+        if show_support:
+            table.add_column("Support", justify="right")
         table.add_column("AP 50:95", justify="right")
         table.add_column("AR", justify="right")
         table.add_column("F1", justify="right")
@@ -254,6 +289,7 @@ def _build_summary_renderable(
                 # and ``sign[/]`` would raise ``MarkupError``. ``Text`` renders it verbatim; ``str()``
                 # keeps a non-``str`` name from a malformed annotation file (``None``) from raising.
                 Text(str(row["name"])),
+                *([str(row.get("support", "—"))] if show_support else []),
                 _fmt(row["ap"]),
                 _fmt(row["ar"]),
                 _fmt(row["f1"]),
