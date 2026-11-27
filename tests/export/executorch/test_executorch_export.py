@@ -348,6 +348,28 @@ class TestExecuTorchExporterValidation:
 
         _check_executorch_available(require_runtime=True)  # must not raise
 
+    @pytest.mark.parametrize(
+        ("torch_version", "expectation"),
+        [
+            pytest.param("2.12.1", pytest.raises(ImportError, match="tensor does not have a device"), id="2.12"),
+            pytest.param("2.13.0", contextlib.nullcontext(), id="2.13"),
+            pytest.param("2.14.1+cpu", contextlib.nullcontext(), id="2.14-local-version"),
+        ],
+    )
+    def test_check_executorch_available_require_runtime_refuses_executorch_1_5_on_old_torch(
+        self, torch_version: str, expectation: Any, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
+    ) -> None:
+        """A torch older than 2.13 next to executorch 1.5 imports cleanly but fails every execute, so it is refused."""
+        fake_runtime_module = types.ModuleType("executorch.runtime")
+        fake_runtime_module.Runtime = mock.MagicMock()
+        monkeypatch.setitem(sys.modules, "executorch", types.ModuleType("executorch"))
+        monkeypatch.setitem(sys.modules, "executorch.runtime", fake_runtime_module)
+        versions = {"executorch": "1.5.1", "torch": torch_version}
+        mocker.patch("importlib.metadata.version", side_effect=versions.__getitem__)
+
+        with expectation:
+            _check_executorch_available(require_runtime=True)
+
     def test_load_executorch_method_runs_guard_before_touching_runtime(
         self, monkeypatch: pytest.MonkeyPatch, mocker: MockerFixture
     ) -> None:
