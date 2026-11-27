@@ -3,14 +3,19 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
+
 """Regression tests for COCO dataset handling.
 
 Tests cover:
 - Sparse COCO category ID remapping in ``ConvertCoco``
 - ``_load_classes`` hierarchy detection (GitHub #609)
+
+Tests for the Object365 dataset module.
 """
 
 import json
+import subprocess
+import sys
 import types
 from pathlib import Path
 from typing import Dict, List
@@ -43,17 +48,19 @@ from tests._markers import _requires_albumentations
 # Minimal image shared across all tests
 _IMAGE = Image.new("RGB", (100, 100))
 
+
 # Sparse COCO-style category IDs (as in the real COCO dataset: 1-90 with gaps)
 # e.g. COCO skips IDs 12, 26, 29, 30, 45, 66, 68, 69, 71, 83, 91
 _SPARSE_CAT_IDS = [1, 2, 3, 7, 8]  # sparse, non-zero-indexed
+
 
 _ANNOTATIONS = [
     {"bbox": [10, 10, 30, 30], "category_id": 1, "area": 900, "iscrowd": 0},
     {"bbox": [50, 50, 20, 20], "category_id": 7, "area": 400, "iscrowd": 0},
 ]
 
+
 _CAT2LABEL = {cat_id: i for i, cat_id in enumerate(sorted(_SPARSE_CAT_IDS))}
-# {1: 0, 2: 1, 3: 2, 7: 3, 8: 4}
 
 
 def _make_target(annotations=_ANNOTATIONS):
@@ -484,12 +491,6 @@ class TestInferCocoKeypointSchema:
         schema = infer_coco_keypoint_schema(annotation_path)
 
         assert schema.num_keypoints_per_class == [2]
-
-
-# ---------------------------------------------------------------------------
-# TestBuildO365RawGpuBackend — validates that build_o365_raw emits a WARNING
-# and passes gpu_postprocess when augmentation_backend != 'cpu'.
-# ---------------------------------------------------------------------------
 
 
 class TestBuildO365RawGpuBackend:
@@ -1272,6 +1273,7 @@ _PHANTOM_ROOT_CATEGORIES = [
     {"id": 4, "name": "trunk", "supercategory": "eggmasses"},
 ]
 
+
 # Annotated category ids of a Roboflow hierarchy split: the synthetic root (id 0) is either unused or annotated.
 _ROOT_ANNOTATION_CASES = [pytest.param([1, 4], id="unannotated-root"), pytest.param([0, 1], id="annotated-root")]
 
@@ -1584,3 +1586,20 @@ class TestCrossSplitLabelSpace:
             CocoDetection(tmp_path / "valid", ann_file, transforms=None, cat2label={1: 0})
 
         assert "remap_category_ids" in str(exc_info.value)
+
+
+def test_importing_rfdetr_keeps_process_pixel_limit() -> None:
+    """Importing ``rfdetr`` must not change ``PIL.Image.MAX_IMAGE_PIXELS`` (#1716).
+
+    Runs in a fresh interpreter: the package is already imported here, so an import-time side effect is not observable.
+    """
+    code = (
+        "import PIL.Image; "
+        "PIL.Image.MAX_IMAGE_PIXELS = 10_000; "
+        "import rfdetr; "
+        "assert PIL.Image.MAX_IMAGE_PIXELS == 10_000, PIL.Image.MAX_IMAGE_PIXELS"
+    )
+
+    result = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+
+    assert result.returncode == 0, result.stderr
