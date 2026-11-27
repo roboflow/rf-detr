@@ -3,7 +3,13 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Tests for RFDETR.inference()."""
+
+"""Tests for RFDETR.inference().
+
+Focused predict() contract tests for keypoint and non-keypoint outputs.
+
+Smoke test for RF-DETR keypoints carried by Supervision KeyPoints.
+"""
 
 import threading
 import weakref
@@ -14,7 +20,10 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import Mock, call, patch
 
+import numpy as np
+import PIL.Image
 import pytest
+import supervision as sv
 import torch
 import torch._dynamo
 from pytest_mock import MockerFixture
@@ -25,7 +34,7 @@ from rfdetr.detr import RFDETR
 from rfdetr.inference import ModelContext
 from rfdetr.models.heads.segmentation import SegmentationHead
 from tests._markers import _requires_two_cuda_devices
-from tests.inference.helpers import _DummyRFDETR
+from tests.inference.helpers import _DummyModel, _DummyRFDETR
 
 
 class _FakeModel(torch.nn.Module):
@@ -1418,3 +1427,56 @@ class TestExportInplaceOptimizeGuards:
         model._optimized_inplace = True
         with pytest.raises(RuntimeError, match="legacy inplace optimization"):
             model.deploy_to_roboflow("ws", "proj", 1)
+
+
+def test_predict_returns_supervision_keypoints() -> None:
+    """Keypoint model predictions return ``sv.KeyPoints`` with detection details."""
+    image = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+    model = _DummyRFDETR()
+    model.model = _DummyModel(labels=[0, 1], include_keypoints=True)
+
+    key_points = model.predict(image)
+
+    assert isinstance(key_points, sv.KeyPoints)
+    assert key_points.xy.shape == (2, 17, 2)
+    assert key_points.keypoint_confidence.shape == (2, 17)
+    assert key_points.data["xyxy"].shape == (2, 4)
+    assert key_points.detection_confidence.shape == (2,)
+    assert np.isfinite(key_points.xy).all()
+    assert np.isfinite(key_points.keypoint_confidence).all()
+    assert "keypoint_precision_cholesky" in key_points.data
+    keypoint_precision = key_points.data["keypoint_precision_cholesky"]
+    assert isinstance(keypoint_precision, np.ndarray)
+    assert keypoint_precision.shape == (2, 17, 3)
+    assert np.isfinite(keypoint_precision).all()
+    assert "source_image" in key_points.data
+    assert len(key_points.data["source_image"]) == 2
+
+
+def test_predict_default_detection_without_keypoints_unchanged() -> None:
+    """Default detection prediction keeps legacy output structure."""
+    image = PIL.Image.new("RGB", (64, 48), color=(128, 128, 128))
+    model = _DummyRFDETR()
+
+    detections = model.predict(image)
+
+    assert "keypoints" not in detections.data
+    assert not hasattr(detections, "keypoints")
+    assert "class_name" in detections.data
+    assert "source_shape" in detections.data
+    assert detections.data["source_shape"].shape[1] == 2
+
+
+def test_rfdetr_keypoints_include_detection_details() -> None:
+    """RF-DETR-style keypoints preserve detection boxes and scores."""
+    key_points = sv.KeyPoints(
+        xy=np.array([[[1.0, 2.0], [3.0, 4.0]]], dtype=np.float32),
+        keypoint_confidence=np.array([[0.9, 0.8]], dtype=np.float32),
+        detection_confidence=np.array([0.95], dtype=np.float32),
+        class_id=np.array([1], dtype=int),
+        data={"xyxy": np.array([[0, 0, 10, 10]], dtype=np.float32)},
+    )
+
+    assert key_points.xy.shape == (1, 2, 2)
+    np.testing.assert_array_equal(key_points.data["xyxy"], np.array([[0, 0, 10, 10]], dtype=np.float32))
+    np.testing.assert_array_equal(key_points.detection_confidence, np.array([0.95], dtype=np.float32))
