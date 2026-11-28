@@ -65,7 +65,14 @@ Resolution rules:
 
 ## Where does RF-DETR store downloaded weights, and how do I change it?
 
-Published checkpoints are cached in `~/.roboflow/models` by default. Override the location for all models by setting an environment variable — `RF_HOME` (canonical) or its alias `ROBOFLOW_HOME`:
+Published checkpoints follow the [XDG Base Directory Specification](https://specifications.freedesktop.org/basedir/latest/). RF-DETR picks the cache directory with the first rule that applies:
+
+1. `RF_HOME`, when set and not empty, is used as the exact directory.
+2. `ROBOFLOW_HOME` (an alias of `RF_HOME`), when set and not empty, is used as the exact directory.
+3. Otherwise the cache is `$XDG_CACHE_HOME/roboflow/models` when `XDG_CACHE_HOME` is an absolute path as written, or `~/.cache/roboflow/models` when it is unset, empty or relative. A `~` in `XDG_CACHE_HOME` is not expanded, so `XDG_CACHE_HOME=~/cache` counts as relative and is ignored.
+4. Exception to rule 3: when `~/.roboflow/models` already exists, RF-DETR keeps using it for as long as the directory from rule 3 does not exist, so existing checkpoints are not downloaded again. Once the directory from rule 3 exists, it wins and `~/.roboflow/models` is ignored; move or remove it to avoid keeping two copies.
+
+Override the exact model cache directory for all models by setting `RF_HOME` (canonical) or its alias `ROBOFLOW_HOME`:
 
 ```bash
 export RF_HOME=/mnt/shared/models
@@ -73,7 +80,7 @@ export RF_HOME=/mnt/shared/models
 export ROBOFLOW_HOME=/mnt/shared/models
 ```
 
-If both are set, `RF_HOME` wins. This only affects where **bare-filename** weights are cached; an explicit path in `pretrain_weights=` is always honored as given.
+If both are set, `RF_HOME` wins, and both take precedence over `XDG_CACHE_HOME` and the legacy directory. This only affects where **bare-filename** weights are cached; an explicit path in `pretrain_weights=` is always honored as given.
 
 Published checkpoints download from `https://repo.roboflow.com/rfdetr`. On a network that only allows listed hosts, allow `repo.roboflow.com`, or copy the files into the cache directory ahead of time: a cached file whose MD5 matches is never downloaded again.
 

@@ -786,9 +786,10 @@ class RFDETR:
         """Download pre-trained weights if they are not already downloaded.
 
         Bare filenames (no directory component, e.g. ``rf-detr-base.pth``) are resolved to the model cache directory —
-        set the ``RF_HOME`` environment variable to override the location (default: ``~/.roboflow/models``). Resolution
-        happens in ``ModelConfig.expand_path`` for explicitly-provided values, and here as a fallback for field defaults
-        (which Pydantic does not validate by default).
+        set the ``RF_HOME`` environment variable to override the location; the full resolution order is documented
+        on :func:`rfdetr.assets.model_weights.get_model_cache_dir`. Resolution happens in ``ModelConfig.expand_path``
+        for explicitly-provided values, and here as a fallback for field defaults (which Pydantic does not validate by
+        default).
 
         Paths that already contain a directory component are used as-is; the parent directory is created if it does not
         yet exist.
