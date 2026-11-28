@@ -3256,8 +3256,9 @@ class RFDETR:
             images:
                 A single image or an iterable of images to process. Images can be provided as string or path-like
                 file paths, URL strings, PIL Images, NumPy arrays, or torch.Tensors. Iterables other than lists and
-                tuples are read into a list first. PIL and file inputs convert to grayscale for one-channel models and
-                RGB for three-channel models.
+                tuples are read into a list first. PIL and file inputs convert to grayscale for one-channel models,
+                RGB for three-channel models and RGBA for four-channel models, which refuse an image without a
+                fourth channel.
                 HTTP(S) URL strings are downloaded with ``requests`` using a 30-second connect and read timeout,
                 which does not bound the total download time. Redirects are followed, and the whole response body is
                 read into memory with no size limit or host restriction. Pass only URLs you trust; for untrusted
