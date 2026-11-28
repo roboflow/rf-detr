@@ -159,6 +159,38 @@ class TestPredictReturnTypes:
         np.testing.assert_array_equal(result.metadata["source_image"], expected)
 
     @pytest.mark.parametrize("input_kind", ["pil", "path"])
+    def test_native_four_channel_images_keep_the_fourth_channel(self, tmp_path: Path, input_kind: str) -> None:
+        """A four-channel model reads RGBA from a file or PIL image instead of dropping the fourth channel."""
+        model = _DummyRFDETR()
+        model.model_config.num_channels = 4
+        model.means = [*model.means, model.means[0]]
+        model.stds = [*model.stds, model.stds[0]]
+        pixels = np.random.default_rng(0).integers(0, 256, (17, 29, 4), dtype=np.uint8)
+        image = PIL.Image.fromarray(pixels, "RGBA")
+        path = tmp_path / "image.png"
+        image.save(path)
+
+        result = model.predict(image if input_kind == "pil" else path)
+
+        np.testing.assert_array_equal(result.metadata["source_image"], pixels)
+
+    @pytest.mark.parametrize("input_kind", ["pil", "path"])
+    def test_native_four_channel_model_rejects_an_image_without_a_fourth_channel(
+        self, tmp_path: Path, input_kind: str
+    ) -> None:
+        """An RGB image names the missing channel instead of failing the tensor shape check."""
+        model = _DummyRFDETR()
+        model.model_config.num_channels = 4
+        model.means = [*model.means, model.means[0]]
+        model.stds = [*model.stds, model.stds[0]]
+        image = PIL.Image.new("RGB", (29, 17), (17, 127, 231))
+        path = tmp_path / "image.png"
+        image.save(path)
+
+        with pytest.raises(ValueError, match="has no fourth channel"):
+            model.predict(image if input_kind == "pil" else path)
+
+    @pytest.mark.parametrize("input_kind", ["pil", "path"])
     @pytest.mark.parametrize("num_channels", [1, 3])
     def test_native_16_bit_png_keeps_dynamic_range(self, tmp_path: Path, input_kind: str, num_channels: int) -> None:
         """A 16-bit grayscale PNG predicts on its scaled values instead of a clipped white image (#1728)."""

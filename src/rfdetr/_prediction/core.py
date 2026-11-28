@@ -1527,7 +1527,9 @@ def _prepare_batch(
             img, prefetched = img.path, img.decoded
         if isinstance(img, os.PathLike):
             img = os.fspath(img)
+        image_name = "The image"
         if isinstance(img, str):
+            image_name = img
             if urlparse(img).scheme in ("http", "https"):
                 resp = requests.get(img, timeout=30)
                 resp.raise_for_status()
@@ -1558,15 +1560,23 @@ def _prepare_batch(
             if include_source_image:
                 source_images.append(img.permute(1, 2, 0).numpy().copy())
         elif not isinstance(img, torch.Tensor):
-            # PIL owns the one-/three-channel conversion. Other channel counts require an explicit array or tensor.
+            # PIL owns the one-, three- and four-channel conversion. Other channel counts require an explicit array
+            # or tensor.
             if isinstance(img, Image.Image):
-                mode = "L" if context.config.num_channels == 1 else "RGB"
-                if img.mode != mode:
-                    # ``convert`` clips 16-bit grayscale to white; scale it to 8 bits first. The import
-                    # stays local so importing this module never pulls in the dataset package.
-                    from rfdetr.datasets._pillow_worker import to_8bit_grayscale
+                # The imports stay local so importing this module never pulls in the dataset package.
+                if context.config.num_channels == 4:
+                    # Same contract as the dataset readers: the fourth channel is data and is never invented.
+                    from rfdetr.datasets._pillow_worker import convert_image
 
-                    img = to_8bit_grayscale(img).convert(mode)
+                    if img.mode != "RGBA":
+                        img = convert_image(img, "RGBA", image_name)
+                else:
+                    mode = "L" if context.config.num_channels == 1 else "RGB"
+                    if img.mode != mode:
+                        # ``convert`` clips 16-bit grayscale to white; scale it to 8 bits first.
+                        from rfdetr.datasets._pillow_worker import to_8bit_grayscale
+
+                        img = to_8bit_grayscale(img).convert(mode)
             pil_image = isinstance(img, Image.Image)
             source_array: np.ndarray[Any, Any] | None = None
             if include_source_image:
