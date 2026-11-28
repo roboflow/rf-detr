@@ -3,10 +3,19 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Tests for dual-projector backbone joiner routing and per-level mask construction."""
+
+"""Tests for dual-projector backbone joiner routing and per-level mask construction.
+
+Tests for backbone export behavior.
+
+Tests for the BackboneBase subclass contract.
+"""
 
 from __future__ import annotations
 
+import argparse
+import sys
+from types import ModuleType
 from unittest.mock import MagicMock
 
 import pytest
@@ -16,6 +25,7 @@ from torch import nn
 
 from rfdetr.models.backbone import Joiner
 from rfdetr.models.backbone.backbone import Backbone
+from rfdetr.models.backbone.base import BackboneBase
 from rfdetr.utilities.tensors import NestedTensor, nested_tensor_from_tensor_list
 
 
@@ -238,3 +248,70 @@ class TestBackboneLevelMask:
         unflagged_twin = NestedTensor(nested.tensors, nested.mask, False)
         feat = torch.rand(2, 8, 20, 20)
         assert torch.equal(Backbone._level_mask(nested, feat), Backbone._level_mask(unflagged_twin, feat))
+
+
+class TestBackboneExport:
+    """Tests for ``Backbone.export``."""
+
+    def test_export_without_lora_encoder_skips_peft_import_and_warning(self, monkeypatch) -> None:
+        """Non-LoRA exports should not warn just because peft is unavailable."""
+        backbone = object.__new__(Backbone)
+        backbone.encoder = object()
+        warning_messages: list[str] = []
+
+        monkeypatch.delitem(sys.modules, "peft", raising=False)
+        monkeypatch.setattr("rfdetr.models.backbone.backbone.logger.warning", warning_messages.append)
+
+        backbone.export()
+
+        assert warning_messages == []
+
+    def test_export_replaces_peft_encoder_with_merged_encoder(self, monkeypatch) -> None:
+        """Export should replace PEFT wrapper with merged base encoder."""
+
+        class _MergedEncoder:
+            pass
+
+        class _FakePeftModel:
+            def __init__(self) -> None:
+                self._merged = _MergedEncoder()
+
+            def merge_and_unload(self):
+                return self._merged
+
+        peft_module = ModuleType("peft")
+        peft_module.PeftModel = _FakePeftModel
+        monkeypatch.setitem(sys.modules, "peft", peft_module)
+
+        backbone = object.__new__(Backbone)
+        backbone.encoder = _FakePeftModel()
+
+        backbone.export()
+
+        assert isinstance(backbone.encoder, _MergedEncoder)
+
+
+class TestBackboneBase:
+    """Tests the parameter-free base module and its subclass override contract."""
+
+    def test_is_parameter_free_module(self) -> None:
+        """A bare BackboneBase is a valid nn.Module with no parameters of its own.
+
+        BackboneBase carries no layers itself -- it only defines the get_named_param_lr_pairs contract that concrete
+        backbones such as Backbone (backbone.py) override. Instantiating it directly must still succeed as a normal
+        nn.Module.
+        """
+        base = BackboneBase()
+
+        assert list(base.parameters()) == []
+
+    def test_get_named_param_lr_pairs_raises_not_implemented(self) -> None:
+        """The unimplemented base method signals subclasses must override it.
+
+        Concrete backbones (e.g. Backbone.get_named_param_lr_pairs) override this method; calling it on the base class
+        directly must fail loudly with NotImplementedError rather than silently returning nothing.
+        """
+        base = BackboneBase()
+
+        with pytest.raises(NotImplementedError):
+            base.get_named_param_lr_pairs(argparse.Namespace(), prefix="backbone.0")

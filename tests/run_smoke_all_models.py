@@ -109,8 +109,8 @@ for _pe_model in (RFDETRAtto, RFDETRFemto, RFDETRPico):
 # 1008 (regression #1038).
 #
 # Note on Base: ``RFDETRBaseConfig.positional_encoding_size = 37`` is *not*
-# formula-derived (see test_load_pretrain_weights.py:TestLoadPretrainWeightsPEInterpolation
-# ::test_base_config_non_formula_pe_is_interpolated_from_smaller_checkpoint),
+# formula-derived (see tests/training/model/test_load_pretrain_weights.py
+# and TestLoadPretrainWeightsPEInterpolation::test_base_config_non_formula_pe_is_interpolated_from_smaller_checkpoint),
 # so this `÷16` description applies only to Nano/Small/Medium/Large.
 _CUSTOM_RESOLUTION = 1008
 

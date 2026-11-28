@@ -918,6 +918,13 @@ def _decode_prefetched_jpegs(images: Sequence[Any], device: torch.device) -> dic
     return dict(zip(encoded, _decode_jpegs_on_gpu(list(encoded.values()), device)))
 
 
+@dataclass
+class _ViewRetryState:
+    """Remember the reduced view limit for one prediction request."""
+
+    limit: int | None = None
+
+
 @torch.inference_mode()
 def _predict_batch(
     context_factory: Callable[[], PredictionContext],
@@ -929,6 +936,7 @@ def _predict_batch(
     antialias: bool | None,
     *,
     tta: TTAConfig | None = None,
+    view_retry: _ViewRetryState | None = None,
 ) -> _PredictionOutput:
     """Prepare images, execute one batch, and decode results using a shared contract.
 
@@ -946,6 +954,7 @@ def _predict_batch(
         include_source_image: Store the source image in result metadata.
         antialias: Use antialiasing during image resize. Match the checkpoint training resize.
         tta: The views to fuse (see :func:`_predict_shifted`); ``None`` runs the plain prediction.
+        view_retry: The reduced view limit shared by batches of this request, if any.
 
     Returns:
         One Supervision result or a list matching the input container.
@@ -975,7 +984,7 @@ def _predict_batch(
         tta=tta,
     )
     if len(prepared.views) > 1:
-        return _predict_shifted(prepared, patch_size)
+        return _predict_shifted(prepared, patch_size, view_retry if view_retry is not None else _ViewRetryState())
     return _decode_batch(prepared, prepared.context.run(prepared.batch_tensor))
 
 
@@ -1047,20 +1056,62 @@ def _mask_size(
     return max(1, round(height / ratio)), max(1, round(width / ratio))
 
 
+def _run_views(prepared: _PreparedBatch, chunk: list[int], canvas: tuple[int, int]) -> dict[str, torch.Tensor] | None:
+    """Place the views of ``chunk`` on ``canvas`` and run them as one forward pass.
+
+    An out-of-memory error of a forward with several views is not raised: the caller retries with fewer views, after
+    this function has returned, because the traceback of the error keeps the failed forward's tensors alive until the
+    ``except`` block ends.
+
+    Args:
+        prepared: The batch :func:`_prepare_batch` built.
+        chunk: Indices into ``prepared.views`` of the views that share this forward pass.
+        canvas: The canvas ``(height, width)`` every view of ``chunk`` shares.
+
+    Returns:
+        The model outputs for ``len(chunk) * B`` rows, view-major, or ``None`` when CUDA ran out of memory and the
+        chunk holds more than one view.
+
+    Raises:
+        torch.cuda.OutOfMemoryError: If a forward of a single view runs out of memory.
+    """
+    try:
+        placed = [
+            place_view(
+                prepared.batch_tensor,
+                prepared.views[i],
+                canvas,
+                antialias=prepared.antialias,
+                resize_on_cpu=prepared.resize_on_cpu,
+            )
+            for i in chunk
+        ]
+        return prepared.context.run(placed[0] if len(placed) == 1 else torch.cat(placed))
+    except torch.cuda.OutOfMemoryError:
+        if len(chunk) == 1:
+            raise
+    torch.cuda.empty_cache()
+    return None
+
+
 @torch.inference_mode()
-def _predict_shifted(prepared: _PreparedBatch, patch_size: int | None) -> _PredictionOutput:
+def _predict_shifted(
+    prepared: _PreparedBatch, patch_size: int | None, view_retry: _ViewRetryState
+) -> _PredictionOutput:
     """Run a prepared batch once per view and average the matching detections.
 
-    Each view mirrors, scales and places the batch on a canvas at least one ``patch_size * num_windows`` block larger
+    Each view scales and places the batch on a canvas at least one ``patch_size * num_windows`` block larger
     than needed for its shift, then maps the outputs back to the image. Views that share a canvas shape run together as
     one forward pass over ``B * V`` rows on CUDA (see :func:`_views_per_forward`), view-major, and the original view
-    order is restored before fusion. Each view keeps every top-k detection scoring above 0, with no threshold of its
-    own, so the fused score of :func:`~rfdetr._prediction.tta.fuse_passes` is the plain mean over the views;
-    ``threshold`` applies to that fused score only. Masks are built only for the detections kept.
+    order is restored before fusion. A forward that runs out of CUDA memory is retried with half the views, down to
+    one, and the smaller size holds for the rest of the request. Each view keeps every top-k detection scoring above
+    0, with no threshold of its own, so the fused score of :func:`~rfdetr._prediction.tta.fuse_passes` is the plain
+    mean over the views; ``threshold`` applies to that fused score only. Masks are built only for the detections kept.
 
     Args:
         prepared: The batch :func:`_prepare_batch` built, with at least two views.
         patch_size: Backbone patch size, or ``None`` for the model's own.
+        view_retry: Request-local limit lowered after a grouped forward runs out of memory.
 
     Returns:
         One Supervision result or a list matching the input container.
@@ -1081,15 +1132,17 @@ def _predict_shifted(prepared: _PreparedBatch, patch_size: int | None) -> _Predi
     # Mask logits stay at mask-head resolution until fusion has decided which detections are kept.
     mask_logits: list[torch.Tensor | None] = [None] * len(views)
     for canvas, indices in groups.items():
-        step = _views_per_forward(context, batch.shape[0], canvas, len(indices))
-        for start in range(0, len(indices), step):
+        start = 0
+        while start < len(indices):
+            step = _views_per_forward(context, batch.shape[0], canvas, len(indices))
+            if view_retry.limit is not None:
+                step = min(step, view_retry.limit)
             chunk = indices[start : start + step]
-            placed = [
-                place_view(batch, views[i], canvas, antialias=prepared.antialias, resize_on_cpu=prepared.resize_on_cpu)
-                for i in chunk
-            ]
-            outputs = context.run(placed[0] if len(placed) == 1 else torch.cat(placed))
-            del placed
+            outputs = _run_views(prepared, chunk, canvas)
+            if outputs is None:
+                view_retry.limit = max(1, len(chunk) // 2)
+                continue
+            start += len(chunk)
             split = {key: torch.chunk(outputs[key], len(chunk)) for key in _FUSED_OUTPUT_KEYS if key in outputs}
             mapped_boxes = []
             for position, index in enumerate(chunk):
@@ -1509,7 +1562,11 @@ def _prepare_batch(
             if isinstance(img, Image.Image):
                 mode = "L" if context.config.num_channels == 1 else "RGB"
                 if img.mode != mode:
-                    img = img.convert(mode)
+                    # ``convert`` clips 16-bit grayscale to white; scale it to 8 bits first. The import
+                    # stays local so importing this module never pulls in the dataset package.
+                    from rfdetr.datasets._pillow_worker import to_8bit_grayscale
+
+                    img = to_8bit_grayscale(img).convert(mode)
             pil_image = isinstance(img, Image.Image)
             source_array: np.ndarray[Any, Any] | None = None
             if include_source_image:

@@ -420,8 +420,8 @@ class TestProgressBarEndToEnd:
     directly against a ``MagicMock`` trainer — they verify the mixin's own logic but never exercise the
     ``on_train_batch_end`` -> ``set_postfix`` hook chain that decides what a user actually sees. These run a real
     ``build_trainer() + trainer.fit(fast_dev_run=2)`` (same fixture pattern as ``TestBuildTrainerSmoke`` in
-    ``test_trainer_smoke.py``, no real dataset or model weights) and inspect what actually reached the rendered progress
-    bar.
+    ``tests/training/trainer/test_trainer_smoke.py``, no real dataset or model weights) and inspect what actually
+    reached the rendered progress bar.
     """
 
     @pytest.mark.parametrize("key", ["max_mem", "free_mem"])

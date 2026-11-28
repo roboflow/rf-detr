@@ -62,12 +62,14 @@ class OpenVINOConfig(ExportConfig):
         calibration_data: Representative images the INT8 activation ranges are collected from. Required for
             ``"int8"``, unused otherwise.
         max_images: Maximum images read from a *calibration_data* directory.
+        static_input_shape: Fix all input dimensions to the tracing tensor's shape.
     """
 
     precision: str | None = None
     quantization: str | None = None
     calibration_data: Any = None
     max_images: int = 100
+    static_input_shape: bool = False
 
 
 class ModelWrapper(nn.Module):
@@ -128,10 +130,11 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
         "quantization": "quantization",
         "calibration_data": "calibration_data",
         "max_images": "max_images",
+        "static_input_shape": "openvino_static_shape",
     }
     format = "openvino"
     display_name = "OpenVINO"
-    dynamic_batch_reason = "(omit dynamic_batch; the converted OpenVINO IR already accepts any batch size)."
+    dynamic_batch_reason = "(omit dynamic_batch; the IR is dynamic unless openvino_static_shape=True)."
     pip_extra = "openvino"
     notes_reason = "OpenVINO IR has no ONNX-style metadata slot"
 
@@ -298,7 +301,12 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
         convert_model, save_model = converters
         try:
             with torch.no_grad():
-                ov_model = convert_model(wrapped_model, example_input=input_tensors)
+                if self.config.static_input_shape and self.config.quantization != "int8":
+                    ov_model = convert_model(
+                        wrapped_model, input=list(input_tensors.shape), example_input=input_tensors
+                    )
+                else:
+                    ov_model = convert_model(wrapped_model, example_input=input_tensors)
             if self.config.quantization == "int8":
                 _, channels, height, width = input_tensors.shape
                 ov_model = quantize_int8(
@@ -309,6 +317,9 @@ class OpenVINOExporter(Exporter[OpenVINOConfig]):
                     channels=int(channels),
                     max_images=self.config.max_images,
                 )
+                # NNCF collects activation ranges from one image at a time.
+                if self.config.static_input_shape:
+                    ov_model.reshape(list(input_tensors.shape))
             save_model(ov_model, str(output_xml), compress_to_fp16=compress_to_fp16)
         except (ImportError, NotImplementedError, TypeError, ValueError):
             # ImportError: convert_model lazily imports private submodules that can still fail on a

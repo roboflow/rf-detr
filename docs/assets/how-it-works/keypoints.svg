@@ -3,29 +3,29 @@
   <title id="title">How keypoint queries travel through the decoder</title>
   <desc id="desc">Every object query is joined by 17 keypoint queries, one per keypoint type, which start from learned vectors adjusted by that object query. In each of the 4 decoder layers the group first runs self-attention among the object query and its own keypoint queries only, then every keypoint query reads a second memory with deformable attention around the object's reference box, then a feed-forward layer updates it. After every layer a small MLP reads the keypoint queries and places 17 keypoints inside the object's box.</desc>
   <style>
-    text { font-family: "CMU Serif", "Latin Modern Roman", Georgia, "Times New Roman", serif; fill: #ECECEC; }
+    text { font-family: "CMU Serif", "Latin Modern Roman", Georgia, "Times New Roman", serif; fill: #F5F0FF; }
     .h { font-size: 24px; }
-    .s { font-size: 15px; fill: #B8B8B8; }
+    .s { font-size: 15px; fill: #BDB3CF; }
     .lbl { font-size: 15px; }
-    .arrow { stroke: #B8B8B8; stroke-width: 2; fill: none; marker-end: url(#tip); }
-    .step { fill: #22252C; stroke: #3A3F49; stroke-width: 1; }
-    .group { fill: none; stroke: #3A3F49; stroke-width: 1.5; stroke-dasharray: 6 4; }
-    .kp { fill: #8A5A1C; stroke: #F0AC5F; stroke-width: 1.5; }
-    .bone { stroke: #F0AC5F; stroke-width: 2; stroke-linecap: round; }
-    .joint { fill: #F0AC5F; }
+    .arrow { stroke: #BDB3CF; stroke-width: 2; fill: none; marker-end: url(#tip); }
+    .step { fill: #261A35; stroke: #4A3A63; stroke-width: 1; }
+    .group { fill: none; stroke: #4A3A63; stroke-width: 1.5; stroke-dasharray: 6 4; }
+    .kp { fill: #5B2A9A; stroke: #A351FB; stroke-width: 1.5; }
+    .bone { stroke: #A351FB; stroke-width: 2; stroke-linecap: round; }
+    .joint { fill: #A351FB; }
   </style>
   <defs>
     <marker id="tip" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
-      <path d="M 0 0 L 10 5 L 0 10 z" fill="#B8B8B8"/>
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#BDB3CF"/>
     </marker>
   </defs>
-  <rect width="1000" height="470" rx="16" fill="#16181D"/>
+  <rect width="1000" height="470" rx="16" fill="#1A1224"/>
   <text class="h" x="40" y="46">Each object query brings its own keypoint queries</text>
   <text class="s" x="40" y="70">a second stream of queries that runs through every decoder layer</text>
 
   <!-- one group: object query + 17 keypoint queries -->
   <rect class="group" x="40" y="100" width="250" height="200" rx="10"/>
-  <circle cx="76" cy="138" r="14" fill="#1C758A" stroke="#58C4DD" stroke-width="2"/>
+  <circle cx="76" cy="138" r="14" fill="#14786A" stroke="#A5F9EA" stroke-width="2"/>
   <text class="lbl" x="102" y="143">object query</text>
   <circle class="kp" cx="70" cy="185" r="7"/>
   <circle class="kp" cx="104" cy="185" r="7"/>
@@ -73,7 +73,7 @@
   <text class="s" x="676" y="238">MLP</text>
 
   <!-- output: 17 keypoints placed inside the object's box -->
-  <rect x="775" y="115" width="150" height="280" fill="none" stroke="#58C4DD" stroke-width="1.5" stroke-dasharray="6 4"/>
+  <rect x="775" y="115" width="150" height="280" fill="none" stroke="#A5F9EA" stroke-width="1.5" stroke-dasharray="6 4"/>
   <g class="bone">
     <line x1="876" y1="385" x2="872" y2="330"/>
     <line x1="872" y1="330" x2="868" y2="270"/>

@@ -58,7 +58,7 @@ jobs:
         # Install PyTorch CPU-only first (UV_TORCH_BACKEND=cpu works with 'uv pip').
         # [coreml] added on macOS only (coremltools is a macOS-only dependency).
         run: |
-          # The data extra installs webdataset for the streaming half of tests/datasets/test_webdataset.py behind
+          # The data extra installs webdataset for the streaming half of tests/datasets/io/test_webdataset.py behind
           # the _requires_webdataset skipif; without it those tests silently skip and only the packer stays covered.
           EXTRAS="train,augment,cli,visual,data"
           if [ "${{ runner.os }}" = "macOS" ]; then

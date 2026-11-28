@@ -1,0 +1,711 @@
+# ------------------------------------------------------------------------
+# RF-DETR
+# Copyright (c) 2025 Roboflow. All Rights Reserved.
+# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
+# ------------------------------------------------------------------------
+
+"""Tests for ONNX Runtime inference decoding (``_run_inference`` in ``rfdetr/export/_onnx/inference.py``).
+
+Before this file, ``_run_inference``'s detection decode had no dedicated unit test at all — only its preprocessing half
+was covered (``test_preprocess_parity.py``). This file covers the multi-label query/class selection, using the same
+``types.SimpleNamespace`` fake-session pattern the rest of the export test suite uses for mocking backend objects (see
+``tests/export/api/test_validation.py``).
+
+Tests for the ``notes`` setting on :class:`~rfdetr.export._onnx.exporter.OnnxConfig`, embedded by
+``OnnxExporter``.
+
+Preprocessing parity tests for the ONNX Runtime inference helper.
+
+``preprocess_to_nchw`` must produce the same input tensor as ``RFDETR.predict()`` for the same source image — the ONNX
+sibling of ``tests/export/tflite/test_tflite_inference_parity.py``. History: this path resized with PIL BILINEAR, which
+applies an adaptive antialias filter when downscaling; after predict() switched to ``antialias=False`` (#1206) the ONNX
+inputs diverged on 91%+ of float bits.
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+import torch
+import torch.nn as nn
+import torchvision.transforms.functional as F  # noqa: N812
+from PIL import Image as PILImage
+
+from rfdetr.export._onnx.exporter import OnnxConfig, OnnxExporter
+from rfdetr.export._onnx.inference import _create_onnx_session, _run_inference, _run_onnx_bound
+from rfdetr.export._runtime.preprocess import preprocess_to_nchw
+from rfdetr.export.prepare import ExportGraph
+from tests._markers import _requires_onnx, _requires_onnx_and_onnxruntime
+from tests._oriented_photo import upright_reference, write_oriented_photo
+
+_INPUT_SHAPE = [1, 3, 224, 224]
+
+
+def _make_boxes() -> np.ndarray:
+    """Return normalised cxcywh boxes, all centred at 0.5.
+
+    Examples:
+        >>> _make_boxes().shape
+        (1, 10, 4)
+    """
+    return np.array([[[0.5, 0.5, 0.1, 0.1]] * 10], dtype=np.float32)
+
+
+def _make_logits(high_conf_idx: int | None = 0) -> np.ndarray:
+    """Return logits with one high-confidence entry when requested.
+
+    Examples:
+        >>> _make_logits().shape
+        (1, 10, 82)
+        >>> float(_make_logits()[0, 0, 0])
+        10.0
+    """
+    logits = np.full((1, 10, 82), -10.0, dtype=np.float32)
+    if high_conf_idx is not None:
+        logits[0, high_conf_idx, 0] = 10.0
+    return logits
+
+
+class _FakeSession:
+    """Minimal ``onnxruntime.InferenceSession`` stand-in for ``_run_inference``."""
+
+    def __init__(self, boxes: np.ndarray, logits: np.ndarray, input_shape: list[int] | None = None) -> None:
+        self._boxes = boxes
+        self._logits = logits
+        self._input_shape = input_shape if input_shape is not None else _INPUT_SHAPE
+
+    def get_inputs(self) -> list[SimpleNamespace]:
+        return [SimpleNamespace(name="input", shape=self._input_shape)]
+
+    def get_outputs(self) -> list[SimpleNamespace]:
+        return [SimpleNamespace(name="dets"), SimpleNamespace(name="labels")]
+
+    def run(self, output_names: list[str] | None, feeds: dict[str, np.ndarray]) -> list[np.ndarray]:
+        del output_names, feeds
+        return [self._boxes, self._logits]
+
+
+@pytest.fixture()
+def rgb_image(tmp_path: Path) -> Path:
+    """Write a small RGB JPEG to a temp file and return its path."""
+    p = tmp_path / "image.jpg"
+    PILImage.new("RGB", (64, 64), color=(100, 150, 200)).save(p)
+    return p
+
+
+class TestRunInferenceBasics:
+    """``_run_inference`` return types and threshold filtering."""
+
+    def test_returns_detections_and_image(self, rgb_image: Path) -> None:
+        """A single image yields an ``sv.Detections`` plus the decoded PIL image."""
+        session = _FakeSession(_make_boxes(), _make_logits())
+        dets, img = _run_inference(session, rgb_image)
+        import supervision as sv
+
+        assert isinstance(dets, sv.Detections)
+        assert isinstance(img, PILImage.Image)
+
+    def test_detections_below_threshold_filtered(self, rgb_image: Path) -> None:
+        """Queries whose scores all sit below ``threshold`` produce no detections."""
+        session = _FakeSession(_make_boxes(), _make_logits(high_conf_idx=None))
+        dets, _ = _run_inference(session, rgb_image, threshold=0.3)
+        assert len(dets) == 0
+
+    def test_active_first_keypoint_layout_excludes_final_background(self, rgb_image: Path) -> None:
+        """The default excludes a higher final background score while retaining active keypoint slot 0."""
+        logits = np.full((1, 10, 2), -100.0, dtype=np.float32)
+        logits[0, 0, 0] = 9.0
+        logits[0, 0, 1] = 10.0
+        session = _FakeSession(_make_boxes(), logits)
+
+        dets, _ = _run_inference(session, rgb_image, threshold=0.3, num_select=1)
+
+        assert len(dets) == 1
+        assert dets.class_id.tolist() == [0]
+
+    def test_zero_foreground_classes_returns_no_detections(self, rgb_image: Path) -> None:
+        """A raw output with only the no-object logit excludes it, leaving no class dimension to select from."""
+        session = _FakeSession(_make_boxes(), np.zeros((1, 10, 1), dtype=np.float32))
+
+        dets, _ = _run_inference(session, rgb_image)
+
+        assert len(dets) == 0
+
+
+class TestRunInferenceExifOrientation:
+    """``_run_inference`` reads a tagged photo upright, as ``predict()`` reads a file."""
+
+    def test_returned_image_is_upright(self, tmp_path: Path) -> None:
+        """A photo stored 64 x 32 with EXIF orientation 6 comes back as ``ImageOps.exif_transpose`` shows it."""
+        photo = tmp_path / "photo.png"
+        write_oriented_photo(photo, 6, width=64, height=32)
+
+        _, image = _run_inference(_FakeSession(_make_boxes(), _make_logits()), photo)
+
+        np.testing.assert_array_equal(np.asarray(image), upright_reference(photo))
+
+    def test_boxes_are_in_the_upright_frame(self, tmp_path: Path) -> None:
+        """A centred box spans the upright 32 x 64 photo, not the stored 64 x 32 one."""
+        photo = tmp_path / "photo.png"
+        write_oriented_photo(photo, 6, width=64, height=32)
+
+        dets, _ = _run_inference(_FakeSession(_make_boxes(), _make_logits()), photo, threshold=0.3)
+
+        np.testing.assert_allclose(dets.xyxy[0], [14.4, 28.8, 17.6, 35.2], rtol=1e-5)
+
+
+class TestMulticlassSelection:
+    """``_run_inference`` must select query/class pairs the same way ``PostProcess._select_topk`` does — flatten (Q, C)
+    and rank all pairs together, not a per-query argmax.
+
+    See the analogous test in ``test_tflite_inference.py`` and the shared selection helper in
+    ``rfdetr/export/_topk.py``.
+    """
+
+    def test_multiclass_query_reports_every_class_above_threshold(self, rgb_image: Path) -> None:
+        """One query clearing the threshold on three classes yields three detections ranked by confidence."""
+        logits = np.full((1, 10, 82), -100.0, dtype=np.float32)
+        logits[0, 0, 0] = 5.0  # sigmoid ~0.9933
+        logits[0, 0, 1] = 2.0  # sigmoid ~0.8808
+        logits[0, 0, 2] = 1.0  # sigmoid ~0.7311
+        session = _FakeSession(_make_boxes(), logits)
+
+        dets, _ = _run_inference(session, rgb_image, threshold=0.3)
+
+        assert len(dets) == 3, "query 0 clears threshold=0.3 on 3 classes; all 3 must be reported"
+        assert sorted(dets.class_id.tolist()) == [0, 1, 2]
+        assert list(dets.confidence) == sorted(dets.confidence, reverse=True)
+        assert dets.class_id[0] == 0  # highest logit (5.0) still ranks first
+
+    def test_final_logit_column_is_decoded_without_background_class(self, rgb_image: Path) -> None:
+        """Passing ``None`` keeps the final slot for sparse COCO checkpoints."""
+        logits = np.full((1, 10, 91), -100.0, dtype=np.float32)
+        logits[0, 0, -1] = 10.0
+        session = _FakeSession(_make_boxes(), logits)
+
+        dets, _ = _run_inference(session, rgb_image, threshold=0.3, background_class_id=None)
+
+        assert len(dets) == 1
+        assert dets.class_id.tolist() == [90]
+
+    def test_background_first_layout_preserves_foreground_slot_id(self, rgb_image: Path) -> None:
+        """Excluding slot 0 keeps the original foreground class ID instead of shifting it."""
+        logits = np.full((1, 10, 2), -100.0, dtype=np.float32)
+        logits[0, 0, 0] = 10.0
+        logits[0, 0, 1] = 9.0
+        session = _FakeSession(_make_boxes(), logits)
+
+        dets, _ = _run_inference(session, rgb_image, threshold=0.3, num_select=1, background_class_id=0)
+
+        assert len(dets) == 1
+        assert dets.class_id.tolist() == [1]
+
+    def test_explicit_num_select_caps_export_decode(self, rgb_image: Path) -> None:
+        """An explicit exported-model cap limits query/class pairs before thresholding."""
+        logits = np.full((1, 10, 82), -100.0, dtype=np.float32)
+        logits[0, :, 0] = 10.0
+        session = _FakeSession(_make_boxes(), logits)
+
+        dets, _ = _run_inference(session, rgb_image, threshold=0.3, num_select=3)
+
+        assert len(dets) == 3
+
+
+@pytest.fixture()
+def tiny_onnx_model(tmp_path: Path) -> Path:
+    """Write a minimal single-node ONNX model and return its path.
+
+    ``_create_onnx_session`` only needs a loadable graph; an ``Identity`` node avoids depending on the real RF-DETR
+    export path for a session-construction test.
+
+    Examples:
+        Pytest fixture functions cannot be called directly outside fixture injection.
+        >>> tiny_onnx_model(Path("."))  # doctest: +SKIP
+    """
+    import onnx
+
+    tensor_proto, helper = onnx.TensorProto, onnx.helper
+
+    inp = helper.make_tensor_value_info("input", tensor_proto.FLOAT, [1, 3, 8, 8])
+    out = helper.make_tensor_value_info("output", tensor_proto.FLOAT, [1, 3, 8, 8])
+    node = helper.make_node("Identity", inputs=["input"], outputs=["output"])
+    graph = helper.make_graph([node], "test", [inp], [out])
+    # Pin IR 10: onnx >=1.20 defaults to IR 13, which onnxruntime 1.23.2 (last cp310 release) refuses at load time.
+    model = helper.make_model(graph, ir_version=10, opset_imports=[helper.make_opsetid("", 13)])
+    onnx_path = tmp_path / "identity.onnx"
+    onnx.save(model, str(onnx_path))
+    return onnx_path
+
+
+@pytest.fixture()
+def dynamic_batch_onnx_model(tmp_path: Path) -> Path:
+    """Write an ONNX model with a symbolic batch axis and two outputs, per-channel sums and the doubled input.
+
+    Examples:
+        Pytest fixture functions cannot be called directly outside fixture injection.
+        >>> dynamic_batch_onnx_model(Path("."))  # doctest: +SKIP
+    """
+    import onnx
+
+    tensor_proto, helper = onnx.TensorProto, onnx.helper
+
+    inp = helper.make_tensor_value_info("input", tensor_proto.FLOAT, ["batch", 3, 8, 8])
+    sums = helper.make_tensor_value_info("sums", tensor_proto.FLOAT, ["batch", 3])
+    doubled = helper.make_tensor_value_info("doubled", tensor_proto.FLOAT, ["batch", 3, 8, 8])
+    axes = helper.make_tensor("axes", tensor_proto.INT64, [2], [2, 3])
+    two = helper.make_tensor("two", tensor_proto.FLOAT, [], [2.0])
+    nodes = [
+        helper.make_node("ReduceSum", inputs=["input", "axes"], outputs=["sums"], keepdims=0),
+        helper.make_node("Mul", inputs=["input", "two"], outputs=["doubled"]),
+    ]
+    graph = helper.make_graph(nodes, "test", [inp], [sums, doubled], initializer=[axes, two])
+    # Pin IR 10: onnx >=1.20 defaults to IR 13, which onnxruntime 1.23.2 (last cp310 release) refuses at load time.
+    model = helper.make_model(graph, ir_version=10, opset_imports=[helper.make_opsetid("", 13)])
+    onnx_path = tmp_path / "dynamic.onnx"
+    onnx.save(model, str(onnx_path))
+    return onnx_path
+
+
+@pytest.fixture()
+def mixed_dtype_onnx_model(tmp_path: Path) -> Path:
+    """Write an ONNX model with a float16 input and two outputs, the input cast to int64 and the input unchanged.
+
+    Examples:
+        Pytest fixture functions cannot be called directly outside fixture injection.
+        >>> mixed_dtype_onnx_model(Path("."))  # doctest: +SKIP
+    """
+    import onnx
+
+    tensor_proto, helper = onnx.TensorProto, onnx.helper
+
+    inp = helper.make_tensor_value_info("input", tensor_proto.FLOAT16, ["batch", 3, 8, 8])
+    counts = helper.make_tensor_value_info("counts", tensor_proto.INT64, ["batch", 3, 8, 8])
+    same = helper.make_tensor_value_info("same", tensor_proto.FLOAT16, ["batch", 3, 8, 8])
+    nodes = [
+        helper.make_node("Cast", inputs=["input"], outputs=["counts"], to=tensor_proto.INT64),
+        helper.make_node("Identity", inputs=["input"], outputs=["same"]),
+    ]
+    graph = helper.make_graph(nodes, "test", [inp], [counts, same])
+    # Pin IR 10: onnx >=1.20 defaults to IR 13, which onnxruntime 1.23.2 (last cp310 release) refuses at load time.
+    model = helper.make_model(graph, ir_version=10, opset_imports=[helper.make_opsetid("", 13)])
+    onnx_path = tmp_path / "mixed.onnx"
+    onnx.save(model, str(onnx_path))
+    return onnx_path
+
+
+@_requires_onnx_and_onnxruntime
+@pytest.mark.integration
+@pytest.mark.e2e_onnx
+class TestRunOnnxBound:
+    """``_run_onnx_bound`` feeds ONNX Runtime the batch's own memory and writes each output into a new tensor.
+
+    The CUDA provider uses it to keep a batch on the GPU. Its binding code does not depend on the device, so the CPU
+    provider checks it here against the plain ``session.run`` path.
+    """
+
+    @pytest.mark.parametrize("batch_size", [1, 3])
+    def test_matches_session_run_bitwise(self, dynamic_batch_onnx_model: Path, batch_size: int) -> None:
+        """Every output equals the ``session.run`` result."""
+        session = _create_onnx_session(dynamic_batch_onnx_model, providers=["CPUExecutionProvider"])
+        batch = torch.arange(batch_size * 3 * 8 * 8, dtype=torch.float32).reshape(batch_size, 3, 8, 8)
+
+        actual = _run_onnx_bound(session, "input", batch, session.get_outputs())
+
+        expected = session.run(None, {"input": batch.numpy()})
+        assert all(torch.equal(tensor, torch.from_numpy(array)) for tensor, array in zip(actual, expected))
+
+    @pytest.mark.parametrize("batch_size", [1, 3])
+    def test_outputs_take_the_batch_size_for_their_first_axis(
+        self, dynamic_batch_onnx_model: Path, batch_size: int
+    ) -> None:
+        """Each output tensor leads with the batch size and keeps the graph's static axes."""
+        session = _create_onnx_session(dynamic_batch_onnx_model, providers=["CPUExecutionProvider"])
+        batch = torch.zeros(batch_size, 3, 8, 8)
+
+        actual = _run_onnx_bound(session, "input", batch, session.get_outputs())
+
+        assert [tuple(tensor.shape) for tensor in actual] == [(batch_size, 3), (batch_size, 3, 8, 8)]
+
+    def test_keeps_the_dtype_of_each_output(self, mixed_dtype_onnx_model: Path) -> None:
+        """A float16 input and int64 and float16 outputs bind with their own dtypes and match ``session.run``."""
+        session = _create_onnx_session(mixed_dtype_onnx_model, providers=["CPUExecutionProvider"])
+        batch = torch.arange(2 * 3 * 8 * 8, dtype=torch.float16).reshape(2, 3, 8, 8)
+
+        actual = _run_onnx_bound(session, "input", batch, session.get_outputs())
+
+        expected = session.run(None, {"input": batch.numpy()})
+        assert [tensor.dtype for tensor in actual] == [torch.int64, torch.float16]
+        assert all(torch.equal(tensor, torch.from_numpy(array)) for tensor, array in zip(actual, expected))
+
+
+@_requires_onnx_and_onnxruntime
+@pytest.mark.integration
+@pytest.mark.e2e_onnx
+class TestCreateOnnxSession:
+    """Tests for ``_create_onnx_session``'s CPU thread-pool configuration.
+
+    ``_run_inference``'s own preprocessing (``preprocess_to_nchw``, via ``torchvision`` when installed) runs in the same
+    process as the session it feeds. ONNX Runtime's default CPU thread pool busy-spins between calls rather than
+    blocking, so those idle-but-spinning threads contend for CPU with that preprocessing step -- and with the session's
+    own next call -- for as long as the process lives. Disabling spinning only changes how idle threads wait; it does
+    not change computed values.
+    """
+
+    @pytest.mark.parametrize(
+        "providers",
+        [
+            pytest.param(["CPUExecutionProvider"], id="cpu"),
+            pytest.param(["CUDAExecutionProvider", "CPUExecutionProvider"], id="unavailable-gpu-then-cpu"),
+        ],
+    )
+    def test_disables_spinning_on_cpu(self, tiny_onnx_model: Path, providers: list[str]) -> None:
+        """The session must not let its CPU threads busy-spin, whichever provider list was requested.
+
+        The spin-config entries attach before provider selection. ONNX Runtime falls back to an available provider with
+        a warning, rather than raising, when the list names a GPU provider unavailable on the test machine.
+        """
+        session = _create_onnx_session(tiny_onnx_model, providers=providers)
+
+        options = session.get_session_options()
+        assert options.get_session_config_entry("session.intra_op.allow_spinning") == "0"
+        assert options.get_session_config_entry("session.inter_op.allow_spinning") == "0"
+
+    def test_sizes_the_intra_op_pool_from_num_threads(self, tiny_onnx_model: Path) -> None:
+        """`num_threads` sets the CPU intra-op pool, which ONNX Runtime otherwise sizes to the physical cores.
+
+        A benchmark that pins the other CPU runtimes to every logical core needs this to give ONNX Runtime the same
+        pool.
+        """
+        session = _create_onnx_session(tiny_onnx_model, providers=["CPUExecutionProvider"], num_threads=3)
+
+        assert session.get_session_options().intra_op_num_threads == 3
+
+    def test_leaves_the_intra_op_pool_to_onnx_runtime_by_default(self, tiny_onnx_model: Path) -> None:
+        """Without `num_threads` the pool stays at ONNX Runtime's own default of 0, which means its automatic size."""
+        session = _create_onnx_session(tiny_onnx_model, providers=["CPUExecutionProvider"])
+
+        assert session.get_session_options().intra_op_num_threads == 0
+
+    def test_still_produces_correct_output(self, tiny_onnx_model: Path) -> None:
+        """Disabling spinning must not change what the session computes."""
+        session = _create_onnx_session(tiny_onnx_model, providers=["CPUExecutionProvider"])
+
+        feed = np.arange(3 * 8 * 8, dtype=np.float32).reshape(1, 3, 8, 8)
+        (actual,) = session.run(None, {session.get_inputs()[0].name: feed})
+
+        np.testing.assert_array_equal(actual, feed)
+
+
+# The helper doctest exports a real ONNX model, so it needs the package a class-level skipif cannot gate.
+__doctest_requires__ = {("_export_tiny_model", "_embedded_metadata"): ["onnx"]}
+
+
+#: A list that contains itself: JSON cannot encode it, and ``json.dumps`` reports it as a ``ValueError``.
+_CIRCULAR_NOTES: list[object] = []
+
+
+_CIRCULAR_NOTES.append(_CIRCULAR_NOTES)
+
+
+class _TinyModel(nn.Module):
+    """Minimal model that can be exported to ONNX."""
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Run a trivial identity-like forward pass.
+
+        Args:
+            x: Input tensor.
+
+        Returns:
+            Input tensor unchanged.
+        """
+        return x
+
+
+def _export_tiny_model(tmp_path: Path, notes: object = None) -> str:
+    """Export a tiny model to ONNX and return the output file path.
+
+    Args:
+        tmp_path: Temporary directory provided by pytest.
+        notes: Optional notes to embed in the ONNX file.
+
+    Returns:
+        Path to the exported ONNX file.
+
+    Examples:
+        ``export_onnx`` logs its success at INFO, and rf-detr's stdout handler re-resolves
+        ``sys.stdout`` per record, so without the redirect the log line lands in doctest's captured
+        output and is compared against the expected value.
+
+        >>> import contextlib
+        >>> import io
+        >>> import tempfile
+        >>> from pathlib import Path
+        >>> with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
+        ...     out = _export_tiny_model(Path(d))
+        >>> Path(out).suffix
+        '.onnx'
+    """
+    model = _TinyModel().eval()
+    input_tensor = torch.randn(1, 3, 32, 32)
+    graph = ExportGraph(
+        model=model,
+        input_tensors=input_tensor,
+        input_names=("input",),
+        output_names=("output",),
+        dynamic_axes=None,
+        shape=(32, 32),
+        backbone_only=False,
+    )
+    return str(OnnxExporter(OnnxConfig(output_dir=tmp_path, verbose=False, notes=notes))(graph))
+
+
+def _embedded_metadata(onnx_path: str) -> dict[str, str]:
+    """Return the ``metadata_props`` of the ONNX file at *onnx_path* as a key/value dict.
+
+    Args:
+        onnx_path: Path to an exported ONNX file.
+
+    Returns:
+        Mapping of each metadata property key to its string value.
+
+    Examples:
+        >>> import contextlib, io, tempfile
+        >>> from pathlib import Path
+        >>> with tempfile.TemporaryDirectory() as d, contextlib.redirect_stdout(io.StringIO()):
+        ...     meta = _embedded_metadata(_export_tiny_model(Path(d), notes="hi"))
+        >>> meta["rfdetr_notes"]
+        'hi'
+    """
+    import onnx
+
+    return {prop.key: prop.value for prop in onnx.load(onnx_path).metadata_props}
+
+
+@_requires_onnx
+class TestExportOnnxNotes:
+    """Verify ``notes`` metadata round-trips through the ONNX export."""
+
+    @pytest.mark.parametrize(
+        ("notes", "expected_value"),
+        [
+            pytest.param("simple string", "simple string", id="string"),
+            pytest.param(
+                {"date": "2026-01-01", "labeller": "Alice"},
+                '{"date": "2026-01-01", "labeller": "Alice"}',
+                id="dict",
+            ),
+            pytest.param(["class_a", "class_b"], '["class_a", "class_b"]', id="list"),
+            pytest.param(42, "42", id="int"),
+            pytest.param("Reviewer: Łukasz · 2026-Q2 · ✅", "Reviewer: Łukasz · 2026-Q2 · ✅", id="unicode"),
+        ],
+    )
+    def test_notes_embedded_in_onnx_metadata(self, tmp_path: Path, notes: object, expected_value: str) -> None:
+        """Notes are stored as the 'rfdetr_notes' metadata entry: strings verbatim (unicode intact), the rest as
+        JSON."""
+        meta = _embedded_metadata(_export_tiny_model(tmp_path, notes=notes))
+
+        assert "rfdetr_notes" in meta
+        assert meta["rfdetr_notes"] == expected_value
+
+    def test_dict_notes_round_trip_via_json(self, tmp_path: Path) -> None:
+        """Dict notes deserialise back to the original dict via json.loads."""
+        notes = {"project": "ceramics", "batch": 7}
+
+        meta = _embedded_metadata(_export_tiny_model(tmp_path, notes=notes))
+
+        assert json.loads(meta["rfdetr_notes"]) == notes
+
+    def test_no_notes_metadata_when_notes_is_none(self, tmp_path: Path) -> None:
+        """When notes=None (default), no 'rfdetr_notes' metadata entry is written."""
+        meta = _embedded_metadata(_export_tiny_model(tmp_path, notes=None))
+
+        assert "rfdetr_notes" not in meta
+
+    @pytest.mark.parametrize(
+        "notes",
+        [
+            pytest.param("", id="empty_string"),
+            pytest.param({}, id="empty_dict"),
+            pytest.param([], id="empty_list"),
+            pytest.param(0, id="zero"),
+            pytest.param(False, id="false"),
+        ],
+    )
+    def test_falsy_notes_still_embedded(self, tmp_path: Path, notes: object) -> None:
+        """Falsy but non-None notes are embedded; guard is 'is not None', not truthiness."""
+        meta = _embedded_metadata(_export_tiny_model(tmp_path, notes=notes))
+
+        assert "rfdetr_notes" in meta
+
+    def test_embedding_notes_does_not_read_a_module_level_onnx_binding(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Notes still reach the file when the exporter module carries a stale ``onnx = None`` binding.
+
+        The exporter module used to bind ``onnx`` at import, to ``None`` without the package, and ``_embed_notes`` read
+        it, so a notebook that installed ``onnx`` after the import lost its notes. ``_embed_notes`` now imports ``onnx``
+        when it runs and nothing binds the name at module level; the planted binding fails this test only if a read of
+        such a binding comes back. The late-install scenario itself is covered by
+        ``test_onnx_installed_after_a_refused_check_is_found``.
+        """
+        monkeypatch.setattr("rfdetr.export._onnx.exporter.onnx", None, raising=False)
+
+        meta = _embedded_metadata(_export_tiny_model(tmp_path, notes={"run": 1}))
+
+        assert meta["rfdetr_notes"] == '{"run": 1}'
+
+    @pytest.mark.parametrize(
+        "notes, error",
+        [
+            (float("nan"), ValueError),
+            (float("inf"), ValueError),
+            pytest.param({"scores": [float("nan")]}, ValueError, id="nested-nan"),
+            pytest.param({1, 2}, TypeError, id="set"),
+            pytest.param(_CIRCULAR_NOTES, ValueError, id="circular"),
+        ],
+    )
+    def test_unserializable_notes_are_refused_at_construction(
+        self, tmp_path: Path, notes: object, error: type[Exception]
+    ) -> None:
+        """A value the metadata slot cannot hold is refused when the exporter is built, before any trace."""
+        with pytest.raises(error, match="notes"):
+            OnnxExporter(OnnxConfig(output_dir=tmp_path, verbose=False, notes=notes))
+
+
+IMAGENET_MEAN = [0.485, 0.456, 0.406]
+
+
+IMAGENET_STD = [0.229, 0.224, 0.225]
+
+
+# Same bound as the TFLite parity file: the torch-free NumPy fallback matches the torchvision
+# path up to float32 op-order noise (~5e-5 in normalised space).
+FALLBACK_MAX_ABS_DIFF_BOUND = 1e-3
+
+
+def _pytorch_preprocess(pil_img: PILImage.Image, hw: tuple[int, int]) -> np.ndarray:
+    """Mirror of the PyTorch predict() preprocessing: to_tensor -> resize(antialias=False) -> normalize.
+
+    Examples:
+        >>> import numpy as np
+        >>> from PIL import Image as PILImage
+        >>> img = PILImage.new("RGB", (64, 64), color=(128, 64, 32))
+        >>> arr = _pytorch_preprocess(img, (32, 32))
+        >>> arr.shape
+        (1, 3, 32, 32)
+        >>> arr.dtype
+        dtype('float32')
+    """
+    img = F.to_tensor(pil_img)
+    img = F.resize(img, list(hw), antialias=False)
+    img = F.normalize(img, IMAGENET_MEAN, IMAGENET_STD)
+    return img.unsqueeze(0).numpy()
+
+
+def _make_synthetic_rgb(seed: int, size: tuple[int, int]) -> PILImage.Image:
+    """Deterministic synthetic RGB image with structure (not pure noise) so resize filtering matters.
+
+    Examples:
+        >>> img = _make_synthetic_rgb(0, (64, 64))
+        >>> img.size
+        (64, 64)
+        >>> img.mode
+        'RGB'
+    """
+    rng = np.random.default_rng(seed)
+    height, width = size
+    base = rng.integers(0, 256, size=(height // 8, width // 8, 3), dtype=np.uint8)
+    pil_small = PILImage.fromarray(base, mode="RGB")
+    return pil_small.resize((width, height), getattr(PILImage, "Resampling", PILImage).NEAREST)
+
+
+class TestOnnxPreprocessingParity:
+    """``preprocess_to_nchw`` must match predict()'s preprocessing bit-for-bit with torchvision."""
+
+    @pytest.mark.parametrize(
+        ("src_hw", "tgt", "seed"),
+        [
+            pytest.param((720, 1280), (384, 384), 5, id="1280x720_to_384x384"),
+            pytest.param((600, 800), (384, 384), 8, id="800x600_to_384x384"),
+            pytest.param((500, 500), (256, 256), 11, id="500x500_to_256x256"),
+            pytest.param((384, 384), (384, 384), 9, id="identity_384x384"),
+        ],
+    )
+    def test_matches_pytorch_predict_preprocessing_bitwise(
+        self, src_hw: tuple[int, int], tgt: tuple[int, int], seed: int
+    ) -> None:
+        """The ONNX preprocessing matches PyTorch predict preprocessing bitwise for each source and target size."""
+        pil = _make_synthetic_rgb(seed=seed, size=src_hw)
+
+        pt = _pytorch_preprocess(pil, tgt)
+        onnx = preprocess_to_nchw(pil, tgt[0], tgt[1], channels=3)
+
+        assert pt.shape == onnx.shape, f"shape mismatch: PT {pt.shape} vs ONNX {onnx.shape}"
+        pt32 = np.ascontiguousarray(pt, dtype=np.float32).view(np.uint32)
+        on32 = np.ascontiguousarray(onnx, dtype=np.float32).view(np.uint32)
+        n_diff = int((pt32 != on32).sum())
+        assert n_diff == 0, (
+            f"ONNX preprocessing diverged from predict(): {n_diff}/{pt32.size} float bits differ "
+            f"(max|diff|={float(np.abs(pt - onnx).max()):.6f}). With torchvision importable it must "
+            f"run predict()'s exact call chain (to_tensor -> resize(antialias=False) -> normalize)."
+        )
+
+    def test_antialias_true_would_be_much_worse(self) -> None:
+        """Discriminator: torchvision's ``antialias=True`` default must diverge far from predict().
+
+        The regression this file guards against — the ONNX path silently resized with antialiasing after predict()
+        switched to ``antialias=False`` (#1206), flipping 91%+ of float bits. The current code must stay bit-identical
+        to predict() while the antialiased variant stays far away, proving the bitwise parity assertion discriminates on
+        the antialias flag rather than passing vacuously.
+        """
+        pil = _make_synthetic_rgb(seed=13, size=(720, 1280))
+        tgt = (384, 384)
+
+        pt = _pytorch_preprocess(pil, tgt)
+        onnx = preprocess_to_nchw(pil, tgt[0], tgt[1], channels=3)
+
+        img = F.to_tensor(pil.convert("RGB"))
+        img = F.resize(img, list(tgt), antialias=True)
+        img = F.normalize(img, IMAGENET_MEAN, IMAGENET_STD)
+        antialias = img.unsqueeze(0).numpy()
+
+        pt32 = np.ascontiguousarray(pt, dtype=np.float32).view(np.uint32)
+        on32 = np.ascontiguousarray(onnx, dtype=np.float32).view(np.uint32)
+        assert int((pt32 != on32).sum()) == 0, "current ONNX code must stay bit-identical to predict()"
+
+        max_diff_antialias = float(np.abs(pt - antialias).max())
+        assert max_diff_antialias > 0.1, (
+            f"antialias=True variant unexpectedly close to predict() (max|diff|={max_diff_antialias:.4f}); "
+            "this test can no longer discriminate the antialias regression."
+        )
+
+    def test_torch_free_fallback_still_close(self) -> None:
+        """With torch masked out, the NumPy fallback stays within float32 op-order noise of predict()."""
+        from unittest import mock
+
+        pil = _make_synthetic_rgb(seed=6, size=(720, 1280))
+        tgt = (384, 384)
+        pt = _pytorch_preprocess(pil, tgt)
+
+        with mock.patch.dict(sys.modules, {"torch": None}):
+            onnx = preprocess_to_nchw(pil, tgt[0], tgt[1], channels=3)
+
+        max_diff = float(np.abs(pt - onnx).max())
+        assert max_diff < FALLBACK_MAX_ABS_DIFF_BOUND, (
+            f"Torch-free NumPy fallback diverged: max|diff|={max_diff:.4f} > {FALLBACK_MAX_ABS_DIFF_BOUND}. "
+            "The fallback must use _bilinear_resize_half_pixel (antialias-free, half-pixel centres)."
+        )
+
+    def test_grayscale_channel_handling(self) -> None:
+        """Grayscale (channels=1) path must produce shape (1, 1, H, W) float32."""
+        rng = np.random.default_rng(7)
+        pil = PILImage.fromarray(rng.integers(0, 256, size=(256, 256), dtype=np.uint8), mode="L")
+        onnx = preprocess_to_nchw(pil, 128, 128, channels=1)
+        assert onnx.shape == (1, 1, 128, 128), f"unexpected shape: {onnx.shape}"
+        assert onnx.dtype == np.float32

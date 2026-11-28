@@ -1,0 +1,340 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="530" viewBox="0 0 1000 530" role="img" aria-labelledby="title desc">
+  <title id="title">How mean average precision (mAP) is computed, step by step</title>
+  <desc id="desc">Animated, three panels. Panel 1: three sample images of a cartoon person-and-dog scene with dashed ground-truth boxes and solid purple detection boxes with score tags. Image A has 2 objects and 3 detections (0.95 on the person, 0.70 on the dog, 0.60 on empty background); image B has 1 object, a person, and 2 detections (0.90 and a duplicate 0.80); image C has 1 object, a dog, and no detection. Panel 2: the 5 detections are taken in score order at an IoU threshold of 0.50, the 4 objects counted as one class. For each, the box is highlighted, its IoU with the object is computed (0.83, 0.91, 0.68, 0.57, 0.04), it is judged a hit or a miss (hit, hit, miss as a duplicate of the already matched person, hit, miss), a chip joins the ranked row, and precision = TP/(TP+FP) and recall = TP/4 are plotted as the points (recall, precision) (0.25, 1.00), (0.50, 1.00), (0.50, 0.67), (0.75, 0.75), (0.75, 0.60). The smoothed, never rising curve then encloses an area of 0.50 × 1.00 + 0.25 × 0.75 = AP 0.69, and the dog in image C is marked never found, which is why recall stops at 0.75. Panel 3: AP is computed at ten IoU thresholds from 0.50 to 0.95 and the bars fall (all ten bars are computed from the drawn boxes); their mean, AP50:95, is about 0.41, and averaging over classes gives mAP. At IoU 0.60 the 0.70 box, with an IoU of 0.57, is no longer a hit, so stricter thresholds lower AP.</desc>
+  <defs>
+    <clipPath id="clip"><rect width="130" height="96" rx="6"/></clipPath>
+    <g id="bg"><rect width="130" height="96" fill="#F3EEFF"/><rect y="68" width="130" height="28" fill="#E8D2FF"/></g>
+    <g id="person"><circle cx="33" cy="26" r="8" fill="#B58AF5"/><rect x="21" y="36" width="24" height="40" rx="6" fill="#B58AF5"/></g>
+    <g id="dog"><rect x="74" y="60" width="26" height="14" rx="5" fill="#6FD8C6"/><circle cx="102" cy="57" r="6" fill="#6FD8C6"/><rect x="78" y="73" width="4" height="5" fill="#6FD8C6"/><rect x="92" y="73" width="4" height="5" fill="#6FD8C6"/></g>
+    <pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="7" height="7" fill="#F6F5F8"/><line x1="0" y1="0" x2="0" y2="7" stroke="#DCD8E3" stroke-width="2.5"/></pattern>
+  </defs>
+  <style>
+    text { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: #1D1D1F; }
+    .h { font-size: 20px; font-weight: 700; fill: #4A176F; }
+    .s { font-size: 13.5px; fill: #6F6C79; }
+    .t { font-size: 12.5px; }
+    .tb { font-size: 13px; font-weight: 700; }
+    .sm { font-size: 12px; fill: #6F6C79; }
+    .tick { font-size: 11.5px; fill: #6F6C79; }
+    .chip { font-size: 12px; }
+    .tag { font-size: 11px; font-weight: 700; fill: #FFFFFF; }
+    .pt { font-size: 12px; font-weight: 700; }
+    .b { font-weight: 700; }
+    .axis { stroke: #1D1D1F; stroke-width: 1.5; fill: none; }
+    .grid { stroke: #E8D2FF; stroke-width: 1; }
+    .div { stroke: #E8D2FF; stroke-width: 1.5; }
+    .a { animation-duration: 24s; animation-iteration-count: infinite; animation-timing-function: linear; }
+    .hl { opacity: 0; }
+    .d { stroke-dasharray: 1; }
+    .g { transform-box: fill-box; transform-origin: 50% 100%; }
+    .k0 { animation-name: k0; }
+    .k1 { animation-name: k1; }
+    .k2 { animation-name: k2; }
+    .k3 { animation-name: k3; }
+    .k4 { animation-name: k4; }
+    .k5 { animation-name: k5; }
+    .k6 { animation-name: k6; }
+    .k7 { animation-name: k7; }
+    .k8 { animation-name: k8; }
+    .k9 { animation-name: k9; }
+    .k10 { animation-name: k10; }
+    .k11 { animation-name: k11; }
+    .k12 { animation-name: k12; }
+    .k13 { animation-name: k13; }
+    .k14 { animation-name: k14; }
+    .k15 { animation-name: k15; }
+    .k16 { animation-name: k16; }
+    .k17 { animation-name: k17; }
+    .k18 { animation-name: k18; }
+    .k19 { animation-name: k19; }
+    .k20 { animation-name: k20; }
+    .k21 { animation-name: k21; }
+    .k22 { animation-name: k22; }
+    .k23 { animation-name: k23; }
+    .k24 { animation-name: k24; }
+    .k25 { animation-name: k25; }
+    .k26 { animation-name: k26; }
+    .k27 { animation-name: k27; }
+    .k28 { animation-name: k28; }
+    .k29 { animation-name: k29; }
+    .k30 { animation-name: k30; }
+    .k31 { animation-name: k31; }
+    .k32 { animation-name: k32; }
+    .k33 { animation-name: k33; }
+    .k34 { animation-name: k34; }
+    .k35 { animation-name: k35; }
+    .k36 { animation-name: k36; }
+    .k37 { animation-name: k37; }
+    .k38 { animation-name: k38; }
+    .k39 { animation-name: k39; }
+    .k40 { animation-name: k40; }
+    .k41 { animation-name: k41; }
+    .k42 { animation-name: k42; }
+    .k43 { animation-name: k43; }
+    .k44 { animation-name: k44; }
+    .k45 { animation-name: k45; }
+    .k46 { animation-name: k46; }
+    .k47 { animation-name: k47; }
+    .k48 { animation-name: k48; }
+    .k49 { animation-name: k49; }
+    .k50 { animation-name: k50; }
+    .k51 { animation-name: k51; }
+    .k52 { animation-name: k52; }
+    .k53 { animation-name: k53; }
+    .k54 { animation-name: k54; }
+    .k55 { animation-name: k55; }
+    .k56 { animation-name: k56; }
+    .k57 { animation-name: k57; }
+    .k58 { animation-name: k58; }
+    .k59 { animation-name: k59; }
+    .k60 { animation-name: k60; }
+    .k61 { animation-name: k61; }
+    .k62 { animation-name: k62; }
+    .k63 { animation-name: k63; }
+    .k64 { animation-name: k64; }
+    .k65 { animation-name: k65; }
+    .k66 { animation-name: k66; }
+    .k67 { animation-name: k67; }
+    .k68 { animation-name: k68; }
+    .k69 { animation-name: k69; }
+    .k70 { animation-name: k70; }
+    .k71 { animation-name: k71; }
+    .k72 { animation-name: k72; }
+    .k73 { animation-name: k73; }
+    .k74 { animation-name: k74; }
+    .k75 { animation-name: k75; }
+    .k76 { animation-name: k76; }
+    .k77 { animation-name: k77; }
+    .k78 { animation-name: k78; }
+    @keyframes k0{0%,2.08%{opacity:0}3.12%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k1{0%,2.92%{opacity:0}3.96%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k2{0%,3.75%{opacity:0}4.79%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k3{0%,4.58%{opacity:0}5.62%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k4{0%,5.42%{opacity:0}6.46%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k5{0%,17.5%{opacity:0}18.75%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k6{0%,26.67%{opacity:0}27.92%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k7{0%,35.83%{opacity:0}37.08%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k8{0%,45%{opacity:0}46.25%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k9{0%,54.17%{opacity:0}55.42%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k10{0%,10.42%{opacity:0}11.04%,18.75%{opacity:1}19.38%,100%{opacity:0}}
+    @keyframes k11{0%,19.58%{opacity:0}20.21%,27.92%{opacity:1}28.54%,100%{opacity:0}}
+    @keyframes k12{0%,28.75%{opacity:0}29.38%,37.08%{opacity:1}37.71%,100%{opacity:0}}
+    @keyframes k13{0%,37.92%{opacity:0}38.54%,46.25%{opacity:1}46.88%,100%{opacity:0}}
+    @keyframes k14{0%,47.08%{opacity:0}47.71%,55.42%{opacity:1}56.04%,100%{opacity:0}}
+    @keyframes k15{0%,65%{opacity:0}66.25%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k16{0%,16.25%{opacity:0}17.5%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k17{0%,25.42%{opacity:0}26.67%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k18{0%,34.58%{opacity:0}35.83%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k19{0%,43.75%{opacity:0}45%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k20{0%,52.92%{opacity:0}54.17%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k21{0%,6.25%{opacity:0}6.87%,9.58%{opacity:1}10.21%,100%{opacity:0}}
+    @keyframes k22{0%,10.62%{opacity:0}11.25%,18.75%{opacity:1}19.38%,100%{opacity:0}}
+    @keyframes k23{0%,12.29%{opacity:0}12.92%,18.75%{opacity:1}19.38%,100%{opacity:0}}
+    @keyframes k24{0%,13.75%{opacity:0}14.37%,18.75%{opacity:1}19.38%,100%{opacity:0}}
+    @keyframes k25{0%,15.21%{opacity:0}15.83%,18.75%{opacity:1}19.38%,100%{opacity:0}}
+    @keyframes k26{0%,19.79%{opacity:0}20.42%,27.92%{opacity:1}28.54%,100%{opacity:0}}
+    @keyframes k27{0%,21.46%{opacity:0}22.08%,27.92%{opacity:1}28.54%,100%{opacity:0}}
+    @keyframes k28{0%,22.92%{opacity:0}23.54%,27.92%{opacity:1}28.54%,100%{opacity:0}}
+    @keyframes k29{0%,24.38%{opacity:0}25%,27.92%{opacity:1}28.54%,100%{opacity:0}}
+    @keyframes k30{0%,28.96%{opacity:0}29.58%,37.08%{opacity:1}37.71%,100%{opacity:0}}
+    @keyframes k31{0%,30.63%{opacity:0}31.25%,37.08%{opacity:1}37.71%,100%{opacity:0}}
+    @keyframes k32{0%,32.08%{opacity:0}32.71%,37.08%{opacity:1}37.71%,100%{opacity:0}}
+    @keyframes k33{0%,33.54%{opacity:0}34.17%,37.08%{opacity:1}37.71%,100%{opacity:0}}
+    @keyframes k34{0%,38.13%{opacity:0}38.75%,46.25%{opacity:1}46.88%,100%{opacity:0}}
+    @keyframes k35{0%,39.79%{opacity:0}40.42%,46.25%{opacity:1}46.88%,100%{opacity:0}}
+    @keyframes k36{0%,41.25%{opacity:0}41.88%,46.25%{opacity:1}46.88%,100%{opacity:0}}
+    @keyframes k37{0%,42.71%{opacity:0}43.33%,46.25%{opacity:1}46.88%,100%{opacity:0}}
+    @keyframes k38{0%,47.29%{opacity:0}47.92%,55.42%{opacity:1}56.04%,100%{opacity:0}}
+    @keyframes k39{0%,48.96%{opacity:0}49.58%,55.42%{opacity:1}56.04%,100%{opacity:0}}
+    @keyframes k40{0%,50.42%{opacity:0}51.04%,55.42%{opacity:1}56.04%,100%{opacity:0}}
+    @keyframes k41{0%,51.88%{opacity:0}52.5%,55.42%{opacity:1}56.04%,100%{opacity:0}}
+    @keyframes k42{0%,56.46%{opacity:0}57.71%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k43{0%,63.33%{opacity:0}65%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k44{0%,61.67%{opacity:0}63.33%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k45{0%,26.25%{stroke-dashoffset:1}27.71%,95%{stroke-dashoffset:0;opacity:1}99%{stroke-dashoffset:0;opacity:0}100%{stroke-dashoffset:1;opacity:0}}
+    @keyframes k46{0%,35.42%{stroke-dashoffset:1}36.88%,95%{stroke-dashoffset:0;opacity:1}99%{stroke-dashoffset:0;opacity:0}100%{stroke-dashoffset:1;opacity:0}}
+    @keyframes k47{0%,44.58%{stroke-dashoffset:1}46.04%,95%{stroke-dashoffset:0;opacity:1}99%{stroke-dashoffset:0;opacity:0}100%{stroke-dashoffset:1;opacity:0}}
+    @keyframes k48{0%,53.75%{stroke-dashoffset:1}55.21%,95%{stroke-dashoffset:0;opacity:1}99%{stroke-dashoffset:0;opacity:0}100%{stroke-dashoffset:1;opacity:0}}
+    @keyframes k49{0%,57.5%{stroke-dashoffset:1}61.67%,95%{stroke-dashoffset:0;opacity:1}99%{stroke-dashoffset:0;opacity:0}100%{stroke-dashoffset:1;opacity:0}}
+    @keyframes k50{0%,17.08%{opacity:0}17.71%,18.75%{opacity:1}19.38%,100%{opacity:0}}
+    @keyframes k51{0%,26.25%{opacity:0}26.88%,27.92%{opacity:1}28.54%,100%{opacity:0}}
+    @keyframes k52{0%,35.42%{opacity:0}36.04%,37.08%{opacity:1}37.71%,100%{opacity:0}}
+    @keyframes k53{0%,44.58%{opacity:0}45.21%,46.25%{opacity:1}46.88%,100%{opacity:0}}
+    @keyframes k54{0%,53.75%{opacity:0}54.38%,55.42%{opacity:1}56.04%,100%{opacity:0}}
+    @keyframes k55{0%,17.08%{opacity:0}18.12%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k56{0%,26.25%{opacity:0}27.29%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k57{0%,35.42%{opacity:0}36.46%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k58{0%,44.58%{opacity:0}45.63%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k59{0%,53.75%{opacity:0}54.79%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k60{0%,71.67%{opacity:0}72.92%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k61{0%,68.33%{transform:scaleY(0)}69.79%,95%{transform:scaleY(1);opacity:1}99%{transform:scaleY(1);opacity:0}100%{transform:scaleY(0);opacity:0}}
+    @keyframes k62{0%,69.17%{transform:scaleY(0)}70.62%,95%{transform:scaleY(1);opacity:1}99%{transform:scaleY(1);opacity:0}100%{transform:scaleY(0);opacity:0}}
+    @keyframes k63{0%,70%{transform:scaleY(0)}71.46%,95%{transform:scaleY(1);opacity:1}99%{transform:scaleY(1);opacity:0}100%{transform:scaleY(0);opacity:0}}
+    @keyframes k64{0%,70.83%{transform:scaleY(0)}72.29%,95%{transform:scaleY(1);opacity:1}99%{transform:scaleY(1);opacity:0}100%{transform:scaleY(0);opacity:0}}
+    @keyframes k65{0%,71.67%{transform:scaleY(0)}73.12%,95%{transform:scaleY(1);opacity:1}99%{transform:scaleY(1);opacity:0}100%{transform:scaleY(0);opacity:0}}
+    @keyframes k66{0%,72.5%{transform:scaleY(0)}73.96%,95%{transform:scaleY(1);opacity:1}99%{transform:scaleY(1);opacity:0}100%{transform:scaleY(0);opacity:0}}
+    @keyframes k67{0%,73.33%{transform:scaleY(0)}74.79%,95%{transform:scaleY(1);opacity:1}99%{transform:scaleY(1);opacity:0}100%{transform:scaleY(0);opacity:0}}
+    @keyframes k68{0%,74.17%{transform:scaleY(0)}75.62%,95%{transform:scaleY(1);opacity:1}99%{transform:scaleY(1);opacity:0}100%{transform:scaleY(0);opacity:0}}
+    @keyframes k69{0%,75%{transform:scaleY(0)}76.46%,95%{transform:scaleY(1);opacity:1}99%{transform:scaleY(1);opacity:0}100%{transform:scaleY(0);opacity:0}}
+    @keyframes k70{0%,69.17%{opacity:0}70.42%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k71{0%,79.17%{stroke-dashoffset:1}80.83%,95%{stroke-dashoffset:0;opacity:1}99%{stroke-dashoffset:0;opacity:0}100%{stroke-dashoffset:1;opacity:0}}
+    @keyframes k72{0%,80.42%{opacity:0}81.67%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k73{0%,81.67%{opacity:0}82.92%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k74{0%,82.5%{opacity:0}83.75%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k75{0%,83.54%{opacity:0}84.79%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k76{0%,84.58%{opacity:0}85.83%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k77{0%,85.62%{opacity:0}86.88%,95%{opacity:1}99%,100%{opacity:0}}
+    @keyframes k78{0%,86.67%{opacity:0}87.92%,95%{opacity:1}99%,100%{opacity:0}}
+    @media (prefers-reduced-motion: reduce) { .a { animation: none !important; } }
+  </style>
+  <rect x="1" y="1" width="998" height="528" fill="#FFFFFF" stroke="#E8D2FF" stroke-width="2" rx="16"/>
+  <text class="h" x="30" y="46">1 · Detect and match</text>
+  <text class="s" x="30" y="68">IoU = overlap area ÷ union area</text>
+  <g transform="translate(30 80) scale(1.2)"><g clip-path="url(#clip)"><use href="#bg"/><use href="#person" x="0"/><use href="#dog" x="0"/></g></g>
+  <rect x="30" y="80" width="156" height="115.2" fill="none" stroke="#B9B4C6" stroke-width="1.5" rx="7"/>
+  <text class="tb" x="200" y="102" style="fill:#4A176F">Image A</text>
+  <text class="t" x="200" y="122">2 objects</text>
+  <text class="t" x="200" y="140">3 detections</text>
+  <rect x="51.6" y="99.2" width="36" height="76.8" fill="none" stroke="#1D1D1F" stroke-width="2" stroke-dasharray="6 4"/>
+  <rect x="116.4" y="140" width="43.2" height="33.6" fill="none" stroke="#1D1D1F" stroke-width="2" stroke-dasharray="6 4"/>
+  <g transform="translate(30 205.2) scale(1.2)"><g clip-path="url(#clip)"><use href="#bg"/><use href="#person" x="32"/></g></g>
+  <rect x="30" y="205.2" width="156" height="115.2" fill="none" stroke="#B9B4C6" stroke-width="1.5" rx="7"/>
+  <text class="tb" x="200" y="227.2" style="fill:#4A176F">Image B</text>
+  <text class="t" x="200" y="247.2">1 object</text>
+  <text class="t" x="200" y="265.2">2 detections</text>
+  <rect x="90" y="224.4" width="36" height="76.8" fill="none" stroke="#1D1D1F" stroke-width="2" stroke-dasharray="6 4"/>
+  <g transform="translate(30 330.4) scale(1.2)"><g clip-path="url(#clip)"><use href="#bg"/><use href="#dog" x="-26"/></g></g>
+  <rect x="30" y="330.4" width="156" height="115.2" fill="none" stroke="#B9B4C6" stroke-width="1.5" rx="7"/>
+  <text class="tb" x="200" y="352.4" style="fill:#4A176F">Image C</text>
+  <text class="t" x="200" y="372.4">1 object</text>
+  <text class="t" x="200" y="390.4">0 detections</text>
+  <rect x="85.2" y="390.4" width="43.2" height="33.6" fill="none" stroke="#1D1D1F" stroke-width="2" stroke-dasharray="6 4"/>
+  <g class="a k0"><rect x="126" y="142.4" width="43.2" height="33.6" fill="none" stroke="#8315F9" stroke-width="2.5"/><rect x="126" y="127.4" width="30" height="15" fill="#8315F9" rx="3"/><text class="tag" x="141" y="138.6" text-anchor="middle">0.70</text></g>
+  <g class="a k1"><rect x="82.8" y="128" width="33.6" height="31.2" fill="none" stroke="#8315F9" stroke-width="2.5"/><rect x="92" y="113" width="30" height="15" fill="#8315F9" rx="3"/><text class="tag" x="107" y="124.2" text-anchor="middle">0.60</text></g>
+  <g class="a k2"><rect x="54" y="101.6" width="36" height="76.8" fill="none" stroke="#8315F9" stroke-width="2.5"/><rect x="54" y="86.6" width="30" height="15" fill="#8315F9" rx="3"/><text class="tag" x="69" y="97.8" text-anchor="middle">0.95</text></g>
+  <g class="a k3"><rect x="94.8" y="229.2" width="36" height="76.8" fill="none" stroke="#8315F9" stroke-width="2.5"/><rect x="131.8" y="229.2" width="30" height="15" fill="#8315F9" rx="3"/><text class="tag" x="146.8" y="240.4" text-anchor="middle">0.80</text></g>
+  <g class="a k4"><rect x="91.2" y="225.6" width="36" height="76.8" fill="none" stroke="#8315F9" stroke-width="2.5"/><rect x="91.2" y="210.6" width="30" height="15" fill="#8315F9" rx="3"/><text class="tag" x="106.2" y="221.8" text-anchor="middle">0.90</text></g>
+  <rect class="a k5" x="54" y="101.6" width="36" height="76.8" fill="#8315F9" fill-opacity="0.2"/>
+  <rect class="a k6" x="91.2" y="225.6" width="36" height="76.8" fill="#8315F9" fill-opacity="0.2"/>
+  <g class="a k7"><rect x="94.8" y="229.2" width="36" height="76.8" fill="#6F6C79" fill-opacity="0.2"/><rect x="131.8" y="229.2" width="30" height="15" fill="#6F6C79" rx="3"/><text class="tag" x="146.8" y="240.4" text-anchor="middle">0.80</text><circle cx="169.5" cy="236.7" r="7" fill="#FFFFFF" stroke="#6F6C79" stroke-width="1.5"/><path d="M166.5 233.7 l6 6 m0 -6 l-6 6" stroke="#6F6C79" stroke-width="1.8" stroke-linecap="round" fill="none"/></g>
+  <rect class="a k8" x="126" y="142.4" width="43.2" height="33.6" fill="#8315F9" fill-opacity="0.2"/>
+  <g class="a k9"><rect x="82.8" y="128" width="33.6" height="31.2" fill="#6F6C79" fill-opacity="0.2"/><rect x="92" y="113" width="30" height="15" fill="#6F6C79" rx="3"/><text class="tag" x="107" y="124.2" text-anchor="middle">0.60</text><circle cx="99.6" cy="143.6" r="7" fill="#FFFFFF" stroke="#6F6C79" stroke-width="1.5"/><path d="M96.6 140.6 l6 6 m0 -6 l-6 6" stroke="#6F6C79" stroke-width="1.8" stroke-linecap="round" fill="none"/></g>
+  <g class="a hl k10"><rect x="27" y="77" width="162" height="121.2" fill="none" stroke="#8315F9" stroke-width="2.5" rx="9"/><rect x="54" y="101.6" width="33.6" height="74.4" fill="#6706CE" fill-opacity="0.45"/><rect x="51.6" y="99.2" width="36" height="76.8" fill="none" stroke="#4A176F" stroke-width="3" stroke-dasharray="6 4"/><rect x="54" y="101.6" width="36" height="76.8" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-opacity="0.9"/><rect x="54" y="101.6" width="36" height="76.8" fill="none" stroke="#8315F9" stroke-width="3.5"/></g>
+  <g class="a hl k11"><rect x="27" y="202.2" width="162" height="121.2" fill="none" stroke="#8315F9" stroke-width="2.5" rx="9"/><rect x="91.2" y="225.6" width="34.8" height="75.6" fill="#6706CE" fill-opacity="0.45"/><rect x="90" y="224.4" width="36" height="76.8" fill="none" stroke="#4A176F" stroke-width="3" stroke-dasharray="6 4"/><rect x="91.2" y="225.6" width="36" height="76.8" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-opacity="0.9"/><rect x="91.2" y="225.6" width="36" height="76.8" fill="none" stroke="#8315F9" stroke-width="3.5"/></g>
+  <g class="a hl k12"><rect x="27" y="202.2" width="162" height="121.2" fill="none" stroke="#8315F9" stroke-width="2.5" rx="9"/><rect x="94.8" y="229.2" width="31.2" height="72" fill="#6706CE" fill-opacity="0.45"/><rect x="90" y="224.4" width="36" height="76.8" fill="none" stroke="#4A176F" stroke-width="3" stroke-dasharray="6 4"/><rect x="94.8" y="229.2" width="36" height="76.8" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-opacity="0.9"/><rect x="94.8" y="229.2" width="36" height="76.8" fill="none" stroke="#8315F9" stroke-width="3.5"/></g>
+  <g class="a hl k13"><rect x="27" y="77" width="162" height="121.2" fill="none" stroke="#8315F9" stroke-width="2.5" rx="9"/><rect x="126" y="142.4" width="33.6" height="31.2" fill="#6706CE" fill-opacity="0.45"/><rect x="116.4" y="140" width="43.2" height="33.6" fill="none" stroke="#4A176F" stroke-width="3" stroke-dasharray="6 4"/><rect x="126" y="142.4" width="43.2" height="33.6" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-opacity="0.9"/><rect x="126" y="142.4" width="43.2" height="33.6" fill="none" stroke="#8315F9" stroke-width="3.5"/></g>
+  <g class="a hl k14"><rect x="27" y="77" width="162" height="121.2" fill="none" stroke="#8315F9" stroke-width="2.5" rx="9"/><rect x="82.8" y="128" width="4.8" height="31.2" fill="#6706CE" fill-opacity="0.45"/><rect x="51.6" y="99.2" width="36" height="76.8" fill="none" stroke="#4A176F" stroke-width="3" stroke-dasharray="6 4"/><rect x="82.8" y="128" width="33.6" height="31.2" fill="none" stroke="#FFFFFF" stroke-width="6" stroke-opacity="0.9"/><rect x="82.8" y="128" width="33.6" height="31.2" fill="none" stroke="#8315F9" stroke-width="3.5"/></g>
+  <g class="a k15"><rect x="85.2" y="390.4" width="43.2" height="33.6" fill="none" stroke="#1D1D1F" stroke-width="3" stroke-dasharray="6 4"/><rect x="66.8" y="371.4" width="80" height="16" fill="#1D1D1F" rx="8"/><text class="tag" x="106.8" y="383.4" text-anchor="middle">never found</text><text class="tb" x="200" y="414.4" style="fill:#1D1D1F;font-size:12.5px">its dog is never found</text></g>
+  <rect x="30" y="458" width="16" height="12" fill="none" stroke="#1D1D1F" stroke-width="1.5" stroke-dasharray="4 3"/>
+  <text class="sm" x="52" y="468">ground truth</text>
+  <rect x="140" y="458" width="16" height="12" fill="none" stroke="#8315F9" stroke-width="2"/>
+  <text class="sm" x="162" y="468">detection + score</text>
+  <rect x="30" y="477" width="16" height="12" fill="#8315F9" fill-opacity="0.2" stroke="#8315F9" stroke-width="1.5"/>
+  <text class="sm" x="52" y="487">scored: hit</text>
+  <rect x="140" y="477" width="16" height="12" fill="#6F6C79" fill-opacity="0.2" stroke="#8315F9" stroke-width="1.5"/>
+  <text class="sm" x="162" y="487">scored: miss ✕</text>
+  <line class="div" x1="340" y1="30" x2="340" y2="492"/>
+  <text class="h" x="360" y="46">2 · Rank: precision vs recall</text>
+  <text class="s" x="360" y="68">IoU 0.50 · all 4 objects pooled as one class</text>
+  <rect x="360" y="82" width="56" height="36" fill="none" stroke="#E8D2FF" stroke-width="1.5" stroke-dasharray="4 3" rx="6"/>
+  <rect x="423" y="82" width="56" height="36" fill="none" stroke="#E8D2FF" stroke-width="1.5" stroke-dasharray="4 3" rx="6"/>
+  <rect x="486" y="82" width="56" height="36" fill="none" stroke="#E8D2FF" stroke-width="1.5" stroke-dasharray="4 3" rx="6"/>
+  <rect x="549" y="82" width="56" height="36" fill="none" stroke="#E8D2FF" stroke-width="1.5" stroke-dasharray="4 3" rx="6"/>
+  <rect x="612" y="82" width="56" height="36" fill="none" stroke="#E8D2FF" stroke-width="1.5" stroke-dasharray="4 3" rx="6"/>
+  <g class="a k16"><rect x="360" y="82" width="56" height="36" fill="#8315F9" stroke="#8315F9" stroke-width="1.5" rx="6"/><text class="chip" x="388" y="97.5" text-anchor="middle" style="fill:#FFFFFF">0.95 · A</text><text class="chip b" x="388" y="112.5" text-anchor="middle" style="fill:#FFFFFF">hit</text></g>
+  <g class="a k17"><rect x="423" y="82" width="56" height="36" fill="#8315F9" stroke="#8315F9" stroke-width="1.5" rx="6"/><text class="chip" x="451" y="97.5" text-anchor="middle" style="fill:#FFFFFF">0.90 · B</text><text class="chip b" x="451" y="112.5" text-anchor="middle" style="fill:#FFFFFF">hit</text></g>
+  <g class="a k18"><rect x="486" y="82" width="56" height="36" fill="#FFFFFF" stroke="#B9B4C6" stroke-width="1.5" rx="6"/><text class="chip" x="514" y="97.5" text-anchor="middle" style="fill:#6F6C79">0.80 · B</text><text class="chip b" x="514" y="112.5" text-anchor="middle" style="fill:#6F6C79">miss</text></g>
+  <g class="a k19"><rect x="549" y="82" width="56" height="36" fill="#8315F9" stroke="#8315F9" stroke-width="1.5" rx="6"/><text class="chip" x="577" y="97.5" text-anchor="middle" style="fill:#FFFFFF">0.70 · A</text><text class="chip b" x="577" y="112.5" text-anchor="middle" style="fill:#FFFFFF">hit</text></g>
+  <g class="a k20"><rect x="612" y="82" width="56" height="36" fill="#FFFFFF" stroke="#B9B4C6" stroke-width="1.5" rx="6"/><text class="chip" x="640" y="97.5" text-anchor="middle" style="fill:#6F6C79">0.60 · A</text><text class="chip b" x="640" y="112.5" text-anchor="middle" style="fill:#6F6C79">miss</text></g>
+  <rect x="360" y="124" width="308" height="76" fill="#FBF9FF" stroke="#E8D2FF" stroke-width="1.5" rx="8"/>
+  <g class="a hl k21"><text class="tb" x="370" y="142">Rank the 5 detections by score.</text><text class="t" x="370" y="159">Then, highest score first, match each</text><text class="t" x="370" y="175">to an object in its image.</text></g>
+  <g class="a hl k22"><text class="tb" x="370" y="142">1 · score 0.95 · image A</text></g>
+  <g class="a hl k23"><text class="t" x="370" y="159">IoU with the person: 1736 ÷ 2104 = 0.83</text></g>
+  <g class="a hl k24"><text class="t" x="370" y="175">≥ 0.50 and the person is still unmatched: TP</text><rect x="608" y="130" width="50" height="18" fill="#8315F9" stroke="#8315F9" stroke-width="1.5" rx="9"/><text class="chip b" x="633" y="143" text-anchor="middle" style="fill:#FFFFFF">hit</text></g>
+  <g class="a hl k25"><text class="t" x="370" y="191">TP 1, FP 0:  P = 1/(1+0) = 1.00,  R = 1/4 = 0.25</text></g>
+  <g class="a hl k26"><text class="tb" x="370" y="142">2 · score 0.90 · image B</text></g>
+  <g class="a hl k27"><text class="t" x="370" y="159">IoU with the person: 1827 ÷ 2013 = 0.91</text></g>
+  <g class="a hl k28"><text class="t" x="370" y="175">≥ 0.50 and the person is still unmatched: TP</text><rect x="608" y="130" width="50" height="18" fill="#8315F9" stroke="#8315F9" stroke-width="1.5" rx="9"/><text class="chip b" x="633" y="143" text-anchor="middle" style="fill:#FFFFFF">hit</text></g>
+  <g class="a hl k29"><text class="t" x="370" y="191">TP 2, FP 0:  P = 2/(2+0) = 1.00,  R = 2/4 = 0.50</text></g>
+  <g class="a hl k30"><text class="tb" x="370" y="142">3 · score 0.80 · image B</text></g>
+  <g class="a hl k31"><text class="t" x="370" y="159">IoU with the person: 1560 ÷ 2280 = 0.68</text></g>
+  <g class="a hl k32"><text class="t" x="370" y="175">≥ 0.50, but 0.90 already matched this person: FP</text><rect x="608" y="130" width="50" height="18" fill="#FFFFFF" stroke="#6F6C79" stroke-width="1.5" rx="9"/><text class="chip b" x="633" y="143" text-anchor="middle" style="fill:#6F6C79">miss</text></g>
+  <g class="a hl k33"><text class="t" x="370" y="191">TP 2, FP 1:  P = 2/(2+1) = 0.67,  R = 2/4 = 0.50</text></g>
+  <g class="a hl k34"><text class="tb" x="370" y="142">4 · score 0.70 · image A</text></g>
+  <g class="a hl k35"><text class="t" x="370" y="159">IoU with the dog: 728 ÷ 1288 = 0.57</text></g>
+  <g class="a hl k36"><text class="t" x="370" y="175">≥ 0.50 and the dog is still unmatched: TP</text><rect x="608" y="130" width="50" height="18" fill="#8315F9" stroke="#8315F9" stroke-width="1.5" rx="9"/><text class="chip b" x="633" y="143" text-anchor="middle" style="fill:#FFFFFF">hit</text></g>
+  <g class="a hl k37"><text class="t" x="370" y="191">TP 3, FP 1:  P = 3/(3+1) = 0.75,  R = 3/4 = 0.75</text></g>
+  <g class="a hl k38"><text class="tb" x="370" y="142">5 · score 0.60 · image A</text></g>
+  <g class="a hl k39"><text class="t" x="370" y="159">IoU with the person: 104 ÷ 2544 = 0.04</text></g>
+  <g class="a hl k40"><text class="t" x="370" y="175">&lt; 0.50: no object overlaps enough: FP</text><rect x="608" y="130" width="50" height="18" fill="#FFFFFF" stroke="#6F6C79" stroke-width="1.5" rx="9"/><text class="chip b" x="633" y="143" text-anchor="middle" style="fill:#6F6C79">miss</text></g>
+  <g class="a hl k41"><text class="t" x="370" y="191">TP 3, FP 2:  P = 3/(3+2) = 0.60,  R = 3/4 = 0.75</text></g>
+  <g class="a k42"><text class="tb" x="370" y="142">5 detections ranked by score: TP 3, FP 2</text><text class="t" x="370" y="159">Each adds one point: P = TP/(TP+FP), R = TP/4.</text></g>
+  <g class="a k43"><text class="t" x="370" y="175">AP is the area under the smoothed curve.</text></g>
+  <g class="a k15"><text class="t" x="370" y="191">Image C's dog is never found: R stops at 0.75.</text></g>
+  <line class="grid" x1="412.0" y1="307.0" x2="662.0" y2="307.0"/>
+  <line class="grid" x1="537.0" y1="222.0" x2="537.0" y2="392.0"/>
+  <line class="grid" x1="412.0" y1="222.0" x2="662.0" y2="222.0"/>
+  <line class="grid" x1="662.0" y1="222.0" x2="662.0" y2="392.0"/>
+  <g class="a k15"><rect x="599.5" y="222" width="62.5" height="170" fill="url(#hatch)"/><text class="sm" transform="translate(631.5 307) rotate(-90)" text-anchor="middle">recall cannot pass 0.75:</text><text class="sm" transform="translate(647.5 307) rotate(-90)" text-anchor="middle">C's dog is never found</text></g>
+  <path class="a k44" d="M412 222 H537 V392 H412 ZM537 264.5 H599.5 V392 H537 Z" fill="#A351FB" fill-opacity="0.25"/>
+  <path class="a d k45" pathLength="1" d="M474.5 222 L537 222" fill="none" stroke="#6F6C79" stroke-width="1.75"/>
+  <path class="a d k46" pathLength="1" d="M537 222 L537 278.67" fill="none" stroke="#6F6C79" stroke-width="1.75"/>
+  <path class="a d k47" pathLength="1" d="M537 278.67 L599.5 264.5" fill="none" stroke="#6F6C79" stroke-width="1.75"/>
+  <path class="a d k48" pathLength="1" d="M599.5 264.5 L599.5 290" fill="none" stroke="#6F6C79" stroke-width="1.75"/>
+  <path class="a d k49" pathLength="1" d="M412 222 V222 H537 V264.5 H599.5 V392" fill="none" stroke="#8315F9" stroke-width="3"/>
+  <path class="axis" d="M412.0 222.0 V392.0 H662.0"/>
+  <text class="tick" x="412" y="407" text-anchor="middle">0</text>
+  <text class="tick" x="405" y="396" text-anchor="end">0</text>
+  <text class="tick" x="537" y="407" text-anchor="middle">0.5</text>
+  <text class="tick" x="405" y="311" text-anchor="end">0.5</text>
+  <text class="tick" x="662" y="407" text-anchor="middle">1</text>
+  <text class="tick" x="405" y="226" text-anchor="end">1</text>
+  <text class="s" x="537" y="425" text-anchor="middle">recall = TP / 4 objects</text>
+  <text class="s" transform="translate(372 307) rotate(-90)" text-anchor="middle">precision = TP / (TP + FP)</text>
+  <g class="a hl k50"><path d="M474.5 222 V392 M474.5 222 H412" fill="none" stroke="#8315F9" stroke-width="1.25" stroke-dasharray="3 3"/><rect x="457.5" y="396" width="34" height="15" fill="#FFFFFF"/><text class="tick b" x="474.5" y="407" text-anchor="middle" style="fill:#6706CE">0.25</text><rect x="380" y="214" width="29" height="15" fill="#FFFFFF"/><text class="tick b" x="405" y="226" text-anchor="end" style="fill:#6706CE">1.00</text></g>
+  <g class="a hl k51"><path d="M537 222 V392 M537 222 H412" fill="none" stroke="#8315F9" stroke-width="1.25" stroke-dasharray="3 3"/><rect x="520" y="396" width="34" height="15" fill="#FFFFFF"/><text class="tick b" x="537" y="407" text-anchor="middle" style="fill:#6706CE">0.50</text><rect x="380" y="214" width="29" height="15" fill="#FFFFFF"/><text class="tick b" x="405" y="226" text-anchor="end" style="fill:#6706CE">1.00</text></g>
+  <g class="a hl k52"><path d="M537 278.67 V392 M537 278.67 H412" fill="none" stroke="#8315F9" stroke-width="1.25" stroke-dasharray="3 3"/><rect x="520" y="396" width="34" height="15" fill="#FFFFFF"/><text class="tick b" x="537" y="407" text-anchor="middle" style="fill:#6706CE">0.50</text><rect x="380" y="270.67" width="29" height="15" fill="#FFFFFF"/><text class="tick b" x="405" y="282.67" text-anchor="end" style="fill:#6706CE">0.67</text></g>
+  <g class="a hl k53"><path d="M599.5 264.5 V392 M599.5 264.5 H412" fill="none" stroke="#8315F9" stroke-width="1.25" stroke-dasharray="3 3"/><rect x="582.5" y="396" width="34" height="15" fill="#FFFFFF"/><text class="tick b" x="599.5" y="407" text-anchor="middle" style="fill:#6706CE">0.75</text><rect x="380" y="256.5" width="29" height="15" fill="#FFFFFF"/><text class="tick b" x="405" y="268.5" text-anchor="end" style="fill:#6706CE">0.75</text></g>
+  <g class="a hl k54"><path d="M599.5 290 V392 M599.5 290 H412" fill="none" stroke="#8315F9" stroke-width="1.25" stroke-dasharray="3 3"/><rect x="582.5" y="396" width="34" height="15" fill="#FFFFFF"/><text class="tick b" x="599.5" y="407" text-anchor="middle" style="fill:#6706CE">0.75</text><rect x="380" y="282" width="29" height="15" fill="#FFFFFF"/><text class="tick b" x="405" y="294" text-anchor="end" style="fill:#6706CE">0.60</text></g>
+  <g class="a k55"><circle cx="474.5" cy="222" r="5.5" fill="#8315F9"/><text class="pt" x="474.5" y="212" text-anchor="middle">1</text></g>
+  <g class="a k56"><circle cx="537" cy="222" r="5.5" fill="#8315F9"/><text class="pt" x="537" y="212" text-anchor="middle">2</text></g>
+  <g class="a k57"><circle cx="537" cy="278.67" r="5.5" fill="#FFFFFF" stroke="#6F6C79" stroke-width="2"/><text class="pt" x="546" y="303.67" text-anchor="start">3</text></g>
+  <g class="a k58"><circle cx="599.5" cy="264.5" r="5.5" fill="#8315F9"/><text class="pt" x="599.5" y="254.5" text-anchor="middle">4</text></g>
+  <g class="a k59"><circle cx="599.5" cy="290" r="5.5" fill="#FFFFFF" stroke="#6F6C79" stroke-width="2"/><text class="pt" x="609.5" y="303" text-anchor="start">5</text></g>
+  <g class="a k43"><text class="b" x="505.75" y="336" text-anchor="middle" style="font-size:18px;fill:#4A176F">AP = 0.69</text><text class="t" x="505.75" y="354" text-anchor="middle" style="fill:#4A176F">0.50 × 1.00 + 0.25 × 0.75</text></g>
+  <text class="sm" x="360" y="448">Grey: raw, one point per detection. Purple: smoothed</text>
+  <text class="sm" x="360" y="465">so precision never rises. AP = the shaded area.</text>
+  <line class="div" x1="690" y1="30" x2="690" y2="492"/>
+  <text class="h" x="700" y="46">3 · Average: AP50:95, mAP</text>
+  <text class="s" x="700" y="68">repeat at 10 IoU thresholds, then per class</text>
+  <g class="a k60"><text class="tb" x="700" y="126">Why the bars fall</text><text class="t" x="700" y="143">At IoU 0.60 the 0.70 box in image A</text><text class="t" x="700" y="160">(IoU 0.57) is no longer a hit, so</text><text class="t" x="700" y="177">stricter thresholds lower AP.</text></g>
+  <text class="tick" x="714" y="396" text-anchor="end">0</text>
+  <line class="grid" x1="718" y1="307" x2="958" y2="307"/>
+  <text class="tick" x="714" y="311" text-anchor="end">0.5</text>
+  <line class="grid" x1="718" y1="222" x2="958" y2="222"/>
+  <text class="tick" x="714" y="226" text-anchor="end">1</text>
+  <rect class="a g k61" x="722" y="274.7" width="18" height="117.3" fill="#6706CE"/>
+  <rect class="a g k62" x="746" y="274.7" width="18" height="117.3" fill="#A351FB"/>
+  <rect class="a g k63" x="770" y="307" width="18" height="85" fill="#A351FB"/>
+  <rect class="a g k64" x="794" y="307" width="18" height="85" fill="#A351FB"/>
+  <rect class="a g k65" x="818" y="307" width="18" height="85" fill="#A351FB"/>
+  <rect class="a g k66" x="842" y="307" width="18" height="85" fill="#A351FB"/>
+  <rect class="a g k67" x="866" y="307" width="18" height="85" fill="#A351FB"/>
+  <rect class="a g k68" x="890" y="371.6" width="18" height="20.4" fill="#A351FB"/>
+  <rect class="a g k69" x="914" y="371.6" width="18" height="20.4" fill="#A351FB"/>
+  <g class="a k70"><text class="tick b" x="722" y="267.7" style="fill:#6706CE">AP50 = 0.69</text></g>
+  <path class="a d k71" pathLength="1" d="M718 321.96 H958" fill="none" stroke="#1D1D1F" stroke-width="2"/>
+  <g class="a k72"><text class="b" x="956" y="302" text-anchor="end" style="font-size:15px;fill:#4A176F">AP50:95 ≈ 0.41</text></g>
+  <path class="axis" d="M718 392.0 H958"/>
+  <text class="tick" x="731" y="407" text-anchor="middle">0.50</text>
+  <text class="tick" x="779" y="407" text-anchor="middle">0.60</text>
+  <text class="tick" x="947" y="407" text-anchor="middle">0.95</text>
+  <text class="s" x="838" y="425" text-anchor="middle">IoU threshold</text>
+  <g class="a k73"><text class="sm" x="700" y="444">AP50:95 of every class, averaged:</text></g>
+  <g class="a k74"><rect x="700" y="452" width="56" height="26" fill="#F3EEFF" stroke="#A351FB" stroke-width="1.5" rx="6"/><text class="sm" x="728" y="469" text-anchor="middle" style="fill:#4A176F">class 1</text></g>
+  <g class="a k75"><rect x="762" y="452" width="56" height="26" fill="#F3EEFF" stroke="#A351FB" stroke-width="1.5" rx="6"/><text class="sm" x="790" y="469" text-anchor="middle" style="fill:#4A176F">class 2</text></g>
+  <g class="a k76"><rect x="824" y="452" width="56" height="26" fill="#F3EEFF" stroke="#A351FB" stroke-width="1.5" rx="6"/><text class="sm" x="852" y="469" text-anchor="middle" style="fill:#4A176F">class 3…</text></g>
+  <g class="a k77"><path d="M888 465 H906" stroke="#1D1D1F" stroke-width="2" fill="none"/><path d="M906 460 L914 465 L906 470 Z" fill="#1D1D1F"/></g>
+  <g class="a k78"><rect x="918" y="452" width="52" height="26" fill="#8315F9" rx="6"/><text class="b" x="944" y="470" text-anchor="middle" style="font-size:13px;fill:#FFFFFF">mAP</text></g>
+  <text class="sm" x="30" y="514">Panels 1 and 2 are computed from the drawn boxes, and so are all ten bars in panel 3.</text>
+</svg>

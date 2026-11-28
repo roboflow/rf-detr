@@ -39,6 +39,12 @@ Accuracy and latency are always measured using the same model artifact and the s
 
     **AP50**: Detection accuracy at IoU threshold >= 0.50. **AP50:95**: Mean accuracy averaged over IoU thresholds 0.50 to 0.95 (step 0.05) — the primary COCO metric. **Params (M)**: Deployment (fused) `nn.Module` parameter count (`model.parameters()`) in millions, excluding training-only branches and folded normalization layers, and counting model parameters rather than the raw tensor count of the saved checkpoint. Rows marked † use the authors' reported counts rather than SAB-measured values. Latency measured on NVIDIA T4, TensorRT 10.4, CUDA 12.4, FP16, batch size 1, with 200 ms thermal buffer between passes to reduce GPU thermal variance.
 
+### How AP is computed
+
+A prediction counts as a hit when its box overlaps an unmatched ground-truth box of the same class in the same image by at least the IoU threshold. Detections are processed in descending score order, and each ground-truth object can be matched only once; duplicate detections count as misses. For one class, detections are ranked by score and precision is plotted against recall after each one; the area under the interpolated precision-recall curve illustrates average precision (AP) at the threshold. AP50 uses a threshold of 0.50, AP50:95 averages ten thresholds from 0.50 to 0.95, and mAP averages the result over classes.
+
+![Animated, three panels. Panel 1: three sample images, A with two objects and three detections, B with one object and two detections, C with one object and no detections, with ground-truth and scored predicted boxes. Panel 2: the five detections are taken in score order at IoU 0.50; each gets an IoU, a hit or miss verdict, and a precision and recall that add one point to the precision-recall curve (a duplicate box and a box in the wrong place are misses). The area under the smoothed curve is an AP of about 0.69, and the dog in image C is never found, so recall stops at 0.75. Panel 3: the same computation at ten IoU thresholds from 0.50 to 0.95 gives ten bars that fall as the threshold rises, their mean is AP50:95, and averaging over classes gives mAP.](../assets/how-map-works.svg){ loading=lazy }
+
 --8<-- "docs/snippets/license-yolo-note.md"
 
 RF-DETR rows marked PML 1.0 use the Roboflow Platform Model License: commercial use is included when you deploy on Roboflow, and commercial self-hosting requires the Enterprise add-on. LW-DETR and D-FINE are Apache 2.0.

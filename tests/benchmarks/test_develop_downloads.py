@@ -3,7 +3,11 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Tests for private developer download helpers."""
+
+"""Tests for private developer download helpers.
+
+No-network tests for private COCO developer helper URL selection.
+"""
 
 import io
 import threading
@@ -14,10 +18,12 @@ from pathlib import Path
 import pytest
 
 from rfdetr.datasets._develop import (
+    _COCO_URLS,
     _coco_val_images_complete,
     _download_and_extract,
     _download_lock,
     _nonempty_file_exists,
+    get_coco_download_url,
 )
 
 
@@ -242,3 +248,13 @@ class TestConcurrentDownloadSafety:
 
         assert len(attempts) == 2, f"expected one retry after EOFError, saw {len(attempts)} attempt(s)"
         assert (tmp_path / "extracted.json").exists()
+
+
+@pytest.mark.parametrize(
+    ("split", "archive_name"),
+    [("train2017", "train2017.zip"), ("val2017", "val2017.zip"), ("annotations", "annotations_trainval2017.zip")],
+)
+def test_coco_helper_url_selection(split: str, archive_name: str) -> None:
+    """Each COCO split resolves to its official archive URL from ``_COCO_URLS``."""
+    assert get_coco_download_url(split) == _COCO_URLS[split]
+    assert get_coco_download_url(split).endswith(f"/{archive_name}")

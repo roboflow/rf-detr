@@ -1766,7 +1766,8 @@ class TestExportTflitePreloadOrder:
 
 
 class TestTFKerasCheck:
-    """``_check_tf_keras_available`` passes an installed tf-keras; a missing one is covered in ``test_export``.
+    """``_check_tf_keras_available`` passes an installed tf-keras; a missing one is covered in
+    ``tests/export/api/test_validation.py``.
 
     No CI job installs the ``[tflite]`` extra, so these stand in for the real package the check must not refuse.
     """
@@ -2082,7 +2083,8 @@ class TestTFLitePreloadOrdering:
     a 0%-CPU hang with no traceback (issue #1322). ``TFLiteExporter`` guards that by calling
     ``preload_tensorflow_before_onnx()`` before it touches the ONNX stage. This class pins that the preload really does
     run first; that loading the exporter module imports no ONNX package is pinned by
-    ``TestExportDependencyCheck::test_loading_the_exporter_imports_no_onnx_package`` in ``test_export.py``.
+    ``TestExportDependencyCheck::test_loading_the_exporter_imports_no_onnx_package``
+    in ``tests/export/api/test_validation.py``.
     """
 
     def test_preload_runs_before_the_onnx_stage(self, tmp_path: Path, mocker) -> None:

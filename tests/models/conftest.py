@@ -10,6 +10,8 @@ from collections.abc import Iterator
 import pytest
 import torch
 
+from rfdetr.models.matcher import HungarianMatcher
+
 
 @pytest.fixture(autouse=True)
 def reset_torch_safe_globals():
@@ -95,3 +97,16 @@ def forced_eager_cuda_gate(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     monkeypatch.setattr("rfdetr.models.transformer._eager_cuda", lambda tensor: True)
     monkeypatch.setattr("rfdetr.models.transformer._cuda_autocast_dtype", lambda: torch.bfloat16)
+
+
+@pytest.fixture()
+def matcher() -> HungarianMatcher:
+    """Shared HungarianMatcher instance.
+
+    Examples:
+        Skipped because a pytest fixture has no standalone call:
+
+        >>> matcher  # doctest: +SKIP
+        <pytest_fixture(<function matcher at 0x...>)>
+    """
+    return HungarianMatcher()

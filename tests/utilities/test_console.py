@@ -3,8 +3,27 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Tests for rfdetr.utilities.console — Rich console helpers for callbacks."""
 
+"""Tests for rfdetr.utilities.console — Rich console helpers for callbacks.
+
+Tests for rfdetr.utilities.logger — the shared logger factory.
+
+``_RedirectAwareStreamHandler`` exists because ``pytorch_lightning``'s ``RichProgressBar`` (installed with
+``leave=True`` by ``build_trainer``, see ``training/trainer.py``) relies on Rich's ``Live`` display temporarily swapping
+*both* the ``sys.stdout`` and ``sys.stderr`` module attributes for proxies (``redirect_stdout`` and ``redirect_stderr``
+default to ``True`` in ``rich.live.Live``) so that ordinary writes print above the live-rendered progress bar instead of
+corrupting it. A handler that captured a stale reference to the pre-swap stream at construction time — as a plain
+``logging.StreamHandler(sys.stdout)`` does, and ``get_logger()`` is called at import time, well before any redirect
+happens — would bypass that coordination and garble the progress bar. This applies equally to stdout (e.g.
+``logger.info`` on a new best checkpoint) and stderr (e.g. ``logger.warning`` from ``BestModelCallback`` when EMA
+weights are unavailable).
+"""
+
+from __future__ import annotations
+
+import io
+import logging
+import sys
 from unittest.mock import MagicMock
 
 import pytest
@@ -17,10 +36,7 @@ from rfdetr.utilities.console import (
     _render_overall_merged,
     _render_summary_tables,
 )
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
+from rfdetr.utilities.logger import _RedirectAwareStreamHandler, get_logger
 
 
 def _make_trainer(callbacks: list[object] | None = None) -> MagicMock:
@@ -58,11 +74,6 @@ def _minimal_overall(max_dets: int = 500) -> dict:
         "Precision": 0.6,
         "Recall": 0.5,
     }
-
-
-# ---------------------------------------------------------------------------
-# _render_overall_merged
-# ---------------------------------------------------------------------------
 
 
 class TestRenderOverallMerged:
@@ -116,10 +127,56 @@ class TestRenderOverallMerged:
         result = _render_overall_merged("Val", _minimal_overall(100), 100)
         assert "@100" in result
 
+    def test_optional_groups_absent_by_default(self) -> None:
+        """Without gated or agnostic keys the table is the one rendered before those groups existed."""
+        result = _render_overall_merged("Val", _minimal_overall(), 500)
+        assert "N≥" not in result
+        assert "agnostic" not in result
+        assert result == _render_overall_merged("Val", _minimal_overall(), 500, min_class_support=10)
 
-# ---------------------------------------------------------------------------
-# _has_progress_bar
-# ---------------------------------------------------------------------------
+    @pytest.mark.parametrize(
+        ("applied", "expected", "unexpected"),
+        [
+            (1.0, "mAP N≥10", "unmet"),
+            (0.0, "mAP all (N≥10 unmet)", "mAP N≥10"),
+        ],
+    )
+    def test_gated_header_reflects_whether_the_gate_applied(
+        self, applied: float, expected: str, unexpected: str
+    ) -> None:
+        """The all-class fallback is not labelled ``mAP N≥k``; an absent flag keeps the plain gated header."""
+        overall = {**_minimal_overall(), "gated mAP 50:95": 0.4, "gated applied": applied}
+        result = _render_overall_merged("Val", overall, 500, min_class_support=10)
+        assert expected in result
+        assert unexpected not in result
+        assert len({len(line) for line in result.splitlines()[1:]}) == 1
+
+    @pytest.mark.parametrize(
+        ("extra", "expected", "unexpected"),
+        [
+            pytest.param({"gated mAP 50:95": 0.6111}, ["mAP N≥10", "0.6111"], ["segm 50:95", "agnostic"], id="gated"),
+            pytest.param(
+                {"gated mAP 50:95": 0.6111, "gated segm mAP 50:95": 0.5222},
+                ["mAP N≥10", "0.6111", "segm 50:95", "0.5222"],
+                ["agnostic"],
+                id="gated-segm",
+            ),
+            pytest.param(
+                {"agnostic mAP 50:95": 0.7333, "agnostic mAP 50": 0.8444},
+                ["agnostic mAP", "0.7333", "0.8444"],
+                ["N≥"],
+                id="agnostic",
+            ),
+            pytest.param({"gated mAP 50:95": float("nan")}, ["mAP N≥10", "—"], [], id="gated-nan"),
+        ],
+    )
+    def test_gated_and_agnostic_groups(self, extra: dict, expected: list[str], unexpected: list[str]) -> None:
+        """Gated and class-agnostic scores each render as their own column group, only when present."""
+        result = _render_overall_merged("Val", {**_minimal_overall(), **extra}, 500, min_class_support=10)
+        assert all(text in result for text in expected)
+        assert not any(text in result for text in unexpected)
+        # Every box row keeps the same width, so the added groups did not break the merged-header layout.
+        assert len({len(line) for line in result.splitlines()[1:]}) == 1
 
 
 class TestHasProgressBar:
@@ -145,11 +202,6 @@ class TestHasProgressBar:
         """Returns False when callbacks don't end with ProgressBar."""
         trainer = _make_trainer(callbacks=[MagicMock(name="SomeOtherCallback")])
         assert not _has_progress_bar(trainer)
-
-
-# ---------------------------------------------------------------------------
-# _get_rich_console
-# ---------------------------------------------------------------------------
 
 
 #: Skip a test node that needs ``rich``.
@@ -206,11 +258,6 @@ class TestGetRichConsole:
         assert result is expected_console
 
 
-# ---------------------------------------------------------------------------
-# _build_summary_renderable
-# ---------------------------------------------------------------------------
-
-
 @_requires_rich
 class TestBuildSummaryRenderable:
     """_build_summary_renderable returns a Rich Group for console.print()."""
@@ -241,6 +288,21 @@ class TestBuildSummaryRenderable:
         with console.capture() as capture:
             console.print(result)
         assert "—" in capture.get()
+
+    @pytest.mark.parametrize(("support", "shown"), [(12, True), (None, False)])
+    def test_support_column_only_when_rows_carry_it(self, support: int | None, shown: bool) -> None:
+        """Rows with a ``support`` count add a Support column; rows without it render the original columns."""
+        from rich.console import Console
+
+        row = {"name": "cat", "ap": 0.5, "ar": 0.6, "f1": 0.55, "precision": 0.6, "recall": 0.5}
+        if support is not None:
+            row["support"] = support
+        console = Console(width=200, color_system=None)
+        with console.capture() as capture:
+            console.print(_build_summary_renderable("Val", "overall-text", [row]))
+        printed = capture.get()
+        assert ("Support" in printed) is shown
+        assert ("12" in printed) is shown
 
     @pytest.mark.parametrize(
         "name",
@@ -307,11 +369,6 @@ class TestBuildSummaryRenderable:
         assert "Per-class Metrics" in capture.get()
 
 
-# ---------------------------------------------------------------------------
-# _render_summary_tables
-# ---------------------------------------------------------------------------
-
-
 class TestRenderSummaryTables:
     """_render_summary_tables delegates to console.print when Rich available."""
 
@@ -328,3 +385,100 @@ class TestRenderSummaryTables:
         console = MagicMock(name="console")
         _render_summary_tables(console, "Val", "overall-text", [])
         console.print.assert_not_called()
+
+
+def _make_record(message: str, level: int = logging.INFO) -> logging.LogRecord:
+    """Build a minimal LogRecord at *level* carrying *message*.
+
+    Examples:
+        >>> record = _make_record("hi")
+        >>> record.getMessage()
+        'hi'
+    """
+    return logging.LogRecord(
+        name="test",
+        level=level,
+        pathname=__file__,
+        lineno=1,
+        msg=message,
+        args=(),
+        exc_info=None,
+    )
+
+
+class TestRedirectAwareStreamHandler:
+    """_RedirectAwareStreamHandler must always write through the CURRENT sys.stdout/sys.stderr."""
+
+    @pytest.mark.parametrize("stream_name", ["stdout", "stderr"])
+    def test_emit_writes_to_stream_present_at_construction(self, monkeypatch: pytest.MonkeyPatch, stream_name: str):
+        """Baseline: with no reassignment in play, emit writes to whatever sys.<stream_name> already is."""
+        buffer = io.StringIO()
+        monkeypatch.setattr(sys, stream_name, buffer)
+        handler = _RedirectAwareStreamHandler(stream_name)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+
+        handler.emit(_make_record("hello"))
+
+        assert "hello" in buffer.getvalue()
+
+    @pytest.mark.parametrize("stream_name", ["stdout", "stderr"])
+    def test_emit_follows_reassignment_after_construction(self, monkeypatch: pytest.MonkeyPatch, stream_name: str):
+        """A sys.<stream_name> swap AFTER construction (Rich's Live redirect) must be honoured, not bypassed."""
+        handler = _RedirectAwareStreamHandler(stream_name)
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        pre_redirect_stream = handler.stream
+        redirected_stream = io.StringIO()
+        monkeypatch.setattr(sys, stream_name, redirected_stream)
+
+        handler.emit(_make_record("best checkpoint saved"))
+
+        assert "best checkpoint saved" in redirected_stream.getvalue()
+        if isinstance(pre_redirect_stream, io.StringIO):
+            assert "best checkpoint saved" not in pre_redirect_stream.getvalue()
+
+    def test_stdout_handler_never_writes_to_stderr(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Regression: a stdout handler must track sys.stdout specifically, never sys.stderr."""
+        handler = _RedirectAwareStreamHandler("stdout")
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        stdout_buffer = io.StringIO()
+        stderr_buffer = io.StringIO()
+        monkeypatch.setattr(sys, "stdout", stdout_buffer)
+        monkeypatch.setattr(sys, "stderr", stderr_buffer)
+
+        handler.emit(_make_record("stdout only"))
+
+        assert "stdout only" in stdout_buffer.getvalue()
+        assert "stdout only" not in stderr_buffer.getvalue()
+
+    def test_stdout_handler_falls_back_to_stderr_when_stdout_is_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A stdout handler must preserve records when Python temporarily removes sys.stdout."""
+        handler = _RedirectAwareStreamHandler("stdout")
+        handler.setFormatter(logging.Formatter("%(message)s"))
+        stderr_buffer = io.StringIO()
+        monkeypatch.setattr(sys, "stdout", None)
+        monkeypatch.setattr(sys, "stderr", stderr_buffer)
+
+        handler.emit(_make_record("fallback to stderr"))
+
+        assert stderr_buffer.getvalue() == "fallback to stderr\n"
+
+
+class TestGetLoggerUsesRedirectAwareHandlers:
+    """get_logger()'s stdout AND stderr handlers must be redirect-aware, not plain StreamHandlers."""
+
+    @pytest.mark.parametrize(
+        ("stream_name", "level"),
+        [
+            pytest.param("stdout", logging.DEBUG, id="stdout-handler-takes-debug-and-up"),
+            pytest.param("stderr", logging.WARNING, id="stderr-handler-takes-warning-and-up"),
+        ],
+    )
+    def test_handler_is_redirect_aware(self, stream_name: str, level: int) -> None:
+        """The handler get_logger installs at *level* is a _RedirectAwareStreamHandler bound to *stream_name*."""
+        logger = get_logger(f"rf-detr-test-redirect-aware-{stream_name}-handler")
+
+        handlers = [h for h in logger.handlers if h.level == level]
+
+        assert len(handlers) == 1
+        assert isinstance(handlers[0], _RedirectAwareStreamHandler)
+        assert handlers[0]._stream_name == stream_name

@@ -3,7 +3,13 @@
 # Copyright (c) 2025 Roboflow. All Rights Reserved.
 # Licensed under the Apache License, Version 2.0 [see LICENSE for details]
 # ------------------------------------------------------------------------
-"""Native sources for the public inference facade."""
+
+"""Native sources for the public inference facade.
+
+Unit tests for ``rfdetr.inference`` model building.
+
+Public API tests for the keypoint preview variant.
+"""
 
 from __future__ import annotations
 
@@ -20,9 +26,12 @@ from PIL import Image
 from pytest_mock import MockerFixture
 from supervision import Detections, KeyPoints
 
+from rfdetr import RFDETRKeypointPreview as RFDETRKeypointPreviewFromTopLevel
+from rfdetr.config import KeypointTrainConfig, RFDETRKeypointPreviewConfig, RFDETRNanoConfig
 from rfdetr.detr import RFDETR, _CUDAGraphInferenceModel, _default_compile_backend
+from rfdetr.detr import RFDETRKeypointPreview as RFDETRKeypointPreviewFromDetr
 from rfdetr.export._runtime.metadata import ExportMetadata
-from rfdetr.inference import RFDETRInference
+from rfdetr.inference import RFDETRInference, _build_model_context
 from rfdetr.models.backbone.dinov2_with_windowed_attn import (
     Dinov2WithRegistersLayerScale,
     WindowedDinov2WithRegistersLayer,
@@ -30,7 +39,8 @@ from rfdetr.models.backbone.dinov2_with_windowed_attn import (
 from rfdetr.models.ops.modules.ms_deform_attn import MSDeformAttn
 from rfdetr.utilities.tensors import _native_grid_sample
 from rfdetr.variants import RFDETRKeypointPreview, RFDETRNano, RFDETRSegNano
-from tests._markers import _cuda_marks, _requires_cuda, _requires_mps
+from rfdetr.variants import RFDETRKeypointPreview as RFDETRKeypointPreviewFromVariants
+from tests._markers import _cuda_marks, _requires_cuda, _requires_mps, _requires_peft
 from tests.inference.helpers import _DummyModel, _DummyRFDETR
 
 _requires_mps_inductor = pytest.mark.skipif(
@@ -989,3 +999,46 @@ class TestDefaultCompileBackend:
 
         with torch._dynamo.config.patch(error_on_recompile=True):
             predictor.predict(np.zeros((64, 64, 3), dtype=np.uint8))
+
+
+@_requires_peft
+class TestBuildModelContextLoraChannels:
+    """``_build_model_context`` adapts DINOv2's patch embedding even when LoRA has wrapped the encoder."""
+
+    def test_lora_wrapped_encoder_accepts_extra_channels(self) -> None:
+        """A LoRA-wrapped DINOv2 encoder gets a 4-channel patch embedding instead of a ValueError.
+
+        ``backbone_lora=True`` swaps the DinoV2 encoder for a PEFT wrapper before channel adaptation runs, so a type
+        check on the encoder object rejected a supported configuration; the encoder name decides instead.
+        """
+        from peft import PeftModel  # optional dependency, guarded by the class skipif
+
+        config = RFDETRNanoConfig(num_channels=4, backbone_lora=True, pretrain_weights=None, device="cpu")
+
+        encoder = _build_model_context(config).model.backbone[0].encoder
+
+        assert isinstance(encoder, PeftModel)
+        assert encoder.encoder.embeddings.patch_embeddings.projection.in_channels == 4
+
+
+def test_keypoint_preview_top_level_import() -> None:
+    """RFDETRKeypointPreview must be importable from top-level package and keep shared identity."""
+    assert RFDETRKeypointPreviewFromTopLevel is RFDETRKeypointPreviewFromVariants
+    assert RFDETRKeypointPreviewFromTopLevel is RFDETRKeypointPreviewFromDetr
+
+
+def test_keypoint_preview_variant_metadata() -> None:
+    """RFDETRKeypointPreview exposes the expected variant metadata and config class."""
+    assert RFDETRKeypointPreview.size == "rfdetr-keypoint-preview"
+    assert RFDETRKeypointPreview._model_config_class is RFDETRKeypointPreviewConfig
+    assert RFDETRKeypointPreview._train_config_class is KeypointTrainConfig
+    assert RFDETRKeypointPreviewConfig.model_fields["pretrain_weights"].default == "rf-detr-keypoint-preview-xlarge.pth"
+
+
+def test_predict_docstring_mentions_one_class_keypoint_mapping() -> None:
+    """The public predict() contract must document active-first keypoint class-id mapping."""
+    doc = RFDETRKeypointPreview.predict.__doc__ or ""
+    assert "one-class preview keypoint setup" in doc
+    assert "class_id=0" in doc
+    assert "class_id=1" in doc
+    assert "__background__" in doc

@@ -2,16 +2,18 @@
   <title id="title">RF-DETR inference data flow</title>
   <desc id="desc">Source loading selects a borrowed live model, a native predictor snapshot created by RFDETR.inference(), or an owned checkpoint or exported runtime, with task and preprocessing metadata. For each call, images are converted and batched, preprocessed, executed once, decoded by the shared pipeline, and returned as Supervision detections or keypoints.</desc>
   <defs>
-    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="#425466"/></marker>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="#4A176F"/></marker>
     <style>
-      .box { fill: #f4f7fb; stroke: #45617b; stroke-width: 2; rx: 12; }
-      .owner { fill: #e8f3ee; stroke: #28734d; stroke-width: 2; rx: 12; }
-      .flow { fill: none; stroke: #425466; stroke-width: 3; marker-end: url(#arrow); }
-      .label { fill: #162433; font: 600 19px sans-serif; text-anchor: middle; }
-      .small { fill: #35475a; font: 16px sans-serif; text-anchor: middle; }
-      .heading { fill: #162433; font: 700 24px sans-serif; }
+      .box { fill: #F3EEFF; stroke: #A351FB; stroke-width: 2; rx: 12; }
+      .owner { fill: #E6FCF8; stroke: #0B7A6B; stroke-width: 2; rx: 12; }
+      .flow { fill: none; stroke: #4A176F; stroke-width: 3; marker-end: url(#arrow); }
+      .label { fill: #1D1D1F; font: 600 19px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; text-anchor: middle; }
+      .small { fill: #4A4655; font: 16px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; text-anchor: middle; }
+      .note { fill: #6F6C79; }
+      .heading { fill: #4A176F; font: 700 24px -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
     </style>
   </defs>
+  <rect x="1" y="1" width="1198" height="708" rx="16" fill="#FFFFFF" stroke="#E8D2FF" stroke-width="2"/>
   <text class="heading" x="45" y="45">1 · Load source and execution context</text>
   <rect class="box" x="45" y="80" width="300" height="100"/>
   <text class="label" x="195" y="120">Live RF-DETR model</text>
@@ -51,7 +53,7 @@
   <path class="flow" d="M525 520 H575"/>
   <path class="flow" d="M795 520 H845"/>
   <path class="flow" d="M1010 520 H1060"/>
-  <text class="small" x="600" y="625">Context supplies input rules, runtime execution, task decoding and class names.</text>
-  <text class="small" x="600" y="655">Live native state is read per call; exported metadata and session are loaded once.</text>
-  <text class="small" x="600" y="685">model.inference() instead snapshots native weights into its own predictor.</text>
+  <text class="small note" x="600" y="625">Context supplies input rules, runtime execution, task decoding and class names.</text>
+  <text class="small note" x="600" y="655">Live native state is read per call; exported metadata and session are loaded once.</text>
+  <text class="small note" x="600" y="685">model.inference() instead snapshots native weights into its own predictor.</text>
 </svg>

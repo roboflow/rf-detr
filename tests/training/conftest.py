@@ -9,13 +9,17 @@ Provides cross-test cleanup that prevents class-level state from leaking between
 package, plus shared config factory fixtures used across multiple test modules.
 """
 
+from typing import Any
+from unittest.mock import MagicMock
+
 import pytest
+from pytest_mock import MockerFixture
 
 from rfdetr.config import RFDETRBaseConfig, SegmentationTrainConfig, TrainConfig
 
 # ---------------------------------------------------------------------------
 # Shared config factory fixtures (used by test_module, test_datamodule,
-# test_args — avoids duplicate fixture definitions across files)
+# trainer/test_cli.py — avoids duplicate fixture definitions across files)
 # ---------------------------------------------------------------------------
 
 
@@ -97,7 +101,7 @@ def seg_train_config(tmp_path):
 def _restore_rfdetr_module_trainer_property():
     """Restore RFDETRModelModule.trainer to the LightningModule parent property after each test.
 
-    Several unit tests in test_module_model.py patch the ``trainer`` property directly on the ``RFDETRModelModule``
+    Several unit tests in ``tests/training/model/`` patch the ``trainer`` property directly on the ``RFDETRModelModule``
     class (``type(module).trainer = property(...)``). Without cleanup this mutates the class for the remainder of the
     session and breaks ``Trainer.fit()`` calls in smoke tests (PTL cannot set ``.trainer`` on the module because the
     patched property has no setter).
@@ -128,3 +132,51 @@ def _restore_rfdetr_datamodule_trainer_property():
 
     if "trainer" in RFDETRDataModule.__dict__:
         delattr(RFDETRDataModule, "trainer")
+
+
+# ---------------------------------------------------------------------------
+# Training entry-point patches shared by the shim/test_detr_shim*.py files and
+# Trainer capture shared by the trainer/test_build_trainer*.py files.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def patch_lit(mocker: MockerFixture) -> tuple[MagicMock, MagicMock, MagicMock]:
+    """Patch the rfdetr.training entry points and return their ``(module_cls, datamodule_cls, build_trainer)`` mocks."""
+    return (
+        mocker.patch("rfdetr.training.RFDETRModelModule", MagicMock(name="RFDETRModule_cls")),
+        mocker.patch("rfdetr.training.RFDETRDataModule", MagicMock(name="RFDETRDataModule_cls")),
+        mocker.patch("rfdetr.training.build_trainer", MagicMock(name="build_trainer")),
+    )
+
+
+@pytest.fixture
+def captured_trainer_kwargs(mocker: MockerFixture) -> dict[str, Any]:
+    """Patch ``rfdetr.training.trainer.Trainer`` and return the kwargs its calls capture.
+
+    Every test that requests it calls ``build_trainer()`` and inspects what it passed to ``Trainer(**kwargs)`` instead
+    of constructing a real one; this fixture centralizes that capture in place of a per-test ``_fake_trainer`` closure.
+
+    Examples:
+        >>> captured_trainer_kwargs(mocker)  # doctest: +SKIP
+        # Needs pytest's mocker fixture; cannot run standalone.
+    """
+    captured: dict[str, Any] = {}
+
+    def _fake_trainer(**kwargs: Any) -> MagicMock:
+        captured.update(kwargs)
+        return MagicMock()
+
+    mocker.patch("rfdetr.training.trainer.Trainer", side_effect=_fake_trainer)
+    return captured
+
+
+@pytest.fixture
+def mock_xla_precision(mocker: MockerFixture) -> MagicMock:
+    """Replace ``XLAPrecision`` so XLA dispatch tests run without ``torch_xla``; returns the mocked class.
+
+    Examples:
+        >>> mock_xla_precision(mocker)  # doctest: +SKIP
+        # Needs pytest's mocker fixture; cannot run standalone.
+    """
+    return mocker.patch("pytorch_lightning.plugins.XLAPrecision")

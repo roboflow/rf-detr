@@ -62,6 +62,13 @@ def _is_spawned_worker(trainer: Trainer) -> bool:
     return isinstance(getattr(trainer.strategy, "launcher", None), _MultiProcessingLauncher)
 
 
+def _legacy_support_floor(checkpoint: dict[str, Any]) -> int | None:
+    """Read the support floor from RF-DETR checkpoints saved before it was part of the callback key."""
+    args = checkpoint.get("args")
+    floor = args.get("min_class_support") if isinstance(args, dict) else None
+    return floor if type(floor) is int else None
+
+
 class BestModelCallback(ModelCheckpoint):
     """Track the best validation metric and save best checkpoints during training.
 
@@ -111,6 +118,7 @@ class BestModelCallback(ModelCheckpoint):
             ``monitor_regular`` then carries the EMA score mirrored by ``COCOEvalCallback`` while this track saves
             base weights. The EMA track still runs, and ``on_fit_end`` promotes its checkpoint to
             ``checkpoint_best_total.pth``.
+        min_class_support: Support floor used by the monitored metric, or zero for an ungated monitor.
 
     Examples:
         Skip the first 3 epochs so pretrained weights do not dominate:
@@ -134,6 +142,7 @@ class BestModelCallback(ModelCheckpoint):
         skip_best_epochs: int = 0,
         smooth_alpha: float = 0.0,
         evaluates_base_model: bool = True,
+        min_class_support: int = 0,
     ) -> None:
         super().__init__(
             dirpath=output_dir,
@@ -147,6 +156,7 @@ class BestModelCallback(ModelCheckpoint):
             enable_version_counter=False,
         )
         self._monitor_ema = monitor_ema
+        self._min_class_support = min_class_support
         self._evaluates_base_model = bool(evaluates_base_model)
         self._run_test = run_test
         self._best_ema: float = 0.0
@@ -171,6 +181,27 @@ class BestModelCallback(ModelCheckpoint):
         self._best_raw_regular: float = 0.0
         # Stash current pl_module so _save_checkpoint (no pl_module param) can access it.
         self._current_pl_module: LightningModule | None = None
+
+    @property
+    def state_key(self) -> str:
+        """Identify checkpoint history by the monitor and its active support floor."""
+        key = super().state_key
+        if self._min_class_support > 0:
+            key += f"[min_class_support={self._min_class_support}]"
+        return key
+
+    def on_load_checkpoint(self, trainer: Trainer, pl_module: LightningModule, checkpoint: dict[str, Any]) -> None:
+        """Restore older gated history when the saved support floor matches the current floor."""
+        callbacks = checkpoint.get("callbacks") or {}
+        if self.state_key in callbacks:
+            return
+        legacy_state = callbacks.get(super().state_key)
+        if (
+            self._min_class_support > 0
+            and legacy_state
+            and _legacy_support_floor(checkpoint) == self._min_class_support
+        ):
+            callbacks[self.state_key] = legacy_state
 
     @staticmethod
     def _build_checkpoint_payload(
@@ -691,7 +722,9 @@ class BestModelCallback(ModelCheckpoint):
         if getattr(trainer, "fast_dev_run"):
             return
         total_path = self._output_dir / "checkpoint_best_total.pth"
-        chose_ema = self._promote_best_total(trainer, pl_module, total_path) if trainer.is_global_zero else False
+        promoted, chose_ema = (
+            self._promote_best_total(trainer, pl_module, total_path) if trainer.is_global_zero else (False, False)
+        )
 
         if not self._run_test:
             return
@@ -715,9 +748,7 @@ class BestModelCallback(ModelCheckpoint):
         # The barrier orders the main process's checkpoint writes before any rank reads them; the broadcast keeps
         # every rank on the same branch, since a rank that skips a collective trainer.test() hangs the others.
         trainer.strategy.barrier()
-        should_test, chose_ema = trainer.strategy.broadcast(
-            (total_path.exists(), chose_ema) if trainer.is_global_zero else (False, False), src=0
-        )
+        should_test, chose_ema = trainer.strategy.broadcast((promoted, chose_ema), src=0)
         if not should_test:
             if trainer.is_global_zero:
                 logger.warning(
@@ -747,7 +778,7 @@ class BestModelCallback(ModelCheckpoint):
             for ema_callback, prior in zip(ema_callbacks, prior_flags):
                 ema_callback.suppress_test_swap = prior
 
-    def _promote_best_total(self, trainer: Trainer, pl_module: LightningModule, total_path: Path) -> bool:
+    def _promote_best_total(self, trainer: Trainer, pl_module: LightningModule, total_path: Path) -> tuple[bool, bool]:
         """Copy the winning best checkpoint to ``total_path`` and refresh ``last_ema.pth``; main process only.
 
         Args:
@@ -756,7 +787,7 @@ class BestModelCallback(ModelCheckpoint):
             total_path: Destination of the stripped ``checkpoint_best_total.pth``.
 
         Returns:
-            Whether the copied source was the EMA checkpoint.
+            Whether a checkpoint was promoted and whether it was the EMA checkpoint.
         """
         # Use _best_raw_regular when smoothing is active: best_model_score tracks the
         # smoothed value, so comparing it directly against raw _best_ema is biased.
@@ -778,7 +809,8 @@ class BestModelCallback(ModelCheckpoint):
         if self._monitor_ema is not None:
             self._output_dir.mkdir(parents=True, exist_ok=True)
             ema_state_dict = self._get_ema_model_state_dict(trainer, pl_module)
-            if not ema_path.exists():
+            # Only a positive restored or newly recorded score validates an existing best EMA file.
+            if self._best_ema == 0.0 or not ema_path.exists():
                 self._write_ema_checkpoint(trainer, pl_module, ema_state_dict, ema_path)
                 logger.info("EMA metric never improved; saved final EMA weights as %s", ema_path.name)
 
@@ -793,11 +825,13 @@ class BestModelCallback(ModelCheckpoint):
         chose_ema = best_is_ema and ema_path.exists()
         best_path = ema_path if chose_ema else regular_path
 
-        if best_path and best_path.exists():
+        promoted = False
+        if best_path is not None and best_path.exists():
             shutil.copy2(best_path, total_path)
             # Record the winning source in the payload so anyone reloading
             # checkpoint_best_total.pth can tell EMA from regular weights.
             strip_checkpoint(total_path, extra_metadata={"best_total_source": "ema" if chose_ema else "regular"})
+            promoted = True
             logger.info(
                 "Best total checkpoint saved from %s (regular=%.4f, ema=%.4f)",
                 "EMA" if chose_ema else "regular",
@@ -808,7 +842,7 @@ class BestModelCallback(ModelCheckpoint):
         # When EMA tracking is enabled, always leave last_ema.pth on disk, mirroring last.pth for the live model.
         if self._monitor_ema is not None and ema_state_dict is not None:
             self._write_ema_checkpoint(trainer, pl_module, ema_state_dict, self._output_dir / "last_ema.pth")
-        return chose_ema
+        return promoted, chose_ema
 
     @staticmethod
     def _load_best_total_weights(pl_module: LightningModule, total_path: Path, chose_ema: bool) -> None:
@@ -885,6 +919,7 @@ class RFDETREarlyStopping(EarlyStopping):
         skip_best_epochs: Ignore the first N epochs (0..N-1) when evaluating
             patience and best-score baselines.  Set this when fine-tuning from ``pretrain_weights`` to avoid premature
             stopping before the model adapts to the new dataset.
+        min_class_support: Support floor used by the monitored metric, or zero for an ungated monitor.
 
     Examples:
         Fine-tuning from pretrained weights — skip first 3 epochs:
@@ -906,6 +941,7 @@ class RFDETREarlyStopping(EarlyStopping):
         monitor_ema: str = "val/ema_mAP_50_95",
         verbose: bool = True,
         skip_best_epochs: int = 0,
+        min_class_support: int = 0,
     ) -> None:
         super().__init__(
             monitor=self._SYNTHETIC_MONITOR,
@@ -927,6 +963,36 @@ class RFDETREarlyStopping(EarlyStopping):
         self._monitor_ema = monitor_ema
         self._use_ema = use_ema
         self._skip_best_epochs = skip_best_epochs
+        self._min_class_support = min_class_support
+
+    @property
+    def state_key(self) -> str:
+        """Identify gated early-stopping history by its real monitor and support floor."""
+        if self._min_class_support > 0:
+            return self._generate_state_key(
+                monitor=self._monitor_regular, mode=self.mode, min_class_support=self._min_class_support
+            )
+        return super().state_key
+
+    def on_load_checkpoint(self, trainer: Trainer, pl_module: LightningModule, checkpoint: dict[str, Any]) -> None:
+        """Restore legacy gated history only when the saved monitor and support floor match."""
+        callbacks = checkpoint.get("callbacks")
+        legacy_key = super().state_key
+        if not callbacks or legacy_key not in callbacks:
+            return
+        # Older gated runs shared the synthetic early-stopping state key with ungated runs.
+        # The best-checkpoint callback recorded the actual metric those runs selected on.
+        gated_monitors = {
+            state.get("monitor")
+            for key, state in callbacks.items()
+            if isinstance(key, str)
+            and key.startswith("BestModelCallback{")
+            and str(state.get("monitor")).endswith("_gated")
+        }
+        if self._min_class_support == 0 and gated_monitors:
+            callbacks.pop(legacy_key)
+        elif self._monitor_regular in gated_monitors and _legacy_support_floor(checkpoint) == self._min_class_support:
+            callbacks.setdefault(self.state_key, callbacks[legacy_key])
 
     def on_validation_end(self, trainer: Trainer, pl_module: LightningModule) -> None:
         """Compute the effective validation metric and delegate to parent stopping logic.
